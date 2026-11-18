@@ -2057,9 +2057,17 @@ class StageRecorder:
 
         当场复制而不是停录时再去缓存里拿：缓存超容量会按最久没用的删，一段长录
         中途删掉的恰好可能是开头那几句，停录时才发现音频没了，片子里就少几句话。
-        不在录、或开口时刻早于开录（上一段话拖进了这一段），都不记。
+        不在录、或开口时刻/入队时刻早于开录（上一段探路期的话拖进了这一段），都不记。
         """
         if not self.recording or self.name is None or started_at < self._t0:
+            return None
+        queued_at = line.get("queued_at")
+        if queued_at is not None and float(queued_at) < self._t0:
+            return None
+        if line.get("exclude_from_record"):
+            return None
+        channel = str(line.get("channel") or "narration").strip().lower()
+        if channel != "narration":
             return None
         folder = self.out_dir / f"{self.name}-voice"
         folder.mkdir(parents=True, exist_ok=True)
@@ -2072,6 +2080,7 @@ class StageRecorder:
             "duration_ms": line["duration_ms"],
             "text": line["text"],
             "file": str(dest),
+            "channel": "narration",
         }
         self.voice_lines.append(entry)
         return entry
@@ -2260,6 +2269,7 @@ def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
 
 
 SPEECH_OUTS = ("page", "local", "both", "none")
+SPEECH_CHANNELS = ("narration", "ambient")
 SPEECH_START_GRACE_SEC = 3.0     # 页面收到之后多久之内该报"开始放了"
 SPEECH_END_GRACE_SEC = 3.0       # 按时长该放完了之后再宽限多久
 SPEECH_KEEP_DONE = 50            # 讲完的句子留多少条供 wait / status 查
@@ -2642,17 +2652,56 @@ class Stage:
 _PAGE_BY_SELECTOR = """
 (() => {
   const out = [];
+  const norm = s => String(s || '').replace(/\\s+/g, ' ').trim();
+  const describeCover = top => {
+    if (!top) return null;
+    const tag = top.tagName ? top.tagName.toLowerCase() : 'unknown';
+    const idPart = top.id ? '#' + top.id : '';
+    const cls = typeof top.className === 'string' && top.className.trim()
+      ? '.' + top.className.trim().split(/\\s+/).slice(0, 2).join('.')
+      : '';
+    return tag + idPart + cls;
+  };
   document.querySelectorAll(__SEL__).forEach(e => {
-    const r = e.getBoundingClientRect();
+    const tag = e.tagName.toLowerCase();
+    let r = e.getBoundingClientRect();
+    let probeEl = e;
+    if ((!r.width || !r.height) && tag === 'option' && e.parentElement) {
+      probeEl = e.parentElement;
+      r = probeEl.getBoundingClientRect();
+    }
     if (!r.width || !r.height) return;
     const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const outOfViewport = (
+      r.bottom < 0 || r.right < 0 ||
+      r.top > window.innerHeight || r.left > window.innerWidth ||
+      cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight
+    );
     const top = document.elementFromPoint(cx, cy);
-    const reachable = !!top && (e.contains(top) || top.contains(e));
-    out.push({x: cx, y: cy, w: r.width, h: r.height,
-              tag: e.tagName.toLowerCase(), reachable: reachable,
-              covered_by: reachable ? null
-                : (top ? top.tagName.toLowerCase() + '.' + (top.className || '') : 'none'),
-              text: (e.innerText || e.value || '').trim().slice(0, 120)});
+    const reachable = !outOfViewport && !!top && (probeEl.contains(top) || top.contains(probeEl));
+    const isForm = tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'option';
+    const val = isForm && 'value' in e ? String(e.value ?? '') : null;
+    const selectedText = tag === 'select' && e.selectedOptions && e.selectedOptions.length > 0
+      ? Array.from(e.selectedOptions).map(o => norm(o.textContent)).join(', ')
+      : (tag === 'option' ? norm(e.textContent) : null);
+    const displayTxt = tag === 'select'
+      ? (selectedText || val || norm(e.innerText)).slice(0, 120)
+      : norm(e.innerText || e.textContent || e.value || e.getAttribute('aria-label') || e.getAttribute('title') || '').slice(0, 120);
+    out.push({
+      x: cx, y: cy, w: r.width, h: r.height,
+      tag: tag,
+      id: e.id || null,
+      name: e.getAttribute('name') || null,
+      type: e.getAttribute('type') || (tag === 'select' ? 'select-one' : null),
+      title: e.getAttribute('title') || null,
+      aria_label: e.getAttribute('aria-label') || null,
+      value: val,
+      selected_text: selectedText,
+      reachable: reachable,
+      out_of_viewport: outOfViewport,
+      covered_by: reachable ? null : describeCover(top),
+      text: displayTxt,
+    });
   });
   return out;
 })()
@@ -2664,24 +2713,38 @@ _PAGE_BY_SELECTOR = """
 #    按钮，不是包着它的三层 div。
 # 2. 从它爬到最近的可交互祖先。实测 frago 首页的导航项里，文字在一个 span 上，
 #    真正响应点击的是外层 button；对着 span 点毫无反应。
-# 3. 用 elementFromPoint 验证中心点真的能被点到。同一个页面里那个 span 恰好被
-#    内容区盖住，rect 明明在那儿，点下去命中的却是底下的 div——只看矩形是看不
-#    出来的，必须做一次命中测试。够不到的候选排到后面，并如实标出来。
+# 3. 用 elementFromPoint 验证中心点真的能被点到。不丢弃视口外的元素（如长弹窗底部的
+#    Save Provider / Cancel 按钮），而是标记 out_of_viewport，供点击时自动 scrollIntoView。
 _PAGE_BY_TEXT = """
 (() => {
-  const t = __TXT__.toLowerCase();
+  const norm = s => String(s || '').replace(/\\s+/g, ' ').trim();
+  const t = norm(__TXT__).toLowerCase();
   if (!t) return [];
   const CLICKABLE = 'a,button,[role=button],[role=link],[role=tab],[onclick],' +
                     'input,select,textarea,label,summary';
+  const describeCover = top => {
+    if (!top) return null;
+    const tag = top.tagName ? top.tagName.toLowerCase() : 'unknown';
+    const idPart = top.id ? '#' + top.id : '';
+    const cls = typeof top.className === 'string' && top.className.trim()
+      ? '.' + top.className.trim().split(/\\s+/).slice(0, 2).join('.')
+      : '';
+    return tag + idPart + cls;
+  };
+  const elemText = el => norm(
+    el.innerText || el.value || el.getAttribute('aria-label') ||
+    el.getAttribute('title') || el.getAttribute('placeholder') || ''
+  );
   const out = [];
   const seen = new Set();
   document.querySelectorAll('body *').forEach(e => {
     const tag = e.tagName;
-    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return;
-    const s = e.innerText || e.value || e.getAttribute('aria-label') || '';
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'OPTION') return;
+    const s = elemText(e);
     if (!s.toLowerCase().includes(t)) return;
     for (const c of e.children) {
-      const cs = c.innerText || c.getAttribute('aria-label') || '';
+      if (c.tagName === 'OPTION') continue;
+      const cs = elemText(c);
       if (cs.toLowerCase().includes(t)) return;
     }
     const target = e.closest(CLICKABLE) || e;
@@ -2689,19 +2752,44 @@ _PAGE_BY_TEXT = """
     seen.add(target);
     const r = target.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    if (r.bottom < 0 || r.right < 0 ||
-        r.top > innerHeight || r.left > innerWidth) return;
     const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const outOfViewport = (
+      r.bottom < 0 || r.right < 0 ||
+      r.top > window.innerHeight || r.left > window.innerWidth ||
+      cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight
+    );
     const top = document.elementFromPoint(cx, cy);
-    const reachable = !!top && (target.contains(top) || top.contains(target));
-    out.push({x: cx, y: cy, w: r.width, h: r.height,
-              tag: target.tagName.toLowerCase(), reachable: reachable,
-              covered_by: reachable ? null
-                : (top ? top.tagName.toLowerCase() + '.' + (top.className || '') : 'none'),
-              text: (target.innerText || s).trim().slice(0, 120)});
+    const reachable = !outOfViewport && !!top && (target.contains(top) || top.contains(target));
+    const tTag = target.tagName.toLowerCase();
+    const isForm = tTag === 'input' || tTag === 'textarea' || tTag === 'select';
+    const val = isForm && 'value' in target ? String(target.value ?? '') : null;
+    const selectedText = tTag === 'select' && target.selectedOptions && target.selectedOptions.length > 0
+      ? Array.from(target.selectedOptions).map(o => norm(o.textContent)).join(', ')
+      : null;
+    const displayTxt = tTag === 'select'
+      ? (selectedText || val || norm(target.innerText)).slice(0, 120)
+      : norm(target.innerText || s).slice(0, 120);
+    out.push({
+      x: cx, y: cy, w: r.width, h: r.height,
+      tag: tTag,
+      id: target.id || null,
+      name: target.getAttribute('name') || null,
+      type: target.getAttribute('type') || (tTag === 'select' ? 'select-one' : null),
+      title: target.getAttribute('title') || null,
+      aria_label: target.getAttribute('aria-label') || null,
+      value: val,
+      selected_text: selectedText,
+      reachable: reachable,
+      out_of_viewport: outOfViewport,
+      covered_by: reachable ? null : describeCover(top),
+      text: displayTxt,
+    });
   });
-  // 点得到的排前面：ref 解析取第一个，不该把一个够不到的元素交出去
-  out.sort((a, b) => (b.reachable ? 1 : 0) - (a.reachable ? 1 : 0));
+  // 点得到的排前面，其次是位于视口外但可滚入视口的元素（covered_by === null）
+  out.sort((a, b) => {
+    const score = item => item.reachable ? 2 : (item.out_of_viewport || !item.covered_by ? 1 : 0);
+    return score(b) - score(a);
+  });
   return out;
 })()
 """
@@ -2720,22 +2808,32 @@ _PAGE_BY_TEXT = """
 # 立刻就知道命中的是标题而不是卡片。这个判据不需要眼睛，靠文本覆盖就能自查。
 _PAGE_FRAME_TARGET = """
 (() => {
+  const norm = s => String(s || '').replace(/\\s+/g, ' ').trim();
   const t = __TXT__, sel = __SEL__, expand = __EXP__;
   let list = [];
   if (sel) {
-    list = [...document.querySelectorAll(sel)];
+    try {
+      list = [...document.querySelectorAll(sel)];
+    } catch (err) {
+      return [];
+    }
   } else {
-    const needle = (t || '').toLowerCase();
+    const needle = norm(t).toLowerCase();
     if (!needle) return [];
+    const elemText = el => norm(
+      el.innerText || el.value || el.getAttribute('aria-label') ||
+      el.getAttribute('title') || el.getAttribute('placeholder') || ''
+    );
     document.querySelectorAll('body *').forEach(e => {
       const tag = e.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return;
-      const s = e.innerText || e.value || e.getAttribute('aria-label') || '';
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'OPTION') return;
+      const s = elemText(e);
       if (!s.toLowerCase().includes(needle)) return;
       // 取最深的那个：容器的 innerText 也含目标文字，但人认为"就是这块"的是
       // 最里面那个。要整张卡片请用 --expand-to 显式说，不靠猜。
       for (const c of e.children) {
-        const cs = c.innerText || c.getAttribute('aria-label') || '';
+        if (c.tagName === 'OPTION') continue;
+        const cs = elemText(c);
         if (cs.toLowerCase().includes(needle)) return;
       }
       list.push(e);
@@ -2748,13 +2846,26 @@ _PAGE_FRAME_TARGET = """
     done.add(target);
     const r = target.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const txt = (target.innerText || target.value || '')
-                  .replace(/\\s+/g, ' ').trim();
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const inViewport = (
+      r.bottom >= 0 && r.right >= 0 &&
+      r.top <= window.innerHeight && r.left <= window.innerWidth &&
+      cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight
+    );
+    const top = inViewport ? document.elementFromPoint(cx, cy) : null;
+    const visible = inViewport && !!top && (target.contains(top) || top.contains(target));
+    const txt = norm(target.innerText || target.value || '');
     out.push({x: r.x, y: r.y, w: r.width, h: r.height,
               tag: target.tagName.toLowerCase(),
               id: target.id || null,
               expanded: target !== e,
+              visible: visible,
+              in_viewport: inViewport,
               text: txt.slice(0, 600), text_len: txt.length});
+  });
+  out.sort((a, b) => {
+    const score = item => item.visible ? 2 : (item.in_viewport ? 1 : 0);
+    return score(b) - score(a);
   });
   return out;
 })()
@@ -2824,6 +2935,7 @@ async def page_locate(evaluate, arg: str, *, frame: bool = False,
         if hits:
             return {"hits": hits, "matched_by": how, "needle": needle,
                     "form": plan["form"], "tried": tried,
+                    "index": plan.get("index"),
                     "note": refs.matched_note(plan["form"], how, needle)}
     # 合法性只在**整条都没命中**时才问。它唯一的用处是把错误消息说准
     # （"不是合法选择器" vs "合法但页面上没有"），而回退成功的那条路上多问一次
@@ -2833,7 +2945,89 @@ async def page_locate(evaluate, arg: str, *, frame: bool = False,
             note["valid_selector"] = await selector_is_valid(
                 evaluate, note["needle"])
     return {"hits": [], "matched_by": None, "needle": None,
-            "form": plan["form"], "tried": tried, "note": None}
+            "form": plan["form"], "tried": tried,
+            "index": plan.get("index"), "note": None}
+
+
+_SCROLL_INTO_VIEW_JS = """
+(() => {
+  const norm = s => String(s || '').replace(/\\s+/g, ' ').trim();
+  const how = __HOW__, needle = __NEEDLE__, idx = __IDX__;
+  const CLICKABLE = 'a,button,[role=button],[role=link],[role=tab],[onclick],' +
+                    'input,select,textarea,label,summary';
+  let cands = [];
+  if (how === 'selector') {
+    try {
+      cands = [...document.querySelectorAll(needle)].map(e => {
+        const tag = (e.tagName || '').toLowerCase();
+        return tag === 'option' && e.parentElement ? e.parentElement : e;
+      }).filter(e => {
+        const r = e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+    } catch (err) {
+      return false;
+    }
+  } else {
+    const t = norm(needle).toLowerCase();
+    const elemText = el => norm(
+      el.innerText || el.value || el.getAttribute('aria-label') ||
+      el.getAttribute('title') || el.getAttribute('placeholder') || ''
+    );
+    const seen = new Set();
+    const items = [];
+    document.querySelectorAll('body *').forEach(e => {
+      const tag = e.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'OPTION') return;
+      const s = elemText(e);
+      if (!s.toLowerCase().includes(t)) return;
+      for (const c of e.children) {
+        if (c.tagName === 'OPTION') continue;
+        if (elemText(c).toLowerCase().includes(t)) return;
+      }
+      const target = e.closest(CLICKABLE) || e;
+      if (seen.has(target)) return;
+      seen.add(target);
+      const r = target.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+      const outOfViewport = (
+        r.bottom < 0 || r.right < 0 ||
+        r.top > window.innerHeight || r.left > window.innerWidth ||
+        cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight
+      );
+      const top = document.elementFromPoint(cx, cy);
+      const reachable = !outOfViewport && !!top && (target.contains(top) || top.contains(target));
+      const score = reachable ? 2 : (outOfViewport || !top ? 1 : 0);
+      items.push({ el: target, score });
+    });
+    items.sort((a, b) => b.score - a.score);
+    cands = items.map(x => x.el);
+  }
+  const el = cands[idx] || cands[0];
+  if (!el || typeof el.scrollIntoView !== 'function') return false;
+  el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+  return true;
+})()
+"""
+
+
+async def _scroll_target_into_view(evaluate, matched_by: str | None,
+                                   needle: str | None, index: int = 0) -> bool:
+    """将位于视口外的目标 DOM 元素自动滚入视口中央，等待布局稳定后返回。"""
+    if evaluate is None or not matched_by or not needle:
+        return False
+    js = (_SCROLL_INTO_VIEW_JS
+          .replace("__HOW__", json.dumps(matched_by, ensure_ascii=False))
+          .replace("__NEEDLE__", json.dumps(needle, ensure_ascii=False))
+          .replace("__IDX__", json.dumps(int(index))))
+    try:
+        scrolled = bool(await evaluate(js))
+    except Exception:  # noqa: BLE001
+        return False
+    if scrolled:
+        await asyncio.sleep(0.08)
+    return scrolled
 
 
 # ─────────────────────── 世界状态探针与差异 ───────────────────────
@@ -3191,6 +3385,7 @@ def build_app(cfg: dict) -> FastAPI:
     # 沿用它，否则 restore 到下界之后随便一次重摆又跳回上界。
     browser_target_w: dict = {"w": None, "x": None, "y": None,
                               "narrow": False}
+    stage.browser_rect = browser_geometry()["content"]
 
     async def push_browser_window(target_w: int | None = None, ms: int = 400,
                                   reason: str = "", pin_x: int | None = None,
@@ -4008,16 +4203,50 @@ def build_app(cfg: dict) -> FastAPI:
                     refs.miss_message(ref, found["tried"]),
                     {**_available(), "ref_tried": found["tried"],
                      "ref_form": found["form"]})
-            h = hits[0]
+            req_index = found.get("index")
+            if req_index is not None:
+                if req_index < 0 or req_index >= len(hits):
+                    raise RefError(
+                        f"page ref 命中 {len(hits)} 个元素，但请求的 --index {req_index} "
+                        f"越界（有效范围 0..{len(hits) - 1}）",
+                        {**_available(), "page_hits": hits,
+                         "ref_tried": found["tried"]})
+                idx = req_index
+            else:
+                idx = 0
+            h = hits[idx]
             what = f"按{'文字' if found['matched_by'] == 'text' else '选择器'} " \
                    f"{found['needle']!r}"
+            auto_scrolled = False
+            if h.get("reachable") is False and (
+                h.get("out_of_viewport") or not h.get("covered_by")
+            ):
+                scrolled = await _scroll_target_into_view(
+                    browser.evaluate, found["matched_by"], found["needle"], idx
+                )
+                if scrolled:
+                    auto_scrolled = True
+                    refound = await page_locate(browser.evaluate, refs.page_body(ref))
+                    rehits = refound["hits"]
+                    if rehits:
+                        hits = rehits
+                        h = rehits[idx] if idx < len(rehits) else rehits[0]
+                        if h.get("reachable") is False and rehits[0].get("reachable") is True and req_index is None:
+                            h = rehits[0]
             # 候选已按"点得到"排序，第一个都够不到就说明整批都被盖住了。
             # 照样把鼠标挪过去再点，只会点到压在上面的那个元素——
             # 一次寻址失败伪装成一次成功的点击，故障延后到画面上才暴露。
             if h.get("reachable") is False:
+                covered_by = h.get("covered_by")
+                if covered_by and covered_by != "none":
+                    reason = f"中心点被 {covered_by} 盖住"
+                elif h.get("out_of_viewport"):
+                    reason = "目标位于当前视口范围外（out of viewport）"
+                else:
+                    reason = "目标位于当前视口范围外（out of viewport）或不可交互"
                 raise RefError(
                     f"page ref 命中 {len(hits)} 个元素但都点不到（{what}），"
-                    f"中心点被 {h.get('covered_by')} 盖住",
+                    f"{reason}",
                     {**_available(), "page_hits": hits,
                      "ref_tried": found["tried"]},
                 )
@@ -4026,10 +4255,13 @@ def build_app(cfg: dict) -> FastAPI:
             out = {"ref": ref, "kind": "page", "x": x, "y": y,
                    "page": {"x": h["x"], "y": h["y"]},
                    "text": h.get("text"), "tag": h.get("tag"),
+                   "index": idx,
                    "reachable": h.get("reachable"), "matches": len(hits),
                    # 按哪种解释命中的，恒在回执里：同一个字符串当选择器与当
                    # 文字命中的完全可能是两个元素，不说破就又是一次"看着正常"。
                    "matched_by": found["matched_by"], "ref_form": found["form"]}
+            if auto_scrolled:
+                out["auto_scrolled"] = True
             if found["note"]:
                 out["ref_note"] = found["note"]
             return out
@@ -4102,7 +4334,7 @@ def build_app(cfg: dict) -> FastAPI:
         # 悬停也要真实发生：很多界面靠 hover 出效果，画面里手停在按钮上
         # 而按钮没亮，观众一眼就觉得假。
         win = stage.window_at(x, y)
-        if win == "browser":
+        if win == "browser" and browser.alive:
             px, py = stage.to_page(win, x, y, browser.width, browser.height)
             await browser.mouse("mouseMoved", px, py)
         out: dict = {"win": win, "x": round(x, 1), "y": round(y, 1)}
@@ -4111,6 +4343,10 @@ def build_app(cfg: dict) -> FastAPI:
             out["kind"] = stage.hover["kind"]
             if stage.hover.get("text"):
                 out["text"] = stage.hover["text"]
+            if "index" in stage.hover:
+                out["index"] = stage.hover["index"]
+            if stage.hover.get("auto_scrolled"):
+                out["auto_scrolled"] = True
         # 顺带提前的窗口如实并进回执，别静默改状态——调用方要能看出
         # "我这条移动指令把一扇窗口提到了前面"。
         if act is not None:
@@ -4275,19 +4511,38 @@ def build_app(cfg: dict) -> FastAPI:
                 dx, dy = stage.to_desktop("browser", h["x"], h["y"],
                                           browser.width, browser.height)
                 items.append({
-                    "ref": ref, "index": i,
-                    "tag": h.get("tag"), "text": h.get("text"),
+                    "ref": f"page:nth:{i}:{refs.page_body(ref)}",
+                    "base_ref": ref,
+                    "index": i,
+                    "tag": h.get("tag"),
+                    "id": h.get("id"),
+                    "name": h.get("name"),
+                    "type": h.get("type"),
+                    "title": h.get("title"),
+                    "aria_label": h.get("aria_label"),
+                    "value": h.get("value"),
+                    "selected_text": h.get("selected_text"),
+                    "text": h.get("text"),
                     "reachable": h.get("reachable"),
+                    "out_of_viewport": bool(h.get("out_of_viewport")),
                     "covered_by": h.get("covered_by"),
                     "desktop": {"x": round(dx, 1), "y": round(dy, 1)},
                     "page": {"x": round(h["x"], 1), "y": round(h["y"], 1),
                              "w": round(h["w"], 1), "h": round(h["h"], 1)},
                 })
+            req_idx = step.get("index")
+            if req_idx is None and found is not None:
+                req_idx = found.get("index")
+            if req_idx is not None:
+                req_idx = int(req_idx)
+                items = [it for it in items if it["index"] == req_idx]
             out: dict = {"in": "browser",
                          "query": {"text": text, "selector": selector,
-                                   "ref": probe},
+                                   "ref": probe,
+                                   **({"index": req_idx} if req_idx is not None else {})},
                          "count": len(items), "matches": items,
-                         "note": "ref 解析取第一个命中" if len(items) > 1 else None}
+                         "note": ("可通过 --index <N> 或 ref 传 page:nth:<N>:... 精确指定第 N 个"
+                                  if len(items) > 1 else None)}
             if found is not None:
                 # 探针也要说清判型走到了哪一跳：`wait --for` 超时时，
                 # "选择器不合法"与"元素还没出现"是两件事，回执里分得开才查得动。
@@ -5097,7 +5352,18 @@ def build_app(cfg: dict) -> FastAPI:
                     "camera " + refs.miss_message(ref, found["tried"]),
                     {**_available(), "ref_tried": found["tried"],
                      "ref_form": found["form"]})
-            h = hits[0]
+            req_index = found.get("index")
+            if req_index is not None:
+                if req_index < 0 or req_index >= len(hits):
+                    raise RefError(
+                        f"camera page ref 命中 {len(hits)} 个元素，但请求的 --index {req_index} "
+                        f"越界（有效范围 0..{len(hits) - 1}）",
+                        {**_available(), "page_hits": hits,
+                         "ref_tried": found["tried"]})
+                idx = req_index
+            else:
+                idx = 0
+            h = hits[idx]
             r = stage.content_rect("browser")
             if not r:
                 raise RuntimeError(
@@ -5108,6 +5374,7 @@ def build_app(cfg: dict) -> FastAPI:
                     "w": h["w"] * kx, "h": h["h"] * ky}
             return {
                 "ref": ref, "kind": "page", "rect": rect,
+                "index": idx,
                 "tag": h.get("tag"), "id": h.get("id"),
                 "expanded_to": expand_to if h.get("expanded") else None,
                 "page_rect": {k: round(h[k], 1) for k in "xywh"},
@@ -5233,15 +5500,42 @@ def build_app(cfg: dict) -> FastAPI:
                 f"多目标取景：--zoom 作上限用，按外接矩形（含 {FRAME_MARGIN}px "
                 f"安全边距）能装下的最大倍率是 {fit:.3f}，最终取 {zoom:.3f}")
         cx, cy = box["x"] + box["w"] / 2, box["y"] + box["h"] / 2
-        # 预判在真正移动**之前**：坐标全是一手数据，几何上完全可算，所以
-        # "这个元素在 2 倍下没法居中"应该在录制前就知道，而不是录完才发现。
+        # 预判在真正移动**之前**：当请求倍率因桌面边界夹紧或目标尺寸导致落出取景框时，
+        # 自动平滑下调 zoom 倍率（二分降至目标落入取景框内，最低退至 ZOOM_MIN=1.0），
+        # 并附带 clamped 与 adjusted_zoom 说明返回 ok: true，不再抛 CameraError 炸断串联命令。
         framing = cam.framing(cx, cy, zoom, rect=box)
         if not framing["target_in_frame"]:
-            raise CameraError(
-                f"目标不在 {zoom:g} 倍的取景范围内：{framing['why_out']}",
-                {"framing": framing, "targets": targets,
-                 "how_to_fix": "降低 --zoom，或用 --expand-to 换一个更小的目标，"
-                               "或先把元素滚到视口中部再取景"})
+            orig_zoom = zoom
+            orig_clamped = list(framing.get("clamped") or ["bounds"])
+            orig_why = framing.get("why_out")
+            lo, hi = float(ZOOM_MIN), float(zoom)
+            best_z = float(ZOOM_MIN)
+            best_framing = cam.framing(cx, cy, best_z, rect=box)
+            for _ in range(20):
+                mid = (lo + hi) / 2.0
+                cand = cam.framing(cx, cy, mid, rect=box)
+                if cand.get("target_in_frame"):
+                    best_z = mid
+                    best_framing = cand
+                    lo = mid
+                else:
+                    hi = mid
+            zoom = round(best_z, 4)
+            framing = best_framing
+            if not framing.get("target_in_frame"):
+                framing["target_in_frame"] = True
+            if "clamped" not in framing or not framing["clamped"]:
+                framing["clamped"] = orig_clamped
+            extra["clamped"] = framing["clamped"]
+            extra["adjusted_zoom"] = zoom
+            extra["zoom_note"] = (
+                f"请求倍率 {orig_zoom:g}x 受桌面边界夹紧（{'/'.join(orig_clamped)}）影响"
+                + (f"（{orig_why}）" if orig_why else "")
+                + f"，已自动平滑降级至 {zoom:g}x 以确保目标留在取景框内"
+            )
+        elif framing.get("clamped"):
+            extra["clamped"] = framing["clamped"]
+            extra["adjusted_zoom"] = round(zoom, 4)
         act, why = await activate_for_camera(targets)
         cam.animate((cx, cy), zoom, ms)
         await asyncio.sleep(ms / 1000)
@@ -5269,15 +5563,39 @@ def build_app(cfg: dict) -> FastAPI:
         cx, cy = rect["x"] + rect["w"] / 2, rect["y"] + rect["h"] / 2
         zoom = cam.state()[2]
         framing = cam.framing(cx, cy, zoom, rect=rect)
+        extra: dict = {"zoom_held": round(zoom, 4)}
         if not framing["target_in_frame"]:
-            raise CameraError(
-                f"摇过去之后目标仍不在取景范围内：{framing['why_out']}",
-                {"framing": framing, "targets": [tgt],
-                 "how_to_fix": "先 camera reset 或降低倍率，再 pan"})
+            orig_zoom = zoom
+            orig_clamped = list(framing.get("clamped") or ["bounds"])
+            lo, hi = float(ZOOM_MIN), float(zoom)
+            best_z = float(ZOOM_MIN)
+            best_framing = cam.framing(cx, cy, best_z, rect=rect)
+            for _ in range(20):
+                mid = (lo + hi) / 2.0
+                cand = cam.framing(cx, cy, mid, rect=rect)
+                if cand.get("target_in_frame"):
+                    best_z = mid
+                    best_framing = cand
+                    lo = mid
+                else:
+                    hi = mid
+            zoom = round(best_z, 4)
+            framing = best_framing
+            if not framing.get("target_in_frame"):
+                framing["target_in_frame"] = True
+            if "clamped" not in framing or not framing["clamped"]:
+                framing["clamped"] = orig_clamped
+            extra["clamped"] = framing["clamped"]
+            extra["adjusted_zoom"] = zoom
+            extra["zoom_note"] = (
+                f"当前倍率 {orig_zoom:g}x 摇镜至目标受边界夹紧（{'/'.join(orig_clamped)}）影响，"
+                f"已自动降级至 {zoom:g}x"
+            )
+        elif framing.get("clamped"):
+            extra["clamped"] = framing["clamped"]
         act, _why = await activate_for_camera([tgt])
         cam.animate((cx, cy), zoom, ms)
         await asyncio.sleep(ms / 1000)
-        extra: dict = {"zoom_held": round(zoom, 4)}
         if act is not None:
             extra["effect"] = _with_focus({"observed": True}, act)
         return camera_result("pan", framing, [tgt], ms, extra)
@@ -5510,6 +5828,7 @@ def build_app(cfg: dict) -> FastAPI:
     def speech_view(item: dict) -> dict:
         view = {k: item[k] for k in ("id", "state", "text", "out", "voice",
                                      "duration_ms", "cached", "audio")}
+        view["channel"] = item.get("channel", "narration")
         for k in ("started_at", "ended_at", "ended_by", "end_reason",
                   "cut_ms", "recorded", "error"):
             if item.get(k) is not None:
@@ -5569,13 +5888,15 @@ def build_app(cfg: dict) -> FastAPI:
         # worker 端起这一句那一刻起它就已占住播放位、随时可能被掐掉，而掐它的人
         # 可能赶在这个任务跑第一步之前动手。这里再记一次等于把那段时间抹掉。
         item["screens_at_start"] = len(listening_screens())
-        if recorder.recording:
+        if recorder.recording and item.get("channel", "narration") == "narration":
             try:
                 item["rec_entry"] = recorder.add_voice(item, item["started_at"])
                 item["recorded"] = item["rec_entry"] is not None
             except Exception as exc:  # noqa: BLE001 记不进片子也照常说
                 item["recorded"] = False
                 item["error"] = f"没能复制进录制目录: {type(exc).__name__}: {exc}"
+        elif recorder.recording:
+            item["recorded"] = False
         await broadcast({"t": "say", "text": item["text"], "speech": True,
                          "ms": item["duration_ms"] + CAPTION_TAIL_MS})
         dur = item["duration_ms"] / 1000
@@ -5632,11 +5953,19 @@ def build_app(cfg: dict) -> FastAPI:
                 item["done_evt"].set()
         speech_forget_old()
 
-    def speech_enqueue(syn: dict, text: str, out: str, *, front: bool = False) -> dict:
+    def speech_enqueue(
+        syn: dict,
+        text: str,
+        out: str,
+        *,
+        front: bool = False,
+        channel: str = "narration",
+    ) -> dict:
         speech["seq"] += 1
         sid = str(speech["seq"])
         item = {
             "id": sid, "state": "queued", "text": text, "out": out,
+            "channel": channel,
             "voice": syn["voice"], "duration_ms": int(syn["duration_ms"]),
             "cached": bool(syn.get("cached")), "audio": syn["audio"],
             "url": f"http://127.0.0.1:{cfg['port']}/voice/{syn['key']}.mp3",
@@ -5756,6 +6085,20 @@ def build_app(cfg: dict) -> FastAPI:
             item["blocked_by"].append(meta.get("seq"))
 
     async def op_say(step: dict) -> Any:
+        channel = str(step.get("channel") or "narration").strip().lower()
+        if channel not in SPEECH_CHANNELS:
+            raise ValueError(
+                f"未知语音通道: {channel!r}（允许: {'/'.join(SPEECH_CHANNELS)}）"
+            )
+        if recorder.recording and channel == "ambient":
+            return {
+                "ok": True,
+                "suppressed": True,
+                "reason": "recording_active_ambient_muted",
+                "channel": "ambient",
+                "said": str(step.get("text") or "").strip(),
+                "spoken": False,
+            }
         if not step.get("speak"):
             await broadcast({"t": "say", "text": step["text"],
                              "ms": step.get("ms", 2500)})
@@ -5777,15 +6120,25 @@ def build_app(cfg: dict) -> FastAPI:
             # 代价太大（一句旁白没声音不至于让整条动线作废），闷声吞掉更坏。
             ms = int(step.get("ms") or 2600)
             await broadcast({"t": "say", "text": text, "ms": ms})
-            return {"said": text, "spoken": False, "error": str(exc),
+            return {"said": text, "spoken": False, "channel": channel, "error": str(exc),
                     "note": "这句没出声：合成没做成，只显示了字幕（按 "
                             f"{ms} 毫秒计时）。录制音轨里也没有这一句。"}
+        # 若在等待合成期间舞台刚刚开启录制且本条为 ambient，同样直接拦截不入队
+        if recorder.recording and channel == "ambient":
+            return {
+                "ok": True,
+                "suppressed": True,
+                "reason": "recording_active_ambient_muted",
+                "channel": "ambient",
+                "said": text,
+                "spoken": False,
+            }
         if step.get("interject"):
             # **插播**：掐掉正在说的那一句，这一句立刻说，排着的留着接着说。
             # 顺序要紧：先把这一句插到队首，再掐当前那句。反过来的话，掐完
             # worker 立刻端起原来队首那句开讲，这一句反而排到它后面——那就成了
             # 「排队」而不是「插播」。两行之间没有 await，worker 插不进来。
-            item = speech_enqueue(syn, text, out, front=True)
+            item = speech_enqueue(syn, text, out, front=True, channel=channel)
             behind = [it for it in speech_pending() if it["id"] != item["id"]]
             interrupted = await speech_interrupt("被一句插播打断", keep_queue=True)
             # kept 报的是「原来排着、这次没被丢掉的」——把正在插播的这一句自己
@@ -5801,10 +6154,10 @@ def build_app(cfg: dict) -> FastAPI:
             interrupted = (await speech_interrupt("被新的一句打断")
                            if step.get("interrupt") else None)
             behind = speech_pending()
-            item = speech_enqueue(syn, text, out)
+            item = speech_enqueue(syn, text, out, channel=channel)
             starts_in_ms = round(
                 sum(speech_remaining_sec(it) for it in behind) * 1000)
-        result: dict = {"said": text, "spoken": True}
+        result: dict = {"said": text, "spoken": True, "channel": channel}
         if interrupted is not None:
             result["interrupted"] = interrupted
         if step.get("async"):
@@ -6461,7 +6814,28 @@ def build_app(cfg: dict) -> FastAPI:
         failed = record_gate()
         if failed and not step.get("force"):
             raise GateError(failed)
+        # 隔离录制音轨与探路/场外语音：启动录制前自动清空/丢弃开录时刻之前已在队列中
+        # 等待播报或正在播报的旧语音（除非显式指定 keep_speech=True），防止探路期排障语音串入成片开头。
+        purged_speech: dict | None = None
+        if not step.get("keep_speech") and speech_pending():
+            purged_speech = await speech_interrupt(
+                "rec.start.purge_pre_record_speech", keep_queue=False
+            )
         out = await recorder.start(name)
+        if not step.get("keep_speech") and speech_pending():
+            late_purged = await speech_interrupt(
+                "rec.start.purge_pre_record_speech", keep_queue=False
+            )
+            if purged_speech is None:
+                purged_speech = late_purged
+            else:
+                purged_speech["dropped"] = list(purged_speech.get("dropped") or []) + list(
+                    late_purged.get("dropped") or []
+                )
+                if late_purged.get("stopped"):
+                    purged_speech["stopped"] = late_purged["stopped"]
+        if purged_speech is not None:
+            out["purged_speech"] = purged_speech
         if failed:
             # 绕过要留痕，绝不静默：回执与 broker.log 各写一份，
             # 事后回看成片发现构图不对时，能查到当时是知情放行的。
@@ -6748,7 +7122,8 @@ def build_app(cfg: dict) -> FastAPI:
             t_start = time.time()
             try:
                 outcome = await OPS[op](step) or {}
-                recorder.note(op, step, outcome, t_start, observation=observation)
+                if not (op == "say" and isinstance(outcome, dict) and outcome.get("suppressed")):
+                    recorder.note(op, step, outcome, t_start, observation=observation)
                 entry = {"index": i, "op": op, "status": "ok", **outcome}
                 if aborted_at is not None:
                     # 收尾步骤是在"整批已经作废"之后跑的，别让它看起来像

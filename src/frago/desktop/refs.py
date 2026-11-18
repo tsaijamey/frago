@@ -34,12 +34,14 @@ from __future__ import annotations
 PAGE_PREFIX = "page:"
 TEXT_PREFIX = "text:"
 CSS_PREFIX = "css:"
+NTH_PREFIX = "nth:"
 
 #: 写法一览，进回执的 hint 与错误消息，两处引同一份，别各写各的。
 FORMS_HINT = (
     'page:"文字"（引号裹住，JSON 里最直接）、'
     "page:text:文字（显式按文字，命令行上不怕引号被 shell 吃掉）、"
     "page:css:选择器（显式按选择器，写错就报写错）、"
+    "page:nth:<N>:<目标>（命中多个时按 0-based 序号取第 N 个）、"
     "page:裸串（先当选择器，不成再当文字）"
 )
 
@@ -53,6 +55,20 @@ def page_body(ref: str) -> str:
     return ref.strip()[len(PAGE_PREFIX):].strip()
 
 
+def _strip_nth_prefix(arg: str) -> tuple[int | None, str]:
+    """解析可选的 `nth:<N>:` 前缀，返回 `(index, 剩余部分)`。"""
+    if not arg.startswith(NTH_PREFIX):
+        return None, arg
+    rest = arg[len(NTH_PREFIX):]
+    sep = rest.find(":")
+    if sep <= 0:
+        return None, arg
+    idx_str = rest[:sep].strip()
+    if not idx_str.isdigit():
+        return None, arg
+    return int(idx_str), rest[sep + 1:].strip()
+
+
 def parse_page_ref(arg: str) -> dict:
     """把 `page:` 后面那一截解析成一份寻址计划。
 
@@ -61,25 +77,28 @@ def parse_page_ref(arg: str) -> dict:
     回退在那里是帮倒忙：人明说了按选择器找，却悄悄按文字命中一个别的元素，
     比直接报错更难查。
     """
-    arg = (arg or "").strip()
+    raw_arg = (arg or "").strip()
+    nth_index, arg = _strip_nth_prefix(raw_arg)
+    extra = {"index": nth_index} if nth_index is not None else {}
     if not arg:
-        return {"raw": arg, "form": "empty", "attempts": [],
-                "why": "page: 后面是空的"}
+        return {"raw": raw_arg, "form": "empty", "attempts": [],
+                "why": "page: 后面是空的", **extra}
     if len(arg) >= 2 and arg[0] == '"' and arg[-1] == '"':
         body = arg[1:-1]
-        return {"raw": arg, "form": "quoted", "attempts": [("text", body)],
-                "why": "首尾有双引号 → 按可见文字找"}
+        return {"raw": raw_arg, "form": "quoted", "attempts": [("text", body)],
+                "why": "首尾有双引号 → 按可见文字找", **extra}
     if arg.startswith(TEXT_PREFIX):
         body = arg[len(TEXT_PREFIX):].strip()
-        return {"raw": arg, "form": "text", "attempts": [("text", body)],
-                "why": "text: 前缀 → 按可见文字找"}
+        return {"raw": raw_arg, "form": "text", "attempts": [("text", body)],
+                "why": "text: 前缀 → 按可见文字找", **extra}
     if arg.startswith(CSS_PREFIX):
         body = arg[len(CSS_PREFIX):].strip()
-        return {"raw": arg, "form": "css", "attempts": [("selector", body)],
-                "why": "css: 前缀 → 按 CSS 选择器找，不回退"}
-    return {"raw": arg, "form": "bare",
+        return {"raw": raw_arg, "form": "css", "attempts": [("selector", body)],
+                "why": "css: 前缀 → 按 CSS 选择器找，不回退", **extra}
+    return {"raw": raw_arg, "form": "bare",
             "attempts": [("selector", arg), ("text", arg)],
-            "why": "裸串 → 先当 CSS 选择器解析，解析不成或零命中再当可见文字找"}
+            "why": "裸串 → 先当 CSS 选择器解析，解析不成或零命中再当可见文字找",
+            **extra}
 
 
 def matched_note(form: str, matched_by: str | None, needle: str | None) -> str | None:

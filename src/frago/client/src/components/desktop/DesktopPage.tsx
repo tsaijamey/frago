@@ -9,10 +9,11 @@
  * 让给虚拟桌面舞台。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Monitor, RefreshCw, Volume2, VolumeX } from 'lucide-react';
-import { desktopAppUrl } from '@/api/client';
+import { desktopAppUrl, getActiveDesktopSession } from '@/api/client';
+import { agentReasonText, useAgentClients, type AgentClient } from '@/hooks/useAgentClients';
 import { usePageStore } from '@/stores/pageStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import EmptyState from '@/components/ui/EmptyState';
@@ -25,6 +26,7 @@ type VirtualAppKey = 'all' | 'term' | 'browser' | 'image' | 'video' | 'slide' | 
 
 const RESOLUTIONS = ['1920×1080', '1440×900', '1280×720'] as const;
 const FPS_OPTIONS = ['30 fps', '60 fps', '15 fps'] as const;
+const DESKTOP_AGENT_PRIORITY = ['coreagent', 'claude', 'codex', 'agy', 'opencode'] as const;
 
 const VIRTUAL_APPS: { key: VirtualAppKey; label: string; short: string }[] = [
   { key: 'all', label: 'All apps (Desktop)', short: 'All' },
@@ -36,12 +38,24 @@ const VIRTUAL_APPS: { key: VirtualAppKey; label: string; short: string }[] = [
   { key: 'overlay', label: 'Progress Overlay', short: 'Overlay' },
 ];
 
+const VIRTUAL_APP_KEYS = new Set<VirtualAppKey>(VIRTUAL_APPS.map((a) => a.key));
+
+function agentPriorityRank(agentType: string): number {
+  const idx = DESKTOP_AGENT_PRIORITY.indexOf(
+    agentType.toLowerCase() as (typeof DESKTOP_AGENT_PRIORITY)[number]
+  );
+  return idx >= 0 ? idx : DESKTOP_AGENT_PRIORITY.length;
+}
+
 export default function DesktopPage() {
   const { t } = useTranslation();
   const sessionId = usePageStore((s) => s.desktopSessionId);
+  const explicitSessionId = usePageStore((s) => s.desktopExplicitSessionId);
+  const setDesktopSessionId = usePageStore((s) => s.setDesktopSessionId);
   const currentPage = usePageStore((s) => s.currentPage);
   const isActive = currentPage === 'desktop';
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const userPickedAgentRef = useRef(false);
   const [frameState, setFrameState] = useState<FrameState>('loading');
   // 重新挂载 iframe 的钥匙：装载失败时人点「重新载入」，换掉 key 强制它重来一次。
   const [reloadKey, setReloadKey] = useState(0);
@@ -51,8 +65,33 @@ export default function DesktopPage() {
   const [controlMode, setControlMode] = useState<ControlMode>('observe');
   const [soundUnlocked, setSoundUnlocked] = useState<boolean>(false);
   const [activeApp, setActiveApp] = useState<VirtualAppKey>('all');
+  const [selectedAgent, setSelectedAgent] = useState<string>('');
+  const configRef = useRef({
+    resolution: RESOLUTIONS[0] as string,
+    fps: FPS_OPTIONS[0] as string,
+    narratorOn: true,
+    controlMode: 'observe' as ControlMode,
+  });
 
-  const src = desktopAppUrl(sessionId);
+  const { agents: rawAgents, loading: loadingAgents } = useAgentClients(true);
+
+  const orderedAgents: AgentClient[] = useMemo(() => {
+    return [...rawAgents].sort((a, b) => {
+      const ra = agentPriorityRank(a.agent_type);
+      const rb = agentPriorityRank(b.agent_type);
+      if (ra !== rb) return ra - rb;
+      return a.agent_type.localeCompare(b.agent_type);
+    });
+  }, [rawAgents]);
+
+  const selectableAgents = useMemo(
+    () => orderedAgents.filter((a) => a.selectable),
+    [orderedAgents]
+  );
+
+  const defaultPriorityAgent = selectableAgents[0]?.agent_type ?? '';
+
+  const src = desktopAppUrl(explicitSessionId);
 
   const { isConnected } = useWebSocket({ autoConnect: true });
 
@@ -63,6 +102,80 @@ export default function DesktopPage() {
       // ignore transient errors before iframe document is ready
     }
   }, []);
+
+  useEffect(() => {
+    if (!defaultPriorityAgent) return;
+    if (!selectedAgent) {
+      setSelectedAgent(defaultPriorityAgent);
+      if (frameState === 'ready') {
+        postToStage({ type: 'frago:desktop-agent', agent: defaultPriorityAgent });
+      }
+    }
+  }, [defaultPriorityAgent, selectedAgent, frameState, postToStage]);
+
+  // 双向同步：接收画布内会话变更与全部顶部工具条状态（mode / narrator / soundUnlocked / app / agent）。
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'frago:desktop-session') {
+        const nextSid = typeof data.sessionId === 'string' && data.sessionId.trim() ? data.sessionId.trim() : null;
+        setDesktopSessionId(nextSid, { clearExplicit: !!data.reset });
+        if (typeof data.agent === 'string' && data.agent.trim() && !userPickedAgentRef.current) {
+          setSelectedAgent(data.agent.trim());
+        }
+        return;
+      }
+      if (data.type === 'frago:desktop-state') {
+        if (data.mode === 'observe' || data.mode === 'takeover') {
+          configRef.current.controlMode = data.mode;
+          setControlMode(data.mode);
+        }
+        if (typeof data.narrator === 'boolean') {
+          configRef.current.narratorOn = data.narrator;
+          setNarratorOn(data.narrator);
+        }
+        if (typeof data.soundUnlocked === 'boolean') {
+          setSoundUnlocked(data.soundUnlocked);
+        }
+        if (typeof data.app === 'string' && VIRTUAL_APP_KEYS.has(data.app as VirtualAppKey)) {
+          setActiveApp(data.app as VirtualAppKey);
+        }
+        if (typeof data.resolution === 'string' && (RESOLUTIONS as readonly string[]).includes(data.resolution)) {
+          configRef.current.resolution = data.resolution;
+          setResolution(data.resolution);
+        }
+        if (typeof data.fps === 'string' && (FPS_OPTIONS as readonly string[]).includes(data.fps)) {
+          configRef.current.fps = data.fps;
+          setFps(data.fps);
+        }
+        if (typeof data.agent === 'string' && data.agent.trim() && !userPickedAgentRef.current) {
+          setSelectedAgent(data.agent.trim());
+        }
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [setDesktopSessionId]);
+
+  useEffect(() => {
+    if (explicitSessionId || sessionId) return;
+    let cancelled = false;
+    getActiveDesktopSession()
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.restored && res.session_id) {
+          const cur = usePageStore.getState().desktopSessionId;
+          if (!cur) setDesktopSessionId(res.session_id);
+        }
+      })
+      .catch(() => {
+        // 忽略挂载期的瞬时网络错误，由 iframe 内同步兜底
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [explicitSessionId, sessionId, setDesktopSessionId]);
 
   useEffect(() => {
     postToStage({ type: 'frago:desktop-visibility', visible: isActive });
@@ -115,36 +228,72 @@ export default function DesktopPage() {
   };
 
   const updateResolution = (next: string) => {
+    configRef.current.resolution = next;
     setResolution(next);
-    postToStage({ type: 'frago:desktop-config', resolution: next, fps, narrator: narratorOn, mode: controlMode });
+    postToStage({
+      type: 'frago:desktop-config',
+      resolution: next,
+      fps: configRef.current.fps,
+      narrator: configRef.current.narratorOn,
+      mode: configRef.current.controlMode,
+    });
   };
 
   const updateFps = (next: string) => {
+    configRef.current.fps = next;
     setFps(next);
-    postToStage({ type: 'frago:desktop-config', resolution, fps: next, narrator: narratorOn, mode: controlMode });
+    postToStage({
+      type: 'frago:desktop-config',
+      resolution: configRef.current.resolution,
+      fps: next,
+      narrator: configRef.current.narratorOn,
+      mode: configRef.current.controlMode,
+    });
   };
 
   const toggleNarrator = () => {
-    const next = !narratorOn;
+    const next = !configRef.current.narratorOn;
+    configRef.current.narratorOn = next;
     setNarratorOn(next);
-    postToStage({ type: 'frago:desktop-config', resolution, fps, narrator: next, mode: controlMode });
+    postToStage({
+      type: 'frago:desktop-config',
+      resolution: configRef.current.resolution,
+      fps: configRef.current.fps,
+      narrator: next,
+      mode: configRef.current.controlMode,
+    });
   };
 
   const updateControlMode = (next: ControlMode) => {
+    configRef.current.controlMode = next;
     setControlMode(next);
-    postToStage({ type: 'frago:desktop-config', resolution, fps, narrator: narratorOn, mode: next });
+    postToStage({
+      type: 'frago:desktop-config',
+      resolution: configRef.current.resolution,
+      fps: configRef.current.fps,
+      narrator: configRef.current.narratorOn,
+      mode: next,
+    });
   };
 
   const unlockAudio = () => {
-    const next = !soundUnlocked;
-    setSoundUnlocked(next);
-    postToStage({ type: 'frago:desktop-unlock-audio', unlocked: next });
+    setSoundUnlocked(true);
+    postToStage({ type: 'frago:desktop-unlock-audio', unlocked: true });
   };
 
   const selectVirtualApp = (next: VirtualAppKey) => {
     setActiveApp(next);
     postToStage({ type: 'frago:desktop-app', app: next });
   };
+
+  const selectOperatorAgent = (nextAgent: string) => {
+    if (!nextAgent) return;
+    userPickedAgentRef.current = true;
+    setSelectedAgent(nextAgent);
+    postToStage({ type: 'frago:desktop-agent', agent: nextAgent });
+  };
+
+  const selectedAgentObj = orderedAgents.find((a) => a.agent_type === selectedAgent);
 
   // 状态栏文案：服务没连上时先说服务，再说桌面本身。
   const status = !isConnected
@@ -297,6 +446,54 @@ export default function DesktopPage() {
             </button>
           ))}
         </div>
+        <div className="dt-agent-selector ml-auto flex items-center gap-1.5" data-testid="desktop-agent-selector">
+          <span className="text-[11px] font-medium text-text-muted">
+            {t('desktop.agentLabel', { defaultValue: 'Agent' })}
+          </span>
+          <select
+            className="dt-select dt-select--sm dt-select--agent"
+            aria-label={t('desktop.operatorAgent', { defaultValue: 'Operator Agent' })}
+            data-testid="desktop-agent-select"
+            value={selectedAgent}
+            onChange={(e) => selectOperatorAgent(e.target.value)}
+            disabled={orderedAgents.length > 0 && selectableAgents.length === 0}
+            title={
+              selectedAgentObj && !selectedAgentObj.selectable && selectedAgentObj.reason
+                ? (agentReasonText(selectedAgentObj.reason) ?? selectedAgentObj.reason)
+                : t('desktop.operatorAgentHint', { defaultValue: 'Select desktop-operator agent kernel' })
+            }
+          >
+            {orderedAgents.length === 0 ? (
+              <option value="">
+                {loadingAgents
+                  ? t('desktop.agentsLoading', { defaultValue: 'Probing agents…' })
+                  : t('desktop.agentAuto', { defaultValue: 'Auto' })}
+              </option>
+            ) : (
+              <>
+                {selectableAgents.length === 0 && (
+                  <option value="" disabled>
+                    {t('desktop.noAgentAvailable', { defaultValue: 'No available agent' })}
+                  </option>
+                )}
+                {orderedAgents.map((a) => {
+                  const reason = !a.selectable && a.reason ? agentReasonText(a.reason) : null;
+                  return (
+                    <option
+                      key={a.agent_type}
+                      value={a.agent_type}
+                      disabled={!a.selectable}
+                      title={reason ?? undefined}
+                    >
+                      {a.display_name}
+                      {reason ? ` — ${reason}` : ''}
+                    </option>
+                  );
+                })}
+              </>
+            )}
+          </select>
+        </div>
       </div>
 
       <div className="dt-stage">
@@ -327,6 +524,18 @@ export default function DesktopPage() {
               type: 'frago:desktop-app',
               app: activeApp,
             });
+            if (selectedAgent) {
+              postToStage({
+                type: 'frago:desktop-agent',
+                agent: selectedAgent,
+              });
+            }
+            if (soundUnlocked) {
+              postToStage({
+                type: 'frago:desktop-unlock-audio',
+                unlocked: true,
+              });
+            }
           }}
           onError={() => setFrameState('error')}
         />

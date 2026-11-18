@@ -1828,6 +1828,357 @@ def test_browser_read_observe_sets_the_flag():
     assert "observe" not in steps3[0]
 
 
+# ── P0-1 / P0-2 / P0-3 / P1-4 / P1-5 桌面主操作员录制与探索工具链机制单测 ──
+
+
+def test_p0_1_play_expands_cli_and_dict_steps_with_record_wrapper(monkeypatch):
+    """[P0-1] frago desktop play 与 rec take 能将多步剧本展平为连贯执行步骤。"""
+    from frago.desktop import aos
+
+    posted: list[list[dict]] = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append(steps)
+        return {"ok": True, "results": [{"status": "ok"} for _ in steps]}
+
+    monkeypatch.setattr(aos, "pick_instance", lambda _id=None: {"id": "default", "port": 8770, "status": "running"})
+    monkeypatch.setattr(aos, "post", fake_post)
+
+    script = json.dumps([
+        "browser click --text 'AI Providers' --index 1",
+        {"cmd": "camera focus", "ref": "page:text:API Key", "zoom": 1.6, "ms": 400},
+        "strap show 'Step 1' --title 'Demo'",
+        "wait --ms 500",
+    ])
+    out = aos.run([["rec", "take", "--name", "demo-clip", "--steps", script]], None)
+    assert out["ok"] is True
+    assert len(posted) == 1
+    ops = [s["op"] for s in posted[0]]
+    assert ops == [
+        "record.start",
+        "cursor",
+        "click",
+        "camera.focus",
+        "strap.show",
+        "sleep",
+        "record.stop",
+    ]
+    assert posted[0][0]["name"] == "demo-clip"
+    assert posted[0][1]["ref"] == 'page:nth:1:"AI Providers"'
+
+
+def test_p0_1_desktop_operator_prompt_contains_generalized_tools_and_methodology():
+    """[P0-1] desktop-operator 提示词与 SKILL.md 必须采用泛化的「可用工具｜方法论」，禁止写死单次场景词并保留 409 门禁说明。"""
+    from frago.employee import service as emp_service
+
+    text = emp_service._DESKTOP_OPERATOR_WORK_SCOPE
+    assert "elements --in browser" in text
+    assert "--index <N>" in text
+    assert "frago desktop play" in text
+    assert "先探明、后连贯执行" in text
+    for forbidden in ("Save Provider", "Cancel", "点击保存/关闭弹窗", "点击底部保存/关闭弹窗", "两阶段脚本化录制铁律"):
+        assert forbidden not in text
+
+    # 检查 service.py 组装提示词片段与默认 spec 中不含场景特化硬编码
+    service_src = Path(emp_service.__file__).read_text(encoding="utf-8")
+    for forbidden in ("Save Provider", "点击底部保存/关闭弹窗", "两阶段脚本化录制铁律", "5. **两阶段"):
+        assert forbidden not in service_src
+
+    # 检查 SKILL.md：保留 409 门禁说明且无场景特化硬编码
+    skill_path = (
+        Path(emp_service.__file__).resolve().parents[1]
+        / "resources"
+        / "skills"
+        / "how-frago-agent-runs-an-agent-os"
+        / "SKILL.md"
+    )
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "409 门禁拒绝" in skill_text
+    assert "不要在有人开着桌面页时单独 `camera up`" in skill_text
+    assert "frago desktop play" in skill_text
+    assert "elements --in browser" in skill_text
+    assert "Save Provider" not in skill_text
+
+
+def test_p0_2_out_of_viewport_auto_scrolls_and_fixes_covered_by_none_message(
+    sealed_broker, monkeypatch
+):
+    """[P0-2] 视口外元素点击时先自动 scrollIntoView 重取坐标；不可点时严禁报「被 none 盖住」。"""
+    calls = {"locate": 0, "scrolled": 0}
+
+    async def fake_locate(_eval, arg, *, frame=False, expand_to=None):
+        calls["locate"] += 1
+        if calls["locate"] == 1:
+            return {
+                "hits": [{
+                    "x": 640, "y": 1297, "w": 120, "h": 36,
+                    "tag": "button", "text": "Save Provider",
+                    "reachable": False, "out_of_viewport": True, "covered_by": None,
+                }],
+                "matched_by": "text", "needle": "Save Provider",
+                "form": "text", "tried": [{"how": "text", "needle": "Save Provider", "hits": 1}],
+                "index": None, "note": None,
+            }
+        return {
+            "hits": [{
+                "x": 640, "y": 720, "w": 120, "h": 36,
+                "tag": "button", "text": "Save Provider",
+                "reachable": True, "out_of_viewport": False, "covered_by": None,
+            }],
+            "matched_by": "text", "needle": "Save Provider",
+            "form": "text", "tried": [{"how": "text", "needle": "Save Provider", "hits": 1}],
+            "index": None, "note": None,
+        }
+
+    async def fake_scroll(_eval, matched_by, needle, index=0):
+        calls["scrolled"] += 1
+        return True
+
+    monkeypatch.setattr(broker, "page_locate", fake_locate)
+    monkeypatch.setattr(broker, "_scroll_target_into_view", fake_scroll)
+
+    code, out = post_control(sealed_broker, {
+        "steps": [{"op": "cursor", "ref": "page:text:Save Provider", "ms": 0}]
+    })
+    assert code == 200 and out["ok"] is True
+    assert calls["scrolled"] == 1
+    assert out["results"][0]["auto_scrolled"] is True
+
+    # 当滚入后依然位于视口外且无遮挡元素时，报错必须明确指出位于当前视口范围外，严禁出现「被 none 盖住」
+    async def always_out(_eval, arg, *, frame=False, expand_to=None):
+        return {
+            "hits": [{
+                "x": 640, "y": 1400, "w": 120, "h": 36,
+                "tag": "button", "text": "Save Provider",
+                "reachable": False, "out_of_viewport": True, "covered_by": None,
+            }],
+            "matched_by": "text", "needle": "Save Provider",
+            "form": "text", "tried": [{"how": "text", "needle": "Save Provider", "hits": 1}],
+            "index": None, "note": None,
+        }
+
+    monkeypatch.setattr(broker, "page_locate", always_out)
+    code2, out2 = post_control(sealed_broker, {
+        "steps": [{"op": "cursor", "ref": "page:text:Save Provider", "ms": 0}]
+    })
+    assert code2 == 500 and out2["ok"] is False
+    assert "位于当前视口范围外" in out2["error"]
+    assert "被 none 盖住" not in out2["error"]
+    assert "被 None 盖住" not in out2["error"]
+
+
+def test_p0_3_elements_returns_rich_attributes_and_supports_index(
+    sealed_broker, monkeypatch
+):
+    """[P0-3] elements 返回 id/name/type/title/aria_label/value/selected_text 并支持 --index 與 page:nth:<N>:。"""
+    sample_hits = [
+        {
+            "x": 200, "y": 120, "w": 180, "h": 32,
+            "tag": "select", "id": "profile-kind", "name": "kind",
+            "type": "select-one", "title": "Connection Kind",
+            "aria_label": "Connection Kind",
+            "value": "endpoint", "selected_text": "API Endpoint",
+            "text": "API Endpoint",
+            "reachable": True, "out_of_viewport": False, "covered_by": None,
+        },
+        {
+            "x": 200, "y": 180, "w": 180, "h": 32,
+            "tag": "select", "id": "profile-endpoint-type", "name": "endpoint_type",
+            "type": "select-one", "title": "Endpoint Type",
+            "aria_label": "Endpoint Type",
+            "value": "custom", "selected_text": "Custom Endpoint",
+            "text": "Custom Endpoint",
+            "reachable": True, "out_of_viewport": False, "covered_by": None,
+        },
+    ]
+
+    async def fake_query(_eval, text=None, selector=None, *, frame=False, expand_to=None):
+        return list(sample_hits)
+
+    monkeypatch.setattr(broker, "page_query", fake_query)
+
+    code, out = post_control(sealed_broker, {
+        "steps": [{"op": "elements", "in": "browser", "selector": "select", "index": 1}]
+    })
+    assert code == 200 and out["ok"] is True
+    res = out["results"][0]
+    assert res["count"] == 1
+    m = res["matches"][0]
+    assert m["index"] == 1
+    assert m["id"] == "profile-endpoint-type"
+    assert m["value"] == "custom"
+    assert m["selected_text"] == "Custom Endpoint"
+    assert m["ref"] == "page:nth:1:select"
+
+    # 通过 page:nth:1:select 点击第 2 个匹配项
+    code_cur, out_cur = post_control(sealed_broker, {
+        "steps": [{"op": "cursor", "ref": "page:nth:1:select", "ms": 0}]
+    })
+    assert code_cur == 200 and out_cur["ok"] is True
+    assert out_cur["results"][0]["index"] == 1
+    assert out_cur["results"][0]["text"] == "Custom Endpoint"
+
+
+def test_p1_4_camera_focus_clamped_auto_downgrades_zoom_without_error(
+    sealed_broker, fake_page
+):
+    """[P1-4] camera focus 遇到桌面边界夹紧导致目标出框时自动平滑下调 zoom 并返回 ok:true。"""
+    # 构造一个紧贴顶部且高度较大的元素，在 zoom=2.2 下必然因 top 夹紧而超出取景框
+    fake_page(table={
+        ("selector", "#tall-modal"): [{
+            "x": 100, "y": 5, "w": 600, "h": 560,
+            "tag": "div", "id": "tall-modal", "expanded": False,
+            "text": "Edit AI Provider", "text_len": 16,
+        }]
+    })
+    code, out = post_control(sealed_broker, {
+        "steps": [{"op": "camera.focus", "refs": ["page:#tall-modal"], "zoom": 2.2, "ms": 0}]
+    })
+    assert code == 200 and out["ok"] is True
+    r = out["results"][0]
+    assert r["status"] == "ok"
+    assert "adjusted_zoom" in r
+    assert r["adjusted_zoom"] < 2.2
+    assert r["adjusted_zoom"] >= 1.0
+    assert r["clamped"]
+
+
+def test_p1_4_stage_recorder_filters_pre_record_voice(tmp_path):
+    """[P1-4] StageRecorder.add_voice 自动过滤开录时间 _t0 之前排队的探路语音。"""
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path,
+    )
+    rec.recording = True
+    rec.name = "test-clip"
+    rec._t0 = 1000.0
+    wav = tmp_path / "sample.mp3"
+    wav.write_bytes(b"RIFF")
+
+    # 探路期排队的旧语音（queued_at < _t0）不计入音轨
+    rec.add_voice(
+        {"id": "s1", "audio": str(wav), "duration_ms": 1500, "text": "探路期旧语音", "queued_at": 990.0},
+        started_at=1000.5,
+    )
+    assert len(rec.voice_lines) == 0
+
+    # 正式开录后排队的语音（queued_at >= _t0）正常计入音轨
+    rec.add_voice(
+        {"id": "s2", "audio": str(wav), "duration_ms": 1500, "text": "正式录制旁白", "queued_at": 1001.5},
+        started_at=1002.0,
+    )
+    assert len(rec.voice_lines) == 1
+    assert rec.voice_lines[0]["channel"] == "narration"
+
+    # 任何 channel="ambient" 的伴随语音即便时间戳在录制期内，也绝不进入 StageRecorder.voice_lines
+    rejected = rec.add_voice(
+        {
+            "id": "s3",
+            "audio": str(wav),
+            "duration_ms": 1500,
+            "text": "现在开始录制",
+            "queued_at": 1002.5,
+            "channel": "ambient",
+        },
+        started_at=1003.0,
+    )
+    assert rejected is None
+    assert len(rec.voice_lines) == 1
+
+
+def test_two_layer_voice_play_auto_waits_speech_and_docs_updated(monkeypatch):
+    """验证：
+    1. frago desktop play 录制剧本含 say --speak 时，在最后的 record.stop 前自动补齐 speech.wait(target='all')；
+    2. service.py、SKILL.md 与 desktop-usage.md 已同步更新为「双层语音体系（ambient vs narration）」。
+    """
+    from frago.desktop import aos
+    from frago.employee import service as emp_service
+
+    posted: list[list[dict]] = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append(steps)
+        return {"ok": True, "results": [{"status": "ok"} for _ in steps]}
+
+    monkeypatch.setattr(
+        aos,
+        "pick_instance",
+        lambda _id=None: {"id": "default", "port": 8770, "status": "running"},
+    )
+    monkeypatch.setattr(aos, "post", fake_post)
+
+    script = json.dumps([
+        'say "Step one: open the AI Providers tab." --speak --async',
+        'browser click --text "AI Providers" --index 1',
+        "pause --ms 800",
+    ])
+    out = aos.run([["play", "--name", "narration-demo", "--steps", script]], None)
+    assert out["ok"] is True
+    ops = [s["op"] for s in posted[0]]
+    assert ops == [
+        "record.start",
+        "say",
+        "cursor",
+        "click",
+        "sleep",
+        "speech.wait",
+        "record.stop",
+    ]
+    assert posted[0][-2] == {"op": "speech.wait", "target": "all"}
+
+    # 验证 service.py、SKILL.md、desktop-usage.md 均已更新为双层语音体系规范
+    service_src = Path(emp_service.__file__).read_text(encoding="utf-8")
+    assert "双层语音体系" in service_src
+    assert "ambient" in service_src and "narration" in service_src
+    assert "严禁直接语音播报" not in service_src
+
+    skill_path = (
+        Path(emp_service.__file__).resolve().parents[1]
+        / "resources"
+        / "skills"
+        / "how-frago-agent-runs-an-agent-os"
+        / "SKILL.md"
+    )
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "双层语音体系" in skill_text
+    assert "ambient" in skill_text and "narration" in skill_text
+
+    book_path = (
+        Path(emp_service.__file__).resolve().parents[1]
+        / "resources"
+        / "book"
+        / "desktop-usage.md"
+    )
+    book_text = book_path.read_text(encoding="utf-8")
+    assert "双层语音体系" in book_text
+    assert "--channel narration" in book_text and "ambient" in book_text
+
+
+def test_p1_5_subcommand_help_returns_specific_documentation(capsys):
+    """[P1-5] frago desktop <subcommand> --help 返回针对性子命令参数说明且退出码为 0。"""
+    from frago.desktop import aos
+
+    for argv, expected_key in [
+        (["browser", "click", "--help"], "browser click"),
+        (["browser", "scroll", "--help"], "browser scroll"),
+        (["elements", "--help"], "elements"),
+        (["play", "--help"], "play"),
+        (["camera", "--help"], "camera"),
+        (["rec", "--help"], "rec"),
+    ]:
+        code = aos.main(argv)
+        out = json.loads(capsys.readouterr().out.strip())
+        assert code == 0
+        assert out["ok"] is True
+        assert out["help"] == expected_key
+        assert ("usage" in out or "verbs" in out) and "examples" in out
+
+
+
 def test_elements_observe_sets_the_flag():
     """`elements --in browser --observe` 产出的 step 必须带 observe:True，
     broker 的 op_elements 据此不调用 ensure_active("browser")，不顶窗。"""
@@ -2059,7 +2410,7 @@ def test_desktop_ui_assets_contain_takeover_and_headful_controls():
 
 
 def test_desktop_director_chat_supports_zh_and_en_i18n():
-    """右下角导演对话区域（#human-input）的所有文案必须同时提供 zh / en 双语字典，
+    """右下角透明输入区域与小花朵（#human-input）的所有文案必须同时提供 zh / en 双语字典，
     并随 WebUI 的 localStorage('language') 与 storage 事件实时切换。"""
     assets = Path(stage.__file__).resolve().parent / "assets"
     js = (assets / "app.js").read_text(encoding="utf-8")
@@ -2067,21 +2418,20 @@ def test_desktop_director_chat_supports_zh_and_en_i18n():
     assert 'localStorage.getItem("language")' in js
     assert 'window.addEventListener("storage"' in js
     for required_en in (
-        "Director Chat · Follow-ups",
-        "Queued to main session · Presenter responds live, operator & advisor execute",
-        "Type follow-ups here, ⌘+Enter / Ctrl+Enter to send",
-        "⌘/Ctrl+Enter to send · Enter for newline",
-        "Director Chat",
+        "Message desktop agent, Enter to send (Shift+Enter for newline)…",
+        "Delivered to desktop agent",
+        "Stage reset · new session ready",
+        "Reset",
         "Send",
     ):
         assert required_en in js
 
 
 def test_desktop_director_chat_cmd_ctrl_enter_ime_and_term_source_guard():
-    """验证导演对话输入框：
-    1. 仅允许 Cmd+Enter / Ctrl+Enter 发送，普通 Enter 换行；
+    """验证透明输入条：
+    1. 支持 Enter 发送（Shift+Enter 换行）；
     2. 具备中文输入法 compositionstart / compositionend 与 keyCode===229 组合输入保护；
-    3. 空输入时禁用发送按钮，且移除 focus-within 空框误高亮；
+    3. 空输入时禁用发送按钮，仅在存在文本时高亮发送按钮；
     4. aos term run 拦截直接原地修改源码文件的命令并引导交由 CLI Agent / 领域员工。
     """
     from frago.desktop import aos
@@ -2093,7 +2443,7 @@ def test_desktop_director_chat_cmd_ctrl_enter_ime_and_term_source_guard():
     assert 'text.addEventListener("compositionstart"' in js
     assert 'text.addEventListener("compositionend"' in js
     assert "isComposing || e.isComposing || e.keyCode === 229" in js
-    assert "e.key === \"Enter\" && (e.metaKey || e.ctrlKey) && !e.altKey" in js
+    assert 'e.key === "Enter" && !e.shiftKey && !e.altKey' in js
     assert "function syncSendBtnState()" in js
     assert "#human-input .hi-foot:focus-within .hi-send" not in css
     assert "#human-input.has-text .hi-send:not(:disabled)" in css
@@ -2114,23 +2464,19 @@ def test_desktop_director_chat_cmd_ctrl_enter_ime_and_term_source_guard():
 
 
 def test_desktop_director_chat_auto_grow_scrollbar_and_fab_collapse():
-    """右下角导演对话面板必须支持：
+    """右下角透明输入条与小花朵必须支持：
     1. 输入框随打字行数自增长（autoGrowInput + input 事件）且发送后回缩；
-    2. 消息区无死留白（min-height: 0）并可随对话增长至半屏（min(460px, 52vh)）；
-    3. 定制 4px 半透明圆角细滚动条（::-webkit-scrollbar）；
-    4. 展开面板时隐藏右下角重复的胶囊触发器（#hi-trigger）。
+    2. 折叠态仅露出右下角小花朵（data-mode="collapsed" 隐藏 .hi-transparent-bar）；
+    3. 活跃会话绑定时小花朵呈现呼吸光晕（data-session-active="true" .petal-aura）。
     """
     assets = Path(stage.__file__).resolve().parent / "assets"
     js = (assets / "app.js").read_text(encoding="utf-8")
     css = (assets / "style.css").read_text(encoding="utf-8")
     assert "function autoGrowInput()" in js
     assert 'text.addEventListener("input", autoGrowInput)' in js
-    assert "if (trigger) trigger.hidden = !!open;" in js
-    assert "min-height: 0;" in css
-    assert "max-height: min(460px, 52vh);" in css
-    assert "#human-input .hi-log::-webkit-scrollbar" in css
-    assert "width: 4px;" in css
-    assert '#human-input[data-mode="open"] .hi-fab' in css
+    assert "function setExpanded(open, focusInput)" in js
+    assert '#human-input[data-mode="collapsed"] .hi-transparent-bar' in css
+    assert '#human-input[data-session-active="true"] .petal-aura' in css
 
 
 def test_recorder_pump_error_cleans_frames_dir_and_closes_camera(tmp_path, monkeypatch):
@@ -2306,10 +2652,12 @@ def test_desktop_director_session_persistence_and_active_session_restore_in_app_
 
     assert 'var DIRECTOR_SID_STORAGE_KEY = "frago_desktop_director_sid";' in js
     assert "localStorage.getItem(DIRECTOR_SID_STORAGE_KEY)" in js
-    assert "localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid)" in js
+    assert "localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, clean)" in js
+    assert "function persistDirectorSessionId(nextSid)" in js
     assert 'fetch("/api/workbench/desktop-voice/active-session")' in js
+    assert 'fetch("/api/workbench/desktop-voice/active-session?agent="' in js
     assert "res && res.restored && res.session_id" in js
-    assert "lastSeq === 0 && !skillSent" in js
+    assert "if (!userSentThisLoad)" in js
 
 
 def test_daemon_stop_exempts_desktop_broker_and_descendants():

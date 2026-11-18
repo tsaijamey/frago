@@ -578,6 +578,7 @@ class PresenterDaemon:
                 "interject": True,
                 "voice": DEFAULT_VOICE,
                 "out": "page",
+                "channel": "ambient",
             },
             {
                 "op": "strap.show",
@@ -615,6 +616,7 @@ class PresenterDaemon:
             "interject": False,
             "voice": DEFAULT_VOICE,
             "out": "page",
+            "channel": "ambient",
         }
         try:
             aos.post(rec, [step], timeout=5.0)
@@ -920,7 +922,8 @@ SPEECH_SUMMARIZER_SYSTEM_PROMPT = """你就是正在操作这台虚拟桌面（A
    - 哪怕我在 `<operator_responses>` 或命令参数中列出了详细的「四步修复方案」「涉及改动文件清单」，只要终端屏幕或子会话还没有产出真实的修改完成回执与测试通过结果，你的语音播报**必须明确表述为「我已经启动了研发代理开始处理……正在执行中」**，**绝对禁止**把「刚派发/方案计划/启动回执」当成「已经改完/已经修好/任务已完成」播报给用户！
 4. **纯文本口语化与母语自适应**：
    - 输出结果必须是**100% 纯自然口语文本**，将直接送入母语级情感语音合成引擎（中文使用 `zh-CN-XiaoxiaoNeural`，纯英文使用 `en-US-AvaMultilingualNeural`）；
-   - **严禁**输出任何 JSON 对象、请求返回值（如 `{"ok": true, ...}` 或 `KernelTurn(...)`）、代码块、Markdown 符号（`*`、`#`、`` ` ``）、命令行参数或长路径；必须把工具调用与屏幕画面变化转化为「我」正在做的自然动作与结果描述；
+   - **严禁输出任何 JSON 对象、请求返回值（如 `{"ok": true, ...}` 或 `KernelTurn(...)`）、代码块、Markdown 符号（`*`、`#`、`` ` ``）、命令行参数或长路径**；必须把工具调用与屏幕画面变化转化为「我」正在做的自然动作与结果描述；
+   - **录制期间静默原则**：你是日常伴随播音层（`ambient`），若发现当前正在执行视频录制（`rec start`、`play --name`）或仅涉及「开始录制/停止录制」的元状态切换，只输出 `<SILENCE>`，绝不播报「现在开始录制」「我已经把录制停下来了」等破坏视频成片的元状态话术；
    - 每次输出控制在 1～3 句简短自然的口语（15～80 字），直接输出要说给用户听的纯文本正文，不要加任何前缀、引号或角色标签。"""
 
 
@@ -1040,6 +1043,42 @@ def transcribe_audio_with_groq(
         "model": whisper_model,
         "language": data.get("language"),
     }
+
+
+def is_stage_recording(port: int | None = None, timeout: float = 1.5) -> bool:
+    """检查当前虚拟桌面舞台是否正处于录制状态（recorder.recording == True）。
+
+    录制期间旁路伴随播音（ambient）必须完全静默，把语音通道 100% 让给显式解说旁白（narration）。
+    """
+    import urllib.request
+
+    from frago.desktop import registry, stage
+
+    if _is_test_isolated() and _is_real_fn(stage._fetch_status, "frago.desktop.stage"):
+        return False
+
+    target_port = port
+    if target_port is None:
+        with contextlib.suppress(Exception):
+            rec = registry.read_instance(registry.DEFAULT_ID)
+            if not rec or rec.get("status") != "running":
+                return False
+            target_port = int(rec.get("port") or 8770)
+    if not target_port:
+        return False
+
+    with contextlib.suppress(Exception):
+        if not _is_real_fn(stage._fetch_status, "frago.desktop.stage"):
+            st = stage._fetch_status(int(target_port))
+            if isinstance(st, dict):
+                return bool((st.get("recorder") or {}).get("recording"))
+        req = urllib.request.Request(f"http://127.0.0.1:{int(target_port)}/status", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            st = json.loads(raw) if raw.strip() else {}
+            if isinstance(st, dict):
+                return bool((st.get("recorder") or {}).get("recording"))
+    return False
 
 
 def fetch_agent_os_screen_context(port: int = 8770, timeout: float = 2.5) -> str:
@@ -1583,6 +1622,13 @@ class SpeechSummarizerDaemon:
         self.last_summarized_seq = max_seq
 
         effective_asr = immediate_asr or latest_record_asr
+        # 录制期间彻底静默 ambient 旁路伴随播音：推进游标后直接跳过总结与合成，
+        # 不生成「现在开始录制」「我已经把录制停下来了」等旁路主持语音。
+        if is_stage_recording():
+            if effective_asr:
+                self.last_warmed_asr = effective_asr
+            return ""
+
         is_warmup = False
         if not has_new_operator_output:
             if effective_asr and effective_asr != self.last_warmed_asr:
@@ -1609,6 +1655,9 @@ class SpeechSummarizerDaemon:
         if not spoken:
             return ""
 
+        if is_stage_recording():
+            return ""
+
         self.previous_summary = spoken
         self.spoken_history = (self.spoken_history + [spoken])[-6:]
         chosen_voice = voice.resolve_emotional_voice(spoken)
@@ -1625,6 +1674,8 @@ class SpeechSummarizerDaemon:
         from frago.desktop import aos, registry
 
         try:
+            if is_stage_recording():
+                return False
             rec = registry.read_instance("default")
             if not rec or rec.get("status") != "running":
                 return False
@@ -1637,9 +1688,14 @@ class SpeechSummarizerDaemon:
                     "interject": bool(interject),
                     "voice": chosen_voice,
                     "out": "page",
+                    "channel": "ambient",
                 }
             ]
-            aos.post(rec, steps, timeout=8.0)
+            out = aos.post(rec, steps, timeout=8.0)
+            if isinstance(out, dict):
+                first = (out.get("results") or [{}])[0] if out.get("results") else out
+                if isinstance(first, dict) and first.get("suppressed"):
+                    return False
             return True
         except Exception:
             logger.debug("旁路语音提炼器向桌面发送语音失败", exc_info=True)
@@ -1701,6 +1757,93 @@ def cleanup_all_speech_summarizers() -> list[str]:
     return stopped
 
 
+DESKTOP_OPERATOR_AGENT_PRIORITY: tuple[str, ...] = (
+    "coreagent",
+    "claude",
+    "codex",
+    "agy",
+    "opencode",
+)
+
+
+def _agent_order_key(agent_type: str) -> tuple[int, str]:
+    clean = str(agent_type or "").strip().lower()
+    if clean in DESKTOP_OPERATOR_AGENT_PRIORITY:
+        return (DESKTOP_OPERATOR_AGENT_PRIORITY.index(clean), "")
+    return (len(DESKTOP_OPERATOR_AGENT_PRIORITY), clean)
+
+
+def _serialize_desktop_operator_agent(agent: Any) -> dict[str, Any]:
+    return {
+        "agent_type": getattr(agent, "agent_type", ""),
+        "display_name": getattr(agent, "display_name", ""),
+        "installed": getattr(agent, "installed", None),
+        "path": getattr(agent, "path", None),
+        "family": getattr(agent, "family", None),
+        "selectable": bool(getattr(agent, "selectable", False)),
+        "reason": getattr(agent, "reason", None),
+        "id_origin": getattr(agent, "id_origin", "claimed"),
+    }
+
+
+def resolve_desktop_operator_agent(
+    preferred_agent: str | None = None,
+    *,
+    agents: list[Any] | None = None,
+) -> tuple[str | None, list[Any]]:
+    """按 `coreagent > claude > codex > agy > opencode` 优先级探测并返回主操作员可用的 Agent。
+
+    若传入合法且当前可用的 `preferred_agent` 则优先使用；否则严格按优先级顺序选出首个可用内核。
+    """
+    from frago.server.services import workbench_agents
+
+    probed = list(workbench_agents.list_agents() if agents is None else agents)
+    ordered = sorted(probed, key=lambda a: _agent_order_key(getattr(a, "agent_type", "")))
+    by_type = {str(getattr(a, "agent_type", "")).strip().lower(): a for a in ordered}
+
+    pref = str(preferred_agent or "").strip().lower()
+    if pref and pref in by_type and bool(getattr(by_type[pref], "selectable", False)):
+        return by_type[pref].agent_type, ordered
+
+    for candidate in DESKTOP_OPERATOR_AGENT_PRIORITY:
+        entry = by_type.get(candidate)
+        if entry is not None and bool(getattr(entry, "selectable", False)):
+            return entry.agent_type, ordered
+
+    for entry in ordered:
+        if bool(getattr(entry, "selectable", False)):
+            return entry.agent_type, ordered
+
+    return None, ordered
+
+
+def list_desktop_operator_agents() -> list[dict[str, Any]]:
+    """返回按桌面主操作员优先级排序的全量 Agent 可用性清单。"""
+    _, ordered = resolve_desktop_operator_agent()
+    return [_serialize_desktop_operator_agent(a) for a in ordered]
+
+
+def _infer_session_agent(session_id: str) -> str | None:
+    """推断存量会话归属的 Agent 类型（coreagent / claude / codex / agy / opencode）。"""
+    clean_sid = str(session_id or "").strip()
+    if not clean_sid:
+        return None
+    if clean_sid.startswith("core_"):
+        return "coreagent"
+
+    from frago.server.services import session_send
+    from frago.session import record_reader
+
+    with contextlib.suppress(Exception):
+        family = record_reader.detect_family(clean_sid)
+        if family == "coreagent":
+            return "coreagent"
+        mapped = session_send.AGENT_TYPE_BY_FAMILY.get(family)
+        if mapped:
+            return mapped
+    return None
+
+
 def is_desktop_operator_session(session_id: str) -> bool:
     """判断指定会话是否属于专职员工 desktop-operator（若从会话首轮记录识别命中则自动补登记回 active_session_ids）。"""
     clean_sid = str(session_id or "").strip()
@@ -1715,21 +1858,20 @@ def is_desktop_operator_session(session_id: str) -> bool:
         if post and clean_sid in (post.active_session_ids or []):
             return True
 
-    if clean_sid.startswith("core_"):
-        with contextlib.suppress(Exception):
-            early_records = record_reader.read_records(clean_sid, limit=2, tail=False)
-            for rec in early_records:
-                if getattr(rec, "kind", None) != "user.say":
-                    continue
-                payload = getattr(rec, "payload", None) or {}
-                text = str(payload.get("text") or "").lstrip()
-                if text.startswith(f'<frago-employee id="{DESKTOP_OPERATOR_POST_ID}"'):
-                    if clean_sid not in _reset_excluded_sids:
-                        with contextlib.suppress(Exception):
-                            EmployeeOntologyService().register_session(
-                                DESKTOP_OPERATOR_POST_ID, clean_sid
-                            )
-                    return True
+    with contextlib.suppress(Exception):
+        early_records = record_reader.read_records(clean_sid, limit=2, tail=False)
+        for rec in early_records:
+            if getattr(rec, "kind", None) != "user.say":
+                continue
+            payload = getattr(rec, "payload", None) or {}
+            text = str(payload.get("text") or "").lstrip()
+            if text.startswith(f'<frago-employee id="{DESKTOP_OPERATOR_POST_ID}"'):
+                if clean_sid not in _reset_excluded_sids:
+                    with contextlib.suppress(Exception):
+                        EmployeeOntologyService().register_session(
+                            DESKTOP_OPERATOR_POST_ID, clean_sid
+                        )
+                return True
     return False
 
 
@@ -1751,6 +1893,7 @@ def maybe_ensure_desktop_operator_speech(
 def resolve_active_desktop_operator_session(
     *,
     ensure_summarizer: bool = True,
+    preferred_agent: str | None = None,
 ) -> dict[str, Any]:
     """解析 desktop-operator 最近一个真实落盘的活跃会话，并按需预挂载旁路语音提炼守护线程。"""
     from frago.employee import (
@@ -1764,6 +1907,9 @@ def resolve_active_desktop_operator_session(
     post = ensure_builtin_desktop_operator_employee()
     fresh_post = get_post(DESKTOP_OPERATOR_POST_ID) or post
     effective_cwd = (fresh_post.cwd or str(Path.home())).strip() or str(Path.home())
+
+    resolved_agent, ordered_agents = resolve_desktop_operator_agent(preferred_agent)
+    serialized_agents = [_serialize_desktop_operator_agent(a) for a in ordered_agents]
 
     candidates: list[str] = []
 
@@ -1780,6 +1926,8 @@ def resolve_active_desktop_operator_session(
             "session_id": None,
             "employee": DESKTOP_OPERATOR_POST_ID,
             "restored": False,
+            "agent": resolved_agent,
+            "agents": serialized_agents,
         }
 
     with contextlib.suppress(Exception):
@@ -1808,13 +1956,28 @@ def resolve_active_desktop_operator_session(
                 return True
         return False
 
+    def _matches_target_agent(sid: str, target_agent: str | None) -> bool:
+        if not target_agent:
+            return True
+        sid_agent = _infer_session_agent(sid)
+        if sid_agent is None:
+            return False
+        return sid_agent == target_agent
+
     chosen_sid: str | None = None
+    explicit_pref = str(preferred_agent or "").strip().lower() or None
     for sid in candidates:
-        if _session_has_local_records(sid):
+        if _matches_target_agent(sid, resolved_agent) and _session_has_local_records(sid):
             chosen_sid = sid
             break
 
-    if chosen_sid is None:
+    if chosen_sid is None and not explicit_pref:
+        for sid in candidates:
+            if _session_has_local_records(sid):
+                chosen_sid = sid
+                break
+
+    if chosen_sid is None and (resolved_agent is None or resolved_agent == "coreagent"):
         with contextlib.suppress(Exception):
             for path in coreagent_store.iter_session_files()[:100]:
                 sid = path.stem.strip()
@@ -1829,17 +1992,50 @@ def resolve_active_desktop_operator_session(
             EmployeeOntologyService().register_session(DESKTOP_OPERATOR_POST_ID, chosen_sid)
         if ensure_summarizer:
             ensure_speech_summarizer(chosen_sid, cwd=effective_cwd)
+        chosen_agent = _infer_session_agent(chosen_sid) or resolved_agent
         return {
             "session_id": chosen_sid,
             "employee": DESKTOP_OPERATOR_POST_ID,
             "restored": True,
+            "agent": chosen_agent,
+            "agents": serialized_agents,
         }
 
     return {
         "session_id": None,
         "employee": DESKTOP_OPERATOR_POST_ID,
         "restored": False,
+        "agent": resolved_agent,
+        "agents": serialized_agents,
     }
+
+
+def _watch_claimed_desktop_operator_speech(
+    handle: str,
+    *,
+    cwd: str,
+    human_asr: str,
+) -> None:
+    """认领型内核（codex/agy/opencode）首轮认到真实 session_id 后立即挂载旁路语音提炼器。"""
+    from frago.employee import EmployeeOntologyService
+    from frago.server.services import workbench_new_session
+
+    deadline = time.monotonic() + 90.0
+    while time.monotonic() < deadline:
+        launch = workbench_new_session.status(handle)
+        if launch is None:
+            return
+        if launch.session_id:
+            with contextlib.suppress(Exception):
+                EmployeeOntologyService().register_session(
+                    DESKTOP_OPERATOR_POST_ID, launch.session_id
+                )
+            daemon = ensure_speech_summarizer(launch.session_id, cwd=cwd)
+            daemon.notify_human_asr(human_asr)
+            return
+        if launch.error or launch.finished:
+            return
+        time.sleep(0.5)
 
 
 def dispatch_desktop_voice_command(
@@ -1847,6 +2043,7 @@ def dispatch_desktop_voice_command(
     session_id: str | None = None,
     *,
     cwd: str | None = None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """将识别到的文本投喂给专职员工 desktop-operator，并激活旁路 LightAgent 语音提炼器。"""
     import uuid
@@ -1856,8 +2053,8 @@ def dispatch_desktop_voice_command(
         ensure_builtin_desktop_operator_employee,
         get_post,
     )
-    from frago.server.services import session_send
-    from frago.session import record_reader
+    from frago.server.services import session_send, workbench_agents, workbench_new_session
+    from frago.session import coreagent_store, record_reader
 
     cleaned_text = clean_whisper_transcription(str(text or ""))
     if not cleaned_text:
@@ -1870,47 +2067,145 @@ def dispatch_desktop_voice_command(
     # 2. 确保虚拟桌面在线
     ensure_stage_up()
 
-    # 3. 解析或分配 desktop-operator 的会话 ID
+    requested_agent = str(agent or "").strip().lower() or None
     sid = str(session_id or "").strip()
+
+    def _session_exists_locally(target_sid: str) -> bool:
+        if not target_sid:
+            return False
+        with contextlib.suppress(Exception):
+            if coreagent_store.session_exists(target_sid):
+                return True
+        with contextlib.suppress(Exception):
+            if bool(record_reader.read_records(target_sid, limit=1)):
+                return True
+        with contextlib.suppress(Exception):
+            from frago.server.services import ui_session_runner
+
+            runner = getattr(ui_session_runner, "_runner", None)
+            if runner is not None and runner._pool.has(target_sid):
+                return True
+        return False
+
+    is_existing = _session_exists_locally(sid)
+    sid_agent = _infer_session_agent(sid) if sid else None
+
+    # 若显式切换了另一家 Agent，则不沿用旧 Agent 的会话 ID，按新 Agent 重开会话
+    if sid and requested_agent and sid_agent and requested_agent != sid_agent:
+        sid = ""
+        is_existing = False
+        sid_agent = None
+
+    # 未显式传 session_id 时，先尝试复用当前选定（或最高优先级）Agent 下的活跃会话
     if not sid:
         fresh_post = get_post(DESKTOP_OPERATOR_POST_ID) or post
-        if fresh_post.active_session_ids:
-            sid = fresh_post.active_session_ids[-1]
-        else:
-            sid = f"core_{uuid.uuid4().hex[:16]}"
+        target_for_lookup = requested_agent
+        if not target_for_lookup:
+            target_for_lookup, _ = resolve_desktop_operator_agent()
+        for cand in reversed(fresh_post.active_session_ids or []):
+            cand_clean = str(cand or "").strip()
+            if not cand_clean or cand_clean in _reset_excluded_sids:
+                continue
+            cand_agent = _infer_session_agent(cand_clean)
+            if target_for_lookup and cand_agent != target_for_lookup:
+                continue
+            if _session_exists_locally(cand_clean):
+                sid = cand_clean
+                is_existing = True
+                sid_agent = cand_agent
+                break
 
     global _stage_reset_active
     _stage_reset_active = False
-    _reset_excluded_sids.discard(sid)
+    if sid:
+        _reset_excluded_sids.discard(sid)
     effective_cwd = (cwd or post.cwd or str(Path.home())).strip() or str(Path.home())
 
-    # 4. 仅在首轮新建会话时前置挂载标准 <frago-employee> 语境块（由终端与网页折叠渲染为 @桌面主操作员 标签），
-    #    后续轮次保持纯净用户原话，绝不在用户消息下方拼接裸露的系统提示词尾缀
-    from frago.session import coreagent_store
+    # 3. 存量会话（或调用方显式指定了 core_ 编号且未要求其他内核）直接走 session_send.send_queued
+    if is_existing or (sid and sid.startswith("core_") and requested_agent in (None, "coreagent")):
+        full_prompt = cleaned_text
+        if not is_existing:
+            with contextlib.suppress(Exception):
+                ctx_block = emp_service.build_business_context_block(DESKTOP_OPERATOR_POST_ID)
+                if ctx_block:
+                    full_prompt = f"{ctx_block}\n\n{cleaned_text}"
+        with contextlib.suppress(Exception):
+            emp_service.register_session(DESKTOP_OPERATOR_POST_ID, sid)
 
-    is_existing = False
-    with contextlib.suppress(Exception):
-        is_existing = coreagent_store.session_exists(sid) or bool(record_reader.read_records(sid, limit=1))
+        daemon = ensure_speech_summarizer(sid, cwd=effective_cwd)
+        daemon.notify_human_asr(cleaned_text)
+        session_send.send_queued(sid, full_prompt, cwd_hint=effective_cwd)
+        return {
+            "session_id": sid,
+            "employee": DESKTOP_OPERATOR_POST_ID,
+            "agent": sid_agent or requested_agent or "coreagent",
+            "text": cleaned_text,
+            "status": "queued",
+        }
+
+    # 4. 新建会话：若未指定 agent，按 coreagent > claude > codex > agy > opencode 自动选出首个可用内核
+    if requested_agent:
+        chosen_agent_info = workbench_agents.require_selectable(requested_agent)
+        target_agent = chosen_agent_info.agent_type
+    else:
+        target_agent, _ = resolve_desktop_operator_agent()
+        if not target_agent:
+            raise workbench_agents.AgentUnavailable(
+                "当前没有可用的 desktop-operator Agent（请配置 CoreAgent 连接或安装 Claude Code / Codex / AGY / OpenCode CLI）"
+            )
 
     full_prompt = cleaned_text
-    if not is_existing:
-        with contextlib.suppress(Exception):
-            ctx_block = emp_service.build_business_context_block(DESKTOP_OPERATOR_POST_ID)
-            if ctx_block:
-                full_prompt = f"{ctx_block}\n\n{cleaned_text}"
     with contextlib.suppress(Exception):
-        emp_service.register_session(DESKTOP_OPERATOR_POST_ID, sid)
+        ctx_block = emp_service.build_business_context_block(DESKTOP_OPERATOR_POST_ID)
+        if ctx_block:
+            full_prompt = f"{ctx_block}\n\n{cleaned_text}"
 
-    # 5. 启动该会话的旁路 LightAgent 语音提炼守护线程，并将用户语音 ASR 同步通知给播音大模型做第一时间暖场响应
-    daemon = ensure_speech_summarizer(sid, cwd=effective_cwd)
-    daemon.notify_human_asr(cleaned_text)
+    if target_agent == workbench_agents.COREAGENT_AGENT_TYPE:
+        new_sid = f"core_{uuid.uuid4().hex[:16]}"
+        _reset_excluded_sids.discard(new_sid)
+        with contextlib.suppress(Exception):
+            emp_service.register_session(DESKTOP_OPERATOR_POST_ID, new_sid)
+        daemon = ensure_speech_summarizer(new_sid, cwd=effective_cwd)
+        daemon.notify_human_asr(cleaned_text)
+        session_send.send_queued(new_sid, full_prompt, cwd_hint=effective_cwd)
+        return {
+            "session_id": new_sid,
+            "employee": DESKTOP_OPERATOR_POST_ID,
+            "agent": target_agent,
+            "text": cleaned_text,
+            "status": "queued",
+        }
 
-    # 7. 异步入队投喂给主操作员
-    session_send.send_queued(sid, full_prompt, cwd_hint=effective_cwd)
+    # 非 CoreAgent 内核（claude / codex / agy / opencode）：走工作台标准新建与员工绑定链路
+    launch = workbench_new_session.start_with_id(
+        target_agent,
+        effective_cwd,
+        full_prompt,
+        session_id=None,
+    )
+    workbench_new_session.bind_employee(launch.handle, DESKTOP_OPERATOR_POST_ID)
+
+    if launch.session_id:
+        _reset_excluded_sids.discard(launch.session_id)
+        with contextlib.suppress(Exception):
+            emp_service.register_session(DESKTOP_OPERATOR_POST_ID, launch.session_id)
+        daemon = ensure_speech_summarizer(launch.session_id, cwd=effective_cwd)
+        daemon.notify_human_asr(cleaned_text)
+    else:
+        watcher = threading.Thread(
+            target=_watch_claimed_desktop_operator_speech,
+            args=(launch.handle,),
+            kwargs={"cwd": effective_cwd, "human_asr": cleaned_text},
+            name=f"desktop-op-speech-watch-{launch.handle[:12]}",
+            daemon=True,
+        )
+        watcher.start()
 
     return {
-        "session_id": sid,
+        "session_id": launch.session_id,
+        "handle": launch.handle,
         "employee": DESKTOP_OPERATOR_POST_ID,
+        "agent": target_agent,
         "text": cleaned_text,
         "status": "queued",
     }

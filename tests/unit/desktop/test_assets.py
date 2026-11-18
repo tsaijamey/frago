@@ -54,29 +54,35 @@ def test_ui_version_covers_every_asset():
 
 
 def test_human_input_is_a_bottom_right_support_widget():
-    """#human-input 常驻右下角：默认露出胶囊图标（#hi-trigger），面板（#hi-panel）按参数展开。"""
+    """#human-input 常驻右下角：采用「透明区域输入框（#hi-input-bar）+ 小花朵（#petal-listener）」形态，无具象 Chat 卡片面板。"""
     assets = files("frago.desktop").joinpath("assets")
     index = assets.joinpath("index.html").read_text(encoding="utf-8")
     css = assets.joinpath("style.css").read_text(encoding="utf-8")
     js = assets.joinpath("app.js").read_text(encoding="utf-8")
 
-    # 1. DOM 结构：容器不带 hidden（无参数时仍露出右下角图标），面板默认带 hidden
+    # 1. DOM 结构：容器位于右下角，保留透明输入条、小花朵、会话标签与重置按钮；移除具象化 Chat 面板与重复胶囊按钮
     assert 'id="human-input" class="hi-dock"' in index
-    assert 'id="hi-panel"' in index and 'id="hi-trigger"' in index
-    for required_id in ("hi-log", "hi-text", "hi-send", "hi-status", "hi-close"):
+    assert 'id="hi-input-bar"' in index and 'id="petal-listener"' in index
+    for required_id in ("hi-toast", "hi-session-chip", "hi-session-tag", "hi-reset", "hi-text", "hi-send"):
         assert f'id="{required_id}"' in index, required_id
+    for removed_id in ("hi-panel", "hi-log", "hi-trigger", "hi-close"):
+        assert f'id="{removed_id}"' not in index, f"不应再保留具象化 Chat 面板元素 {removed_id}"
 
-    # 2. CSS 定位在右下角（right + bottom），不再挂在顶部中央
+    # 2. CSS 定位在右下角（right + bottom），采用通透玻璃输入条
     hi_block = css.split("#human-input {", 1)[1].split("}", 1)[0]
     assert "right:" in hi_block and "bottom:" in hi_block
     assert "top:" not in hi_block
+    assert ".hi-transparent-bar" in css
+    assert "backdrop-filter:" in css
 
-    # 3. JS 行为：普通荧幕恒显容器，带参数默认展开面板、无参数收起为图标，录制机位隐藏
+    # 3. JS 行为：普通荧幕恒显容器，点击小花朵展开/收起透明输入框，录制机位隐藏，双向同步外层页头会话
     assert 'if (ROLE === "camera")' in js
     assert "setExpanded(false);" in js
     assert "setExpanded(true);" in js
+    assert "setExpanded(!isInputOpen, true);" in js
+    assert "notifyParentSession(" in js
     assert "/api/workbench/sessions/" in js
-    # 4. 导演对话面板（Director Chat）文本发送与语音交互走同一执行路径（/api/workbench/desktop-voice/dispatch）
+    # 4. 透明输入条文本发送与语音交互走同一执行路径（/api/workbench/desktop-voice/dispatch）
     assert '"/api/workbench/desktop-voice/dispatch"' in js
     assert '"how-frago-agent-runs-an-agent-os"' not in js
 
@@ -187,6 +193,42 @@ console.log("VAD_AND_FILTER_OK");
         )
         assert proc.returncode == 0, proc.stderr
         assert "VAD_AND_FILTER_OK" in proc.stdout
+
+
+def test_app_js_handles_all_toolbar_postmessages_and_bidirectional_sync():
+    """验证 app.js 与 style.css 完整接收、执行并双向同步 Desktop 顶部两排工具条的全部指令，且不再盲目捏造 core_ 会话 ID。"""
+    assets = files("frago.desktop").joinpath("assets")
+    js = assets.joinpath("app.js").read_text(encoding="utf-8")
+    css = assets.joinpath("style.css").read_text(encoding="utf-8")
+
+    # 1. 不再盲目捏造 core_ 随机 ID
+    assert "defaultDirectorSessionId" not in js
+
+    # 2. 监听全部顶部工具条跨窗口指令
+    for msg_type in (
+        "frago:desktop-visibility",
+        "frago:desktop-config",
+        "frago:desktop-unlock-audio",
+        "frago:desktop-app",
+        "frago:desktop-agent",
+    ):
+        assert msg_type in js, msg_type
+
+    # 3. 反向同步状态事件 frago:desktop-state
+    assert 'type: "frago:desktop-state"' in js
+    assert "function notifyParentState(" in js
+    assert "function applyDesktopConfig(" in js
+    assert "function setViewApp(" in js
+    assert "function setupDockSwitcher(" in js
+    assert "function unlockAudio(" in js
+    assert "function setNarratorEnabled(" in js
+    assert "state.narratorMuted" in js
+    assert "state.fpsLimit" in js
+
+    # 4. 单应用视图 CSS 规则
+    for app_key in ("term", "browser", "image", "video", "slide", "overlay"):
+        assert f'#stage[data-view-app="{app_key}"]' in css
+
 
 
 

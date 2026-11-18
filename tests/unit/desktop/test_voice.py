@@ -682,3 +682,74 @@ def test_resolve_emotional_voice_prefers_native_zh_and_en_voices():
         == "en-US-AvaMultilingualNeural"
     )
     assert voice.resolve_emotional_voice("Hello world", "male") == "en-US-AndrewMultilingualNeural"
+
+
+def test_two_layer_voice_channel_cli_and_recording_isolation(sealed, fake_synth, monkeypatch):
+    """验证双层语音体系（ambient vs narration）：
+    1. CLI say 支持 --channel narration|ambient，非法值报错；
+    2. 录制期间（recorder.recording == True），channel='ambient' 被直接静默拦截（suppressed=True），
+       不触发 TTS 合成、不入队、不进入 StageRecorder.voice_lines；
+    3. 默认 channel='narration' 的 say --speak 在录制期间正常合成、播报并写入 StageRecorder.voice_lines。
+    """
+    kind_amb, steps_amb = aos.parse(["say", "现在开始录制", "--speak", "--channel", "ambient"])
+    assert kind_amb == "steps"
+    assert steps_amb[0]["channel"] == "ambient"
+
+    kind_nar, steps_nar = aos.parse(["say", "这是正式解说词", "--speak", "--channel", "narration"])
+    assert kind_nar == "steps"
+    assert steps_nar[0]["channel"] == "narration"
+
+    with pytest.raises(aos.Fail) as exc:
+        aos.parse(["say", "测试", "--speak", "--channel", "invalid"])
+    assert "--channel 只支持 narration|ambient" in exc.value.payload["error"]
+
+    rigs: list[broker.StageRecorder] = []
+
+    class ActiveRecorder(broker.StageRecorder):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.recording, self.name, self._t0 = True, "two-layer-take", time.time() - 1.0
+            rigs.append(self)
+
+    monkeypatch.setattr(broker, "StageRecorder", ActiveRecorder)
+
+    code, out = post_control(
+        sealed,
+        {
+            "steps": [
+                {
+                    "op": "say",
+                    "text": "现在开始录制，我打开了设置页",
+                    "speak": True,
+                    "out": "none",
+                    "channel": "ambient",
+                },
+                {
+                    "op": "say",
+                    "text": "在设置页中点击 AI Providers 配置语音识别模型",
+                    "speak": True,
+                    "out": "none",
+                },
+            ]
+        },
+    )
+    assert code == 200 and out["ok"] is True
+    amb_res, nar_res = out["results"]
+    assert amb_res["ok"] is True
+    assert amb_res["suppressed"] is True
+    assert amb_res["reason"] == "recording_active_ambient_muted"
+    assert amb_res["spoken"] is False
+    assert nar_res["spoken"] is True
+    assert nar_res["channel"] == "narration"
+
+    # TTS 仅对 narration 那一句调用了 1 次，ambient 完全未触发合成
+    assert len(fake_synth) == 1
+    assert fake_synth[0]["text"] == "在设置页中点击 AI Providers 配置语音识别模型"
+
+    # StageRecorder.voice_lines 仅收录了 narration 那一句，且录制动作日志 journal 也不被 suppressed ambient 污染
+    assert len(rigs[0].voice_lines) == 1
+    assert rigs[0].voice_lines[0]["text"] == "在设置页中点击 AI Providers 配置语音识别模型"
+    assert rigs[0].voice_lines[0]["channel"] == "narration"
+    assert len(rigs[0].journal) == 1
+    assert rigs[0].journal[0]["params"]["text"] == "在设置页中点击 AI Providers 配置语音识别模型"
+

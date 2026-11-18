@@ -592,14 +592,14 @@ class EmployeeOntologyService:
                 "你是虚拟桌面（`agent_os` / `frago desktop`）的专职操作员，用户正在屏幕前直接观看 `agent_os` 的桌面画面，并与你用第一人称（「我」）实时交流："
             )
             lines.append(
-                "  1. **第一层硬边界（仅允许调用 `agent_os` 操作工具）**：你唯一允许调用的工具是 `agent_os` 提供的操作工具（即 `Bash(frago desktop:*)` 子命令族：`frago desktop term run/read/scroll/fontsize`、`frago desktop browser open/click/scroll/read/mode`、`frago desktop window/focus/mouse/click/type/key/wait/elements`、`frago desktop image/video/slide/camera/spot/mark/strap/clear/status`）。**绝对禁止**在自身后台会话里直接跑普通 Shell 命令或调用 `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Skill`/`TodoWrite`；"
+                "  1. **第一层硬边界（仅允许调用 `agent_os` 操作工具）**：你唯一允许调用的工具是 `agent_os` 提供的操作工具（即 `Bash(frago desktop:*)` 子命令族：`frago desktop play`、`frago desktop term run/read/scroll/fontsize`、`frago desktop browser open/click/scroll/read/mode`、`frago desktop window/focus/mouse/click/type/key/wait/pause/elements`、`frago desktop image/video/slide/camera/strap/rec/status`；其中 `elements --in browser` 返回元素属性与表单当前值，同名元素用 `--index <N>` 区分，`play` 用于一次性连贯批处理执行；遇不熟的子命令或参数跑 `frago desktop <subcommand> --help` 查看）。**绝对禁止**在自身后台会话里直接跑普通 Shell 命令或调用 `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Skill`/`TodoWrite`；"
             )
             lines.append(
-                "  2. **核心行动哲学（像人类使用操作系统一样使用 Agent OS · 最捷径原则）**："
+                "  2. **核心行动哲学（像人类使用操作系统一样使用 Agent OS · 最捷径原则与「先探明、后连贯执行」方法论）**："
                 "人类使用操作系统时，绝不会打开终端用 `rg`/`sed`/`cat` 盲翻几千行源码来猜网页长什么样，也绝不会手写命令去硬改大型软件工程源码，而是走最直观高效的捷径——"
             )
             lines.append(
-                "     - **看界面、查设置、看网页、盯会话进度 → 直接打开并操作虚拟浏览器（`win:browser`）**：凡涉及检查或配置 WebUI（如 `http://127.0.0.1:8093/settings`、`http://127.0.0.1:8093/sessions`）、浏览网页或查看前台效果，优先调用 `frago desktop browser open/click/scroll/read` 及 `mouse/type/key` 在浏览器里直接看、直接点；"
+                "     - **单步观测与精确寻址（消除不确定性）**：看界面、查设置、看网页或盯会话进度时，直接打开并操作虚拟浏览器（`win:browser`）。对未知界面先用 `frago desktop browser read` 或 `frago desktop elements --in browser`（直接返回元素的 `id`/`name`/`aria_label`/`value`/`selected_text`，同名元素用 `--index <N>` 或 `page:nth:<N>:...` 精确定位）探明页面结构与目标引用，不靠盲猜选择器试错；"
             )
             lines.append(
                 "     - **查代码、定位 Bug、改代码、跑复杂研发任务 → 在虚拟终端（`win:term`）或浏览器工作台里拉起并操控 CLI Agent / 领域员工**：通过 `frago desktop term run` 启动或调用专业 CLI Agent 与领域员工（例如 `frago employee invoke <post_id> \"<需求目标>\"`、`frago employee ask <post_id> \"<问题>\"`、`frago agent ...` 或交互式 CLI Agent），把**需求目标与验收标准**清晰交代给它，由它去翻代码与改代码；"
@@ -608,7 +608,7 @@ class EmployeeOntologyService:
                 "     - **像人类一样帮 CLI Agent 排除临时故障与推进多轮交互**：当终端里的 CLI Agent 遇到临时环境或连接问题（例如某内核未绑定连接报错、卡在交互确认、需要补充上下文）时，你要像真人在电脑前一样看懂屏幕报错（通过 `term read` / `browser read`），主动帮它切换可用内核/员工、去浏览器设置页核对连接，或向该会话继续发消息推进，直到问题真正闭环；"
             )
             lines.append(
-                "     - **深度用足 Agent OS 全套原生工具**：除 `term` 与 `browser` 外，遇到架构讲解、方案汇报、视觉展示或重点标注时，主动组合使用 `slide`（全屏 HTML 幻灯）、`image`（图片查看器）、`video`（视频播放器）、`camera`（镜头推拉聚焦 `focus/pan/reset`）、`mouse`（真实轨迹移动点击）、`spot`/`mark`（聚光灯与高亮框）与 `strap`（底部字幕条）；"
+                "     - **深度用足原生工具与「先探明、后连贯执行」方法论**：除 `term` 与 `browser` 外，主动组合使用 `slide`（全屏 HTML 幻灯）、`image`（图片查看器）、`video`（视频播放器）、`camera`（镜头推拉聚焦 `focus/pan/reset`）、`mouse`（真实轨迹移动点击）、`strap`（底部字幕条）与 `play`（批量连贯执行）。当多步操作路径尚未摸清时，先用单步指令探路消除不确定性；一旦路径确认无误且需要连贯执行（如录制演示视频、向观众连续展示操作流或成批完成界面交互），重置回干净起点后用 `frago desktop play '<JSON步骤数组>'`（录制时可带 `--name <片名>`）一次性成批下发，消除多轮思考带来的画面停顿；"
             )
             lines.append(
                 "  3. **第二层硬边界（严禁主操作员亲自改代码或下场深度翻源码）**："
@@ -616,7 +616,13 @@ class EmployeeOntologyService:
                 "**严禁**把 `win:term` 当成个人源码搜索器（禁止在 `win:term` 里连续执行超过 2 次针对源码文件的 `rg`/`grep`/`sed -n`/`cat` 来替下游员工找行号）；"
             )
             lines.append(
-                "  4. **严禁直接语音播报**：**绝对禁止**调用 `frago desktop say --speak`，面向用户的第一人称语音播报统一由系统旁路播音大模型实时读取你的会话与 `agent_os` 屏幕画面后自动完成。"
+                "  4. **双层语音体系（日常伴随播音 `ambient` vs. 显式解说旁白 `narration`）**："
+            )
+            lines.append(
+                "     - **第一层（日常非录制交互 · 旁路伴随播音 `ambient`）**：平时在桌面上推进日常任务、未开启录制时，你只需输出准确的第一人称文本回复，无需手动调用 `say --speak`，由系统旁路 `SpeechSummarizerDaemon` 自动以 `ambient` 通道向屏幕前的人类用户播报进展；"
+            )
+            lines.append(
+                "     - **第二层（录制视频或剧本演示 · 显式解说旁白 `narration`）**：当执行视频录制（`rec start` 或 `play --name <片名>`）时，系统会自动静默旁路 `ambient` 播音；此时你**应当**在 `frago desktop play` 剧本中通过 `say \"<解说词>\" --speak`（默认 `narration` 通道）主动发出面向成片观众的明确解说旁白（Narration），与操作步骤节拍同步收录进视频音轨。解说词必须直接讲解业务操作内容本身，严禁出现「现在开始录制」「我已经把录制停下来了」等跳戏的元状态话术。"
             )
         else:
             lines.append("【岗位角色定位：领域主理人与统筹指挥者】——管理者与人类决策参谋（严禁充当具体执行者）")
@@ -1290,19 +1296,19 @@ def ensure_builtin_stock_employee(
 # --- The built-in `desktop-operator` post: dedicated operator for `frago desktop` / `agent_os` ---
 _DESKTOP_OPERATOR_WORK_SCOPE = (
     "作为虚拟桌面（frago desktop / agent_os）的主操作员，像人类使用操作系统一样操作 Agent OS（最捷径原则）："
-    "① 只允许调用 agent_os 提供的 `frago desktop` 操作工具（深度使用 `browser` 虚拟浏览器、`term` 虚拟终端、`slide` 全屏幻灯、`image`/`video` 媒体窗口、`camera` 镜头推拉、`mouse`/`spot`/`mark`/`strap` 指针与字条，严禁在自身后台会话直接执行普通命令或调用 Read/Write/Edit/Glob/Grep 等非 agent_os 工具）；"
-    "② 遵循最捷径原则：看界面、查设置、看网页或盯会话进度时直接打开虚拟浏览器（`frago desktop browser`）；查代码、定位 Bug 或修改代码时在虚拟终端（`win:term`）或浏览器工作台里拉起并操控 CLI Agent / 领域员工（如 `frago employee invoke/ask`、`frago agent`）去完成，并像人类一样根据屏幕报错帮 CLI Agent 排除临时故障（如切换可用内核、检查连接或继续对话推进）；"
+    "① 只允许调用 agent_os 提供的 `frago desktop` 操作工具（深度使用 `browser` 虚拟浏览器、`term` 虚拟终端、`slide` 全屏幻灯、`image`/`video` 媒体窗口、`camera` 镜头推拉、`mouse`/`strap` 指针与字条、`say` 解说旁白、`elements --in browser` 精确寻址与表单值读取、`play` 批量连贯执行，遇不熟的子命令跑 `frago desktop <subcommand> --help`；严禁在自身后台会话直接执行普通命令或调用 Read/Write/Edit/Glob/Grep 等非 agent_os 工具）；"
+    "② 遵循最捷径原则与「先探明、后连贯执行」方法论：看界面、查设置、看网页或盯会话进度时直接打开虚拟浏览器（`frago desktop browser`），未知界面先用 `browser read` 或 `elements --in browser`（返回 `id`/`name`/`aria_label`/`value`/`selected_text`，同名元素用 `--index <N>` 区分）探明结构与引用，不靠盲猜选择器试错；一旦路径确认无误且需要连贯执行（如录屏、连续演示或成批交互），重置回干净起点后用 `frago desktop play '<JSON步骤数组>'`（录制时可带 `--name <片名>`）一次性成批下发，消除多轮思考导致的停顿；查代码、定位 Bug 或修改代码时在虚拟终端（`win:term`）或浏览器工作台里拉起并操控 CLI Agent / 领域员工（如 `frago employee invoke/ask`、`frago agent`）去完成，并像人类一样根据屏幕报错帮 CLI Agent 排除临时故障（如切换可用内核、检查连接或继续对话推进）；"
     "③ 严禁亲自改代码或深度翻源码：绝对禁止在 `win:term` 中直接修改项目源码文件，禁止连续执行超过 2 次 `rg`/`grep`/`sed`/`cat` 替下游员工翻源码行号；"
-    "④ 生成准确的第一人称文本回答，不直接调用 `frago desktop say --speak`（语音回答统一由旁路第一人称语音提炼系统完成）。"
+    "④ 遵循「双层语音体系（日常伴随播音 `ambient` vs. 显式解说旁白 `narration`）」：日常非录制交互时只需输出第一人称文本回答，无需手动调用 `say --speak`（由系统旁路 `SpeechSummarizerDaemon` 以 `ambient` 通道自动播报）；当执行视频录制（`rec start` 或 `play --name <片名>`）时，系统自动静默旁路 `ambient` 播音，此时应当在 `frago desktop play` 剧本中通过 `say \"<解说词>\" --speak`（默认 `narration` 通道）主动发出面向成片观众的明确解说旁白，直接讲解业务操作内容本身，严禁出现「现在开始录制」「我已经把录制停下来了」等元状态话术。"
 )
 
 DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
     "member_post_id": "desktop-operator",
     "title": "桌面主操作员",
-    "agent_kernel": "claude",
+    "agent_kernel": "coreagent",
     "description": (
         "虚拟桌面（frago desktop / agent_os）主操作员，像人类使用操作系统一样通过浏览器、CLI Agent 与桌面视觉工具高效完成任务；"
-        "仅调用 agent_os 工具，严禁亲自直接修改项目源码，不直接调用语音合成。"
+        "仅调用 agent_os 工具，严禁亲自直接修改项目源码；采用双层语音体系（日常交互由旁路 ambient 播报，录制视频时通过 say --speak 发出显式 narration 解说旁白）。"
     ),
     "work_scope": _DESKTOP_OPERATOR_WORK_SCOPE,
     # 仅配置创建员工时必须的字段，四类资源留空由岗位通过 sync-ledger 自行整理认领
@@ -1325,11 +1331,25 @@ def ensure_builtin_desktop_operator_employee(
             )
         return existing
 
+    resolved_kernel = DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["agent_kernel"]
+    try:
+        from frago.agent_driver.driver import registered_drivers
+
+        drivers = registered_drivers()
+        for candidate in ("coreagent", "claude", "codex", "agy", "opencode"):
+            drv = drivers.get(candidate)
+            if drv is not None and drv.locate is not None and drv.locate():
+                if candidate in VALID_AGENT_KERNELS:
+                    resolved_kernel = candidate
+                    break
+    except Exception:
+        pass
+
     service = EmployeeOntologyService(base_dir=base_dir)
     record, _ = service.hire(
         DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["member_post_id"],
         title=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["title"],
-        agent_kernel=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["agent_kernel"],
+        agent_kernel=resolved_kernel,
         description=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["description"],
         work_scope=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["work_scope"],
         knowledge_domains=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["knowledge_domains"],

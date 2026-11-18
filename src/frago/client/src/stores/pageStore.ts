@@ -50,10 +50,16 @@ export interface PageSlice {
   /** 右侧正开着的配方页面：`<配方名>`，非默认槽位时是 `<配方名>/<槽位>`。 */
   currentRecipeAppId: string | null;
   /**
-   * 虚拟桌面绑定的导演会话编号（由「创建配方」传入，用于展开右下角导演对话面板）。
-   * 不随切页清空，切去会话页再切回桌面页时仍保持同一场导演连接。
+   * 虚拟桌面当前绑定的会话编号（用于页头状态展示；来自显式传入或后台恢复/花朵输入同步）。
+   * 不随切页清空，切去会话页再切回桌面页时仍保持同一场连接。
    */
   desktopSessionId: string | null;
+  /**
+   * 显式传入的虚拟桌面会话编号（仅由「创建配方」等明确指定会话的场景传入，用于写入 iframe URL）。
+   * 常规打开或整页刷新时为 null，使 iframe 自行从后端 active-session 与 localStorage 恢复，
+   * 避免整页刷新时凭空生成随机 session 覆盖并丢失正在进行的桌面会话。
+   */
+  desktopExplicitSessionId: string | null;
   /**
    * 会话页上正选着哪一场。
    *
@@ -72,7 +78,7 @@ export interface PageSlice {
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
   applyRoute: (page: PageType, id?: string | null) => void;
   setWorkbenchSessionId: (id: string | null) => void;
-  setDesktopSessionId: (id: string | null) => void;
+  setDesktopSessionId: (id: string | null, opts?: { clearExplicit?: boolean }) => void;
   launchWorkbenchSession: (launch: PendingLaunch, text: string) => void;
   consumePendingWorkbenchLaunch: () => { launch: PendingLaunch; text: string } | null;
 }
@@ -125,19 +131,13 @@ export function activeRouteId(
 
 const initial = readLocationRoute();
 
-function createDesktopSessionId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `core_${crypto.randomUUID().replace(/-/g, '')}`;
-  }
-  return `core_${Math.random().toString(16).slice(2, 14)}${Date.now().toString(16)}`;
-}
-
 export const usePageStore = create<PageSlice>((set, get) => ({
   // 开局停在地址栏指着的那一页。地址栏是空的才回会话工作台这个首页——刷新之后
   // 被弹回首页，正是这一行在读地址之前的样子。
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
-  desktopSessionId: createDesktopSessionId(),
+  desktopSessionId: null,
+  desktopExplicitSessionId: null,
   workbenchSessionId: initial.page === 'session_workbench' ? initial.id : null,
   pendingWorkbenchLaunch: null,
 
@@ -152,6 +152,8 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       workbenchSessionId: nextWorkbenchSessionId,
       desktopSessionId:
         page === 'desktop' && id !== undefined ? id || null : state.desktopSessionId,
+      desktopExplicitSessionId:
+        page === 'desktop' && id !== undefined ? id || null : state.desktopExplicitSessionId,
     }));
     const routeId =
       page === 'desktop'
@@ -177,7 +179,11 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       writeLocationRoute(pathForPage('session_workbench', id));
     }
   },
-  setDesktopSessionId: (id) => set({ desktopSessionId: id }),
+  setDesktopSessionId: (id, opts) =>
+    set((state) => ({
+      desktopSessionId: id,
+      desktopExplicitSessionId: opts?.clearExplicit ? null : state.desktopExplicitSessionId,
+    })),
 
   launchWorkbenchSession: (launch, text) => {
     const nextSessionId = launch.session_id ?? null;

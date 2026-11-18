@@ -82,11 +82,34 @@
     actorHeadless: true,
     actorSwitching: false,
     actorModeError: null,
+    // 顶部工具条双向同步状态 & 动态操作员 Agent 选择
+    selectedAgent: null,
+    narratorMuted: false,
+    soundUnlocked: false,
+    fpsLimit: 30,
+    lastFrameDrawAt: 0,
+    frameThrottleTimer: null,
+    customResolution: false,
+    viewApp: "all",
     // 宿主容器显隐与断线重连退避状态
     hostVisible: true,
     reconnectAttempts: 0,
     reconnectTimer: null
   };
+
+  function notifyParentState(patch) {
+    try {
+      if (window.parent && window.parent !== window && ROLE !== "camera") {
+        var payload = { type: "frago:desktop-state" };
+        for (var k in patch) {
+          if (Object.prototype.hasOwnProperty.call(patch, k)) {
+            payload[k] = patch[k];
+          }
+        }
+        window.parent.postMessage(payload, "*");
+      }
+    } catch (e) {}
+  }
 
   function $(id) { return document.getElementById(id); }
 
@@ -790,7 +813,7 @@
     })();
   }
 
-  /* ── 帧管线：离屏解码 + 只画最新帧 ── */
+  /* ── 帧管线：离屏解码 + 只画最新帧 + FPS 节流 ── */
   function pushFrame(b64) {
     state.pendingFrame = b64; // 覆盖旧的待绘帧，积压帧直接丢弃
     if (!state.drawing) drainFrame();
@@ -798,7 +821,19 @@
 
   function drainFrame() {
     var b64 = state.pendingFrame;
-    if (b64 === null) return;
+    if (b64 === null || state.drawing) return;
+    var minInterval = 1000 / Math.max(1, state.fpsLimit || 30);
+    var now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var elapsed = now - (state.lastFrameDrawAt || 0);
+    if (state.lastFrameDrawAt > 0 && elapsed < minInterval) {
+      if (!state.frameThrottleTimer) {
+        state.frameThrottleTimer = setTimeout(function () {
+          state.frameThrottleTimer = null;
+          drainFrame();
+        }, Math.max(1, Math.ceil(minInterval - elapsed)));
+      }
+      return;
+    }
     state.pendingFrame = null;
     state.drawing = true;
     var img = new Image();
@@ -813,6 +848,7 @@
         els.ctx.imageSmoothingQuality = "high";
         els.ctx.drawImage(img, 0, 0);
         fitCanvas(img.naturalWidth, img.naturalHeight);
+        state.lastFrameDrawAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         if (!state.firstFrameSent) {
           state.firstFrameSent = true;
           send({ t: "ready" });
@@ -928,8 +964,16 @@
 
   function startSpeechAudio(id, late) {
     var a = speechState.audio;
+    if (!a || state.narratorMuted) return;
+    a.muted = false;
     var p = a.play();
     function started() {
+      if (!state.soundUnlocked) {
+        state.soundUnlocked = true;
+        if (els.soundUnlock) els.soundUnlock.hidden = true;
+        if (els.stage) els.stage.dataset.soundUnlocked = "true";
+        notifyParentState({ soundUnlocked: true });
+      }
       if (speechState.id === id) send({ t: "speech", id: id, event: "started", late: !!late });
     }
     if (!p || typeof p.then !== "function") { started(); return; }
@@ -948,8 +992,36 @@
     speechState.id = String(msg.id);
     speechState.ms = msg.ms || 0;
     speechState.startedAt = Date.now();
+    a.muted = !!state.narratorMuted;
     a.src = msg.url;
+    if (state.narratorMuted) {
+      try { a.pause(); } catch (e) {}
+      return;
+    }
     startSpeechAudio(speechState.id, false);
+  }
+
+  function setNarratorEnabled(on, opts) {
+    var nextMuted = !on;
+    var changed = state.narratorMuted !== nextMuted;
+    state.narratorMuted = nextMuted;
+    if (els.stage) els.stage.dataset.narrator = nextMuted ? "muted" : "on";
+    var a = speechState.audio;
+    if (a) {
+      a.muted = nextMuted;
+      if (nextMuted) {
+        try { a.pause(); } catch (e) {}
+      } else if (speechState.id) {
+        var elapsed = Date.now() - speechState.startedAt;
+        if (speechState.ms - elapsed > 400) {
+          try { a.currentTime = elapsed / 1000; } catch (e) {}
+          startSpeechAudio(speechState.id, true);
+        }
+      }
+    }
+    if (changed && !(opts && opts.silentParent)) {
+      notifyParentState({ narrator: !state.narratorMuted });
+    }
   }
 
   function stopSpeech(id) {
@@ -966,6 +1038,30 @@
     els.soundUnlock.hidden = false;
   }
 
+  function unlockAudio() {
+    if (ROLE === "camera") return;
+    state.soundUnlocked = true;
+    if (els.soundUnlock) els.soundUnlock.hidden = true;
+    if (els.stage) els.stage.dataset.soundUnlocked = "true";
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        if (!els.unlockAudioCtx) els.unlockAudioCtx = new Ctx();
+        if (els.unlockAudioCtx.state === "suspended" && els.unlockAudioCtx.resume) {
+          els.unlockAudioCtx.resume().catch(function () {});
+        }
+      }
+    } catch (e) {}
+    // 正在说的那句还剩不少且未静音，就从当前位置接着放；剩得不多就算了，下一句自然能放。
+    var id = speechState.id, a = speechState.audio;
+    var elapsed = Date.now() - speechState.startedAt;
+    if (!state.narratorMuted && id && a && speechState.ms - elapsed > 400) {
+      try { a.currentTime = elapsed / 1000; } catch (e) { /* 还没加载好就从头放 */ }
+      startSpeechAudio(id, true);
+    }
+    notifyParentState({ soundUnlocked: true });
+  }
+
   function setupSoundUnlock() {
     if (ROLE === "camera") return null;
     var btn = document.createElement("button");
@@ -975,14 +1071,7 @@
     btn.textContent = "🔈 启用声音";
     btn.title = "浏览器拦下了语音播放，点一下之后这张页面就能放出声";
     btn.addEventListener("click", function () {
-      btn.hidden = true;
-      // 正在说的那句还剩不少，就从当前位置接着放；剩得不多就算了，下一句自然能放。
-      var id = speechState.id, a = speechState.audio;
-      var elapsed = Date.now() - speechState.startedAt;
-      if (id && a && speechState.ms - elapsed > 400) {
-        try { a.currentTime = elapsed / 1000; } catch (e) { /* 还没加载好就从头放 */ }
-        startSpeechAudio(id, true);
-      }
+      unlockAudio();
     });
     document.body.appendChild(btn);
     return btn;
@@ -1118,7 +1207,7 @@
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     switch (msg.t) {
       case "hello":
-        if (msg.desktop) { CONFIG.desktop = msg.desktop; fitStage(); }
+        if (msg.desktop && !state.customResolution) { CONFIG.desktop = msg.desktop; fitStage(); }
         if (msg.browser) {
           state.viewport = msg.browser;   // 仅供参考，几何不再受它约束
           measureHeaders();
@@ -1326,6 +1415,9 @@
         // 浏览器工具栏上的「人工接管」与「弹出真窗过检」按钮：始终放行点击。
         if (els.browserHumanControls && !els.browserHumanControls.hidden &&
             e.target && els.browserHumanControls.contains(e.target)) return;
+        // 底部 Dock 栏图标：允许点击切换激活/聚焦窗口并反向同步外层工具条。
+        if (els.dock && ROLE !== "camera" &&
+            e.target && els.dock.contains(e.target)) return;
         // 开启「人工接管」时，放行虚拟浏览器画布、标签条及桥接输入框上的键鼠事件。
         if (state.takeover && ROLE !== "camera") {
           if (e.target && (e.target === els.canvas || e.target === els.imeInput ||
@@ -1400,6 +1492,7 @@
   }
 
   function applyBrowserMode(msg) {
+    var prevTakeover = !!state.takeover;
     if (typeof msg.headless === "boolean") state.actorHeadless = msg.headless;
     if (typeof msg.takeover === "boolean") {
       state.takeover = msg.takeover;
@@ -1414,6 +1507,9 @@
     state.actorSwitching = !!msg.switching;
     state.actorModeError = msg.error || null;
     syncTakeoverUI();
+    if (!!state.takeover !== prevTakeover) {
+      notifyParentState({ mode: state.takeover ? "takeover" : "observe" });
+    }
   }
 
   function setupBrowserTakeover() {
@@ -1434,11 +1530,16 @@
       return;
     }
 
-    function setTakeover(on) {
-      state.takeover = !!on;
+    function setTakeover(on, opts) {
+      var next = !!on;
+      var changed = state.takeover !== next;
+      state.takeover = next;
       syncTakeoverUI();
       send({ t: "human.takeover", on: state.takeover, win: "browser" });
       if (state.takeover) {
+        if (!state.open.browser) {
+          openWin("browser", 0);
+        }
         if (state.focus !== "browser") {
           applyFocus("browser");
         }
@@ -1446,7 +1547,11 @@
       } else if (ime) {
         ime.blur();
       }
+      if (changed && !(opts && opts.silentParent)) {
+        notifyParentState({ mode: state.takeover ? "takeover" : "observe" });
+      }
     }
+    els.setTakeover = setTakeover;
 
     if (tBtn) {
       tBtn.addEventListener("click", function (e) {
@@ -1657,15 +1762,13 @@
     syncTakeoverUI();
   }
 
-  /* ── 右下角客服式对话面板（#human-input） ──
+  /* ── 右下角「透明区域输入框 + 小花朵」（#human-input） ──
      始终位于虚拟桌面右下角（录制机位 ROLE==="camera" 除外）：
-     - 默认启用 userInput=true：默认展开对话面板（#hi-panel），未传 session 参数时自动生成
-       core_<随机后缀> 会话编号（首条消息自动携带导演技能交由内置 CoreAgent 驱动）；
-       可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
-     - 显式传 ?userInput=false（或 0）时：退回只读显示器模式，仅显示右下角胶囊图标。
-     人打的字不进桌面终端——桌面终端只是被操作的外设，不是代理角色。人的话先发给
-     frago 服务的会话发送接口（wait:false 只排队不等答），排进主控会话队列；
-     由驻场「主持人」秒级口头确认，再交给「主操作员」与后台「参谋」协商执行。 */
+     - 输入区为轻盈通透的透明/毛玻璃胶囊输入框（#hi-input-bar），不遮挡桌面画面，不保留冗长聊天记录面板；
+     - 右侧小花朵（#petal-listener）点击可展开/收起透明输入框，并在活跃会话绑定时呈现柔和呼吸光晕，
+       同时保留按住右 Alt 说话 / 双击右 Ctrl 持续监听的语音控制；
+     - 默认从后端 /api/workbench/desktop-voice/active-session 与 localStorage 双向恢复绑定会话，
+       除非 URL 显式传 ?session=...（如「创建配方」场景），确保整页刷新不丢会话。 */
   var DIRECTOR_SID_STORAGE_KEY = "frago_desktop_director_sid";
 
   function persistDirectorSessionId(nextSid) {
@@ -1676,12 +1779,23 @@
     } catch (e) {}
   }
 
-  function defaultDirectorSessionId() {
-    var hex = "";
-    for (var i = 0; i < 16; i++) {
-      hex += Math.floor(Math.random() * 16).toString(16);
-    }
-    return "core_" + hex;
+  function clearDirectorSessionId() {
+    try {
+      localStorage.removeItem(DIRECTOR_SID_STORAGE_KEY);
+    } catch (e) {}
+  }
+
+  function notifyParentSession(nextSid, opts) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: "frago:desktop-session",
+          sessionId: nextSid || null,
+          agent: (opts && opts.agent) || state.selectedAgent || null,
+          reset: !!(opts && opts.reset)
+        }, "*");
+      }
+    } catch (e) {}
   }
 
   function humanInputTarget() {
@@ -1691,7 +1805,7 @@
     if (m) {
       var sid = m[1];
       try { sid = decodeURIComponent(m[1]); } catch (e) { sid = m[1]; }
-      try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
+      persistDirectorSessionId(sid);
       return sid;
     }
     try {
@@ -1700,77 +1814,53 @@
         return cachedSid.trim();
       }
     } catch (e) {}
-    var initialSid = defaultDirectorSessionId();
-    try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, initialSid); } catch (e) {}
-    return initialSid;
+    return null;
   }
 
   var HI_I18N = {
     zh: {
-      panelAria: "导演对话面板",
-      tag: "导演对话 · 追加需求",
-      sub: "直达主控队列 · 主持人实时应答，主操作员与参谋协同执行",
+      barAria: "桌面指令输入框",
+      sessionTitle: "当前绑定的桌面会话",
+      standbyTag: "待命",
       resetLabel: "重置",
       resetConfirm: "确认重置？",
       resetDoing: "重置中…",
-      resetTitle: "重置虚拟桌面舞台（恢复窗口/幻灯/字幕、重置终端与浏览器起始页并开启新对话）",
+      resetTitle: "重置虚拟桌面舞台与当前对话",
       resetConfirmTitle: "再次点击立即重置舞台（3 秒后自动取消）",
       resetAria: "重置舞台",
-      closeTitle: "收起为右下角图标",
-      closeAria: "收起对话面板",
       readonlyTag: "只读",
-      readonlyFab: "对话",
-      directorFab: "导演对话",
-      triggerCollapse: "收起对话面板",
-      triggerExpand: "展开导演对话面板",
-      triggerNoSession: "未带导演会话参数（默认仅显示图标，点击查看）",
-      roleDirector: "导演",
-      roleUser: "你",
-      placeholderActive: "随时写下补充或修改意见，⌘+回车 / Ctrl+回车发送",
-      placeholderReadonly: "未连接导演会话",
-      emptyReadonly: "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。",
-      welcome: "正在虚拟桌面上推进任务。随时在这里写下补充或修改意见，主持人会即时响应，主操作员与参谋将协商并在桌面上执行。",
-      sendIdle: "发送",
-      sendQueueing: "排队中…",
-      statusHint: "⌘/Ctrl+回车发送 · 回车换行",
-      statusReadonly: "只读显示器模式",
-      statusQueueing: "正在排队…",
-      statusQueued: "已排入主控队列，主持人与操作组正在跟进",
-      statusResetDone: "舞台已重置，已切换至新导演会话",
-      statusFailedPrefix: "没发出去："
+      placeholderActive: "输入补充指令，回车发送（Shift+回车换行）…",
+      placeholderReadonly: "未连接桌面会话",
+      sendTitle: "发送指令",
+      sendAria: "发送",
+      sendQueueing: "发送中…",
+      statusQueued: "已投递给桌面助手",
+      statusResetDone: "舞台已重置，新会话已就绪",
+      statusFailedPrefix: "发送失败：",
+      flowerAria: "小花朵开关与语音监听器（点击展开/收起输入框；按住右Alt说话，双击右Ctrl持续监听）",
+      flowerTitle: "点击展开/收起输入框 · 按住右Alt说话 · 双击右Ctrl持续监听（未配置语音识别时请前往 WebUI「设置 → 常规设置 → 旁路与轻量 AI」配置）"
     },
     en: {
-      panelAria: "Director chat panel",
-      tag: "Director Chat · Follow-ups",
-      sub: "Queued to main session · Presenter responds live, operator & advisor execute",
+      barAria: "Desktop command input",
+      sessionTitle: "Bound desktop session",
+      standbyTag: "ready",
       resetLabel: "Reset",
       resetConfirm: "Confirm?",
       resetDoing: "Resetting…",
-      resetTitle: "Reset virtual desktop stage (restore windows/slides/captions, reset terminal & browser, start new session)",
+      resetTitle: "Reset virtual desktop stage and start a new session",
       resetConfirmTitle: "Click again within 3s to confirm stage reset",
       resetAria: "Reset stage",
-      closeTitle: "Minimize to corner icon",
-      closeAria: "Collapse director chat panel",
       readonlyTag: "Read-only",
-      readonlyFab: "Chat",
-      directorFab: "Director Chat",
-      triggerCollapse: "Collapse director chat panel",
-      triggerExpand: "Expand director chat panel",
-      triggerNoSession: "No director session bound (icon only by default, click to view)",
-      roleDirector: "Director",
-      roleUser: "You",
-      placeholderActive: "Type follow-ups here, ⌘+Enter / Ctrl+Enter to send",
-      placeholderReadonly: "No director session connected",
-      emptyReadonly: "No director session bound (?userInput=true&session=…). The panel stays collapsed as a corner icon by default.",
-      welcome: "Working on your task on the virtual desktop. Type any follow-ups here — the presenter will acknowledge live while the operator and advisor coordinate execution.",
-      sendIdle: "Send",
-      sendQueueing: "Queueing…",
-      statusHint: "⌘/Ctrl+Enter to send · Enter for newline",
-      statusReadonly: "Read-only display mode",
-      statusQueueing: "Queueing…",
-      statusQueued: "Queued to main session for presenter & operator team",
-      statusResetDone: "Stage reset complete · new director session ready",
-      statusFailedPrefix: "Failed to send: "
+      placeholderActive: "Message desktop agent, Enter to send (Shift+Enter for newline)…",
+      placeholderReadonly: "No desktop session connected",
+      sendTitle: "Send instruction",
+      sendAria: "Send",
+      sendQueueing: "Sending…",
+      statusQueued: "Delivered to desktop agent",
+      statusResetDone: "Stage reset · new session ready",
+      statusFailedPrefix: "Failed to send: ",
+      flowerAria: "Toggle input & voice listener (click to expand/collapse input; hold Right Alt to talk, double-tap Right Ctrl for continuous listening)",
+      flowerTitle: "Click to expand/collapse input · Hold Right Alt to talk · Double-tap Right Ctrl for continuous listening (configure ASR in WebUI Settings → General → Sidecar & Lightweight AI)"
     }
   };
 
@@ -1808,43 +1898,79 @@
     }
     box.hidden = false;
 
-    var panel = $("hi-panel"),
-        trigger = $("hi-trigger"),
+    var inputBar = $("hi-input-bar"),
+        sessionChip = $("hi-session-chip"),
         resetBtn = $("hi-reset"),
         resetLabel = $("hi-reset-label"),
-        closeBtn = $("hi-close"),
         dot = $("hi-dot"),
-        fabDot = $("hi-fab-dot"),
-        fabLabel = $("hi-fab-label"),
-        badge = $("hi-badge"),
         sidTag = $("hi-session-tag"),
-        subEl = $("hi-sub"),
-        tagEl = box.querySelector(".hi-tag"),
         text = $("hi-text"),
         sendBtn = $("hi-send"),
-        status = $("hi-status"),
-        log = $("hi-log");
+        toast = $("hi-toast"),
+        toastText = $("hi-toast-text"),
+        petalListener = $("petal-listener");
+
     var sid = humanInputTarget();
-    // 把当前绑定的主线会话编号挂在面板上，方便排查与核验「这个面板接的是哪条会话」。
-    box.dataset.sessionId = sid || "";
-    var isApplePlatform = /Mac|iPhone|iPad|iPod/i.test(
-      (typeof navigator !== "undefined" && (navigator.platform || navigator.userAgent)) || ""
-    );
-    var sendShortcutBadge = isApplePlatform ? "⌘↵" : "Ctrl+↵";
-    box.dataset.sendShortcut = sendShortcutBadge;
-    if (sendBtn) sendBtn.setAttribute("data-shortcut", sendShortcutBadge);
+    var inputAllowed = (ROLE !== "camera") && !(/[?&]userInput=(false|0)(&|$)/.test(q));
+    var hasExplicitSession = /[?&]session=([^&]+)/.test(q);
+    var hasRestoredSession = false;
+    var userSentThisLoad = false;
+    var isInputOpen = !!inputAllowed;
+    var isSending = false;
     var isComposing = false;
     var compositionEndTimer = null;
-    var msgCount = 0;
     var currentLang = resolveUiLang();
-    var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
     var resetConfirming = false;
     var resetDoing = false;
     var resetTimer = null;
+    var toastTimer = null;
+    var pendingPollTimer = null;
+
+    box.dataset.sessionId = sid || "";
+    if (sid) notifyParentSession(sid);
 
     function tr(key) {
       var pack = HI_I18N[currentLang] || HI_I18N.en;
       return pack[key] || HI_I18N.en[key] || "";
+    }
+
+    function setSessionActive(active) {
+      var on = !!active && !!sid;
+      box.dataset.sessionActive = on ? "true" : "false";
+      if (dot) dot.classList.toggle("idle", !on);
+    }
+
+    function renderSessionTag() {
+      if (!sidTag) return;
+      if (!inputAllowed) {
+        sidTag.textContent = tr("readonlyTag");
+      } else if (sid) {
+        sidTag.textContent = sid.slice(0, 8);
+      } else {
+        sidTag.textContent = state.selectedAgent || tr("standbyTag");
+      }
+    }
+
+    function showToast(message, opts) {
+      if (!toast || !toastText) return;
+      var msg = String(message || "").trim();
+      if (!msg) return;
+      opts = opts || {};
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+      toast.classList.toggle("is-error", !!opts.bad);
+      toast.classList.toggle("is-voice", !!opts.voice);
+      toastText.textContent = msg;
+      toast.hidden = false;
+      var life = typeof opts.ms === "number" ? opts.ms : (opts.bad ? 4800 : 2600);
+      if (life > 0) {
+        toastTimer = setTimeout(function () {
+          toast.hidden = true;
+          toastTimer = null;
+        }, life);
+      }
     }
 
     function syncResetBtnUI() {
@@ -1884,10 +2010,14 @@
       stopSpeech();
       liveCaptions().forEach(dropCaption);
       // 2. 退出人工接管并复位浏览器为空白起始页状态
+      var prevTakeover = !!state.takeover;
       state.takeover = false;
       state.actorSwitching = false;
       state.actorModeError = null;
       syncTakeoverUI();
+      if (prevTakeover) {
+        notifyParentState({ mode: "observe" });
+      }
       applyActorState(false);
       // 3. 恢复四扇窗口出厂开关、默认几何与焦点（终端缓冲由 broker 重建 tmux 后全量覆盖）
       closeWin("image", 0);
@@ -1900,215 +2030,137 @@
       sendLayout();
     }
 
-    function formatHm(ts) {
-      var d = (typeof ts === "number" && ts > 0) ? new Date(ts) : new Date();
-      if (isNaN(d.getTime())) d = new Date();
-      return String(d.getHours()).padStart(2, "0") + ":" +
-             String(d.getMinutes()).padStart(2, "0");
-    }
-    function renderNote() {
-      if (!status) return;
-      var msg = statusState.key === "statusFailedPrefix"
-        ? (tr("statusFailedPrefix") + statusState.extra)
-        : tr(statusState.key);
-      status.textContent = msg || "";
-      status.classList.toggle("bad", !!statusState.bad);
-    }
-    function noteKey(key, bad, extra) {
-      statusState = { key: key, extra: extra || "", bad: !!bad };
-      renderNote();
-    }
-    function syncBadge() {
-      if (!badge) return;
-      var show = !!sid && panel && panel.hidden && msgCount > 0;
-      badge.hidden = !show;
-      badge.textContent = String(msgCount);
-    }
-    function syncTriggerTitle() {
-      if (!trigger || !panel) return;
-      var open = !panel.hidden;
-      trigger.title = open ? tr("triggerCollapse")
-        : (sid ? tr("triggerExpand") : tr("triggerNoSession"));
-    }
-    function applyHumanInputLang() {
-      currentLang = resolveUiLang();
-      document.documentElement.lang = currentLang;
-      if (panel) panel.setAttribute("aria-label", tr("panelAria"));
-      if (tagEl) tagEl.textContent = tr("tag");
-      if (subEl) subEl.textContent = tr("sub");
-      if (closeBtn) {
-        closeBtn.title = tr("closeTitle");
-        closeBtn.setAttribute("aria-label", tr("closeAria"));
-      }
-      if (!sid) {
-        if (fabLabel) fabLabel.textContent = tr("readonlyFab");
-        if (sidTag) sidTag.textContent = tr("readonlyTag");
-        if (text) text.placeholder = tr("placeholderReadonly");
-        var emptyEl = log && log.querySelector(".hi-empty");
-        if (emptyEl) emptyEl.textContent = tr("emptyReadonly");
-      } else {
-        if (fabLabel) fabLabel.textContent = tr("directorFab");
-        if (sidTag) sidTag.textContent = sid.slice(0, 8);
-        if (text) text.placeholder = tr("placeholderActive");
-      }
-      syncSendBtnState();
-      if (log) {
-        var phBubble = log.querySelector('[data-placeholder="1"] .hi-bubble');
-        if (phBubble) phBubble.textContent = tr("welcome");
-        var items = log.querySelectorAll(".hi-msg");
-        for (var i = 0; i < items.length; i++) {
-          var r = items[i].getAttribute("data-role") || (items[i].classList.contains("dir") ? "dir" : "usr");
-          var hm = items[i].getAttribute("data-hm") || "";
-          var metaEl = items[i].querySelector(".hi-msg-meta");
-          if (metaEl && hm) {
-            metaEl.textContent = (r === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
-          }
-        }
-      }
-      syncTriggerTitle();
-      syncResetBtnUI();
-      renderNote();
-    }
-    var MAX_TA_HEIGHT = 112;
     function syncSendBtnState() {
       if (!sendBtn) return;
       var hasContent = !!(text && text.value && text.value.trim());
-      var isSending = box.dataset.mode === "sending";
-      sendBtn.disabled = !sid || isSending || !hasContent;
-      sendBtn.textContent = isSending ? tr("sendQueueing") : tr("sendIdle");
-      sendBtn.setAttribute("data-shortcut", sendShortcutBadge);
+      sendBtn.disabled = !inputAllowed || isSending || !hasContent;
+      sendBtn.title = isSending ? tr("sendQueueing") : tr("sendTitle");
+      sendBtn.setAttribute("aria-label", isSending ? tr("sendQueueing") : tr("sendAria"));
     }
+
+    var MAX_TA_HEIGHT = 108;
     function autoGrowInput() {
       if (!text) return;
       var hasContent = !!(text.value && text.value.trim());
       box.classList.toggle("has-text", hasContent);
       syncSendBtnState();
       if (!text.value) {
-        text.style.height = "22px";
+        text.style.height = "24px";
         text.style.overflowY = "hidden";
         return;
       }
       text.style.height = "auto";
       var sh = text.scrollHeight || 0;
-      var nextH = Math.max(22, Math.min(sh, MAX_TA_HEIGHT));
+      var nextH = Math.max(24, Math.min(sh, MAX_TA_HEIGHT));
       text.style.height = nextH + "px";
       text.style.overflowY = sh > MAX_TA_HEIGHT ? "auto" : "hidden";
     }
+
     function setExpanded(open, focusInput) {
-      if (!panel) return;
-      panel.hidden = !open;
-      if (trigger) trigger.hidden = !!open;
-      box.dataset.mode = open ? "open" : (sid ? "collapsed" : "icon");
-      syncTriggerTitle();
-      syncBadge();
-      if (open) autoGrowInput();
-      // 仅在用户主动点击展开、且桌面页当前可见时才聚焦输入框；
-      // 页面初次加载或隐藏在后台切页槽位（innerWidth===0）时绝不自动抢焦点，
-      // 否则会把外层会话工作台输入框正在打字的光标强行夺走。
-      if (focusInput && open && sid && text && !text.disabled &&
+      isInputOpen = !!open;
+      box.dataset.mode = isInputOpen ? "open" : "collapsed";
+      if (inputBar) inputBar.setAttribute("aria-hidden", isInputOpen ? "false" : "true");
+      if (petalListener) petalListener.setAttribute("aria-expanded", isInputOpen ? "true" : "false");
+      if (isInputOpen) autoGrowInput();
+      // 仅在用户主动操作且桌面页当前可见时才聚焦输入框，避免后台页槽位抢焦点。
+      if (focusInput && isInputOpen && inputAllowed && text && !text.disabled &&
           !document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
         text.focus();
       }
     }
-    function appendBubble(role, line, opts) {
-      if (!log || !line) return;
-      opts = opts || {};
-      if (opts.seq && log.querySelector('[data-seq="' + opts.seq + '"]')) return;
-      // 收到真实会话记录后，移除初始占位欢迎语，保证面板内容与真实会话严格一致
-      if (!opts.placeholder) {
-        var ph = log.querySelector('[data-placeholder="1"]');
-        if (ph && ph.parentNode === log) log.removeChild(ph);
-      }
-      var hm = formatHm(opts.ts);
-      // 若用户在面板里刚发过同一句话（乐观渲染），用服务端返回的真实记录就地认领，避免重复显示两条
-      if (role === "usr" && opts.seq) {
-        var pendings = log.querySelectorAll('.hi-msg.usr[data-optimistic="1"]');
-        for (var i = 0; i < pendings.length; i++) {
-          var b = pendings[i].querySelector(".hi-bubble");
-          if (b && b.textContent === line) {
-            pendings[i].removeAttribute("data-optimistic");
-            pendings[i].setAttribute("data-seq", String(opts.seq));
-            pendings[i].setAttribute("data-hm", hm);
-            var m = pendings[i].querySelector(".hi-msg-meta");
-            if (m) m.textContent = tr("roleUser") + " · " + hm;
-            return;
-          }
-        }
-      }
-      var item = document.createElement("div");
-      item.className = "hi-msg " + role + (role === "usr" ? " hi-line" : "");
-      item.setAttribute("data-role", role);
-      item.setAttribute("data-hm", hm);
-      if (opts.seq) item.setAttribute("data-seq", String(opts.seq));
-      if (opts.optimistic) item.setAttribute("data-optimistic", "1");
-      if (opts.placeholder) item.setAttribute("data-placeholder", "1");
-      var meta = document.createElement("span");
-      meta.className = "hi-msg-meta";
-      meta.textContent = (role === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
-      var bubble = document.createElement("div");
-      bubble.className = "hi-bubble";
-      bubble.textContent = line;
-      item.appendChild(meta);
-      item.appendChild(bubble);
-      log.appendChild(item);
-      while (log.children.length > 24) log.removeChild(log.firstChild);
-      log.scrollTop = log.scrollHeight;
-      msgCount = log.querySelectorAll('.hi-msg:not([data-placeholder="1"])').length;
-      syncBadge();
-    }
 
-    function cleanSessionText(role, raw) {
-      if (typeof raw !== "string") return "";
-      var s = raw
-        .replace(/<frago-employee[\s\S]*?<\/frago-employee>\s*/g, "")
-        .replace(/<must-use-skill[\s\S]*?<\/must-use-skill>\s*/g, "")
-        .replace(/<system-reminder[\s\S]*?<\/system-reminder>\s*/g, "")
-        .replace(/<employee-business-context[\s\S]*?<\/employee-business-context>\s*/g, "")
-        .replace(/<employee-recent-sessions[\s\S]*?<\/employee-recent-sessions>\s*/g, "")
-        .replace(/---\s*\n【桌面主操作员（desktop-operator）职责契约】[\s\S]*$/g, "")
-        .replace(/---\s*\n【舞台硬编排指令（Stage Orchestrator）[\s\S]*$/g, "")
-        .trim();
-      if (!s) return "";
-      if (role === "dir") {
-        if (/^【收场交接】/.test(s)) return "";
-        // 导演长回复提取前两段有效业务说明，裁掉附带的 WARN 书面应答段或代码块
-        var paras = s.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
-        var picked = [];
-        for (var i = 0; i < paras.length; i++) {
-          if (/^(\*\*WARN\b|WARN\b|-\s*`(clips|ui_ready|screen_|orphan_)|```|>)/.test(paras[i])) continue;
-          picked.push(
-            paras[i]
-              .replace(/\*\*([^*]+)\*\*/g, "$1")
-              .replace(/`([^`]+)`/g, "$1")
-              .trim()
-          );
-          if (picked.length >= 2) break;
-        }
-        s = (picked.length ? picked.join("\n\n") : (paras[0] || s))
-          .replace(/\*\*([^*]+)\*\*/g, "$1")
-          .replace(/`([^`]+)`/g, "$1")
-          .trim();
-        if (s.length > 360) s = s.slice(0, 359) + "…";
-      } else {
-        s = s.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-        if (s.length > 360) s = s.slice(0, 359) + "…";
+    function applyHumanInputLang() {
+      currentLang = resolveUiLang();
+      document.documentElement.lang = currentLang;
+      if (inputBar) inputBar.setAttribute("aria-label", tr("barAria"));
+      if (sessionChip) sessionChip.title = tr("sessionTitle");
+      if (petalListener) {
+        petalListener.setAttribute("aria-label", tr("flowerAria"));
+        petalListener.title = tr("flowerTitle");
       }
-      return s;
+      renderSessionTag();
+      if (!inputAllowed) {
+        if (text) text.placeholder = tr("placeholderReadonly");
+      } else {
+        if (text) text.placeholder = tr("placeholderActive");
+      }
+      syncSendBtnState();
+      syncResetBtnUI();
     }
 
     var skillSent = false;
     var lastSeq = 0;
     var syncingRecords = false;
+    var activeSessionReqSeq = 0;
+
+    function stopPendingPoll() {
+      if (pendingPollTimer) {
+        clearTimeout(pendingPollTimer);
+        pendingPollTimer = null;
+      }
+    }
+
+    function applyBoundSession(nextSid, opts) {
+      var clean = typeof nextSid === "string" ? nextSid.trim() : "";
+      if (clean !== (sid || "")) {
+        lastSeq = 0;
+      }
+      sid = clean || null;
+      if (sid) {
+        persistDirectorSessionId(sid);
+        box.dataset.sessionId = sid;
+        hasRestoredSession = true;
+        skillSent = true;
+        setSessionActive(true);
+      } else {
+        clearDirectorSessionId();
+        box.dataset.sessionId = "";
+        hasRestoredSession = false;
+        skillSent = false;
+        setSessionActive(false);
+      }
+      renderSessionTag();
+      syncSendBtnState();
+      notifyParentSession(sid, opts);
+    }
+
+    function pollPendingHandle(handle, expectedAgent) {
+      stopPendingPoll();
+      var attempts = 0;
+      function step() {
+        if (expectedAgent && state.selectedAgent && state.selectedAgent !== expectedAgent) return;
+        attempts++;
+        fetch("/api/workbench/sessions/pending/" + encodeURIComponent(handle))
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (launch) {
+            if (!launch) return;
+            if (launch.session_id) {
+              applyBoundSession(launch.session_id, { agent: launch.agent || state.selectedAgent });
+              syncSessionRecords();
+              return;
+            }
+            if (!launch.error && !launch.finished && attempts < 40) {
+              pendingPollTimer = setTimeout(step, 700);
+            }
+          })
+          .catch(function () {
+            if (attempts < 40) pendingPollTimer = setTimeout(step, 1000);
+          });
+      }
+      pendingPollTimer = setTimeout(step, 600);
+    }
 
     function performStageReset() {
       clearResetConfirm();
+      stopPendingPoll();
+      activeSessionReqSeq++;
       resetDoing = true;
       syncResetBtnUI();
       var oldSid = sid;
       resetStageLocal();
       send({ t: "human.reset", sessionId: oldSid || "" });
 
-      // 通知 8093 服务端一并销毁后台旧导演会话（CoreAgent / tmux 主操作员进程）与驻场主持人守护线程
+      // 通知 8093 服务端一并销毁后台旧主操作员会话进程与旁路语音守护线程
       var stopTarget = encodeURIComponent(oldSid || "__stage_reset__");
       fetch("/api/workbench/sessions/" + stopTarget + "/stop", {
         method: "POST",
@@ -2116,40 +2168,25 @@
         body: JSON.stringify({ force: true, stage_reset: true })
       }).catch(function () {});
 
-      if (sid) {
-        sid = defaultDirectorSessionId();
-        try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
-        hasRestoredSession = false;
-        box.dataset.sessionId = sid;
-        if (/[?&]session=/.test(location.search) && window.history && window.history.replaceState) {
-          var nextSearch = location.search.replace(/([?&]session=)[^&]+/, "$1" + encodeURIComponent(sid));
-          window.history.replaceState(null, "", location.pathname + nextSearch + location.hash);
-        }
-        skillSent = false;
-        lastSeq = 0;
-        msgCount = 0;
-        if (sidTag) sidTag.textContent = sid.slice(0, 8);
-        if (log) log.innerHTML = "";
-        appendBubble("dir", tr("welcome"), { placeholder: true });
-        if (text) {
-          text.value = "";
-          text.disabled = false;
-          autoGrowInput();
-        }
-        syncSendBtnState();
-        syncBadge();
+      hasExplicitSession = false;
+      userSentThisLoad = false;
+      lastSeq = 0;
+      if (/[?&]session=/.test(location.search) && window.history && window.history.replaceState) {
+        var nextSearch = location.search.replace(/([?&]session=)[^&]+/, "").replace(/[?&]$/, "");
+        window.history.replaceState(null, "", location.pathname + nextSearch + location.hash);
       }
-      noteKey("statusResetDone", false);
+      applyBoundSession(null, { reset: true, agent: state.selectedAgent });
+      if (text) {
+        text.value = "";
+        text.disabled = !inputAllowed;
+        autoGrowInput();
+      }
+      showToast(tr("statusResetDone"));
 
       setTimeout(function () {
         resetDoing = false;
         syncResetBtnUI();
       }, 420);
-      setTimeout(function () {
-        if (statusState && statusState.key === "statusResetDone") {
-          noteKey(sid ? "statusHint" : "statusReadonly", false);
-        }
-      }, 3200);
     }
 
     els.onStageReset = function () {
@@ -2179,68 +2216,26 @@
       });
     }
 
-    if (trigger) {
-      trigger.addEventListener("click", function () {
-        setExpanded(panel ? panel.hidden : true, true);
-      });
-    }
-    if (closeBtn) {
-      closeBtn.addEventListener("click", function () {
-        clearResetConfirm();
-        setExpanded(false, false);
-      });
-    }
-
     window.addEventListener("storage", function (e) {
       if (!e || !e.key || e.key === "language") {
         applyHumanInputLang();
       }
     });
 
-    if (!sid) {
-      if (dot) dot.classList.add("idle");
-      if (fabDot) fabDot.classList.add("idle");
+    if (!inputAllowed) {
+      setSessionActive(false);
       if (text) text.disabled = true;
       if (sendBtn) sendBtn.disabled = true;
-      if (log) {
-        log.innerHTML = "";
-        var empty = document.createElement("div");
-        empty.className = "hi-empty";
-        empty.textContent = tr("emptyReadonly");
-        log.appendChild(empty);
-      }
-      noteKey("statusReadonly", false);
       applyHumanInputLang();
       setExpanded(false);
       return;
     }
 
-    if (dot) dot.classList.remove("idle");
-    if (fabDot) fabDot.classList.remove("idle");
+    setSessionActive(hasExplicitSession);
     if (text) text.disabled = false;
     autoGrowInput();
-    if (log) log.innerHTML = "";
-    appendBubble("dir", tr("welcome"), { placeholder: true });
-    noteKey("statusHint", false);
     applyHumanInputLang();
-    if (/[?&]panel=open(&|$)/.test(location.search)) {
-      setExpanded(true);
-    } else {
-      setExpanded(false);
-    }
-
-    els.onDirectorCaption = function (captionText) {
-      if (!captionText) return;
-      // 主持人在面板上发出的秒级插播确认（收到 / 已收到 / Received / Got it /
-      // Noted / Passing it on …）要稳定同步到右下角对话面板，让人一眼看到
-      // 「话已经被接住了」。匹配放宽到这几类确认口气，避免真实确认被漏掉。
-      if (/^(收到|已收到|Received\b|Got it\b|Noted\b|Passing it on\b|需要你处理|I need your input|I need you to)/i.test(captionText)) {
-        appendBubble("dir", captionText);
-      }
-    };
-
-    var hasExplicitSession = /[?&]session=([^&]+)/.test(location.search);
-    var hasRestoredSession = false;
+    setExpanded(true);
 
     function syncSessionRecords() {
       if (!isStageVisible()) return;
@@ -2248,7 +2243,6 @@
         applyHumanInputLang();
       }
       if (!sid || syncingRecords) return;
-      // 舞台未连接且当前面板尚未发起或收到过任何对话时，跳过对默认随机 core_ 会话的空轮询
       if (!state.wsOpen && !skillSent && lastSeq === 0 && !hasExplicitSession && !hasRestoredSession) return;
       syncingRecords = true;
       var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
@@ -2258,19 +2252,17 @@
         return r.json().catch(function () { return []; });
       }).then(function (records) {
         if (!Array.isArray(records) || !records.length) return;
-        records.forEach(function (rec) {
+        for (var i = 0; i < records.length; i++) {
+          var rec = records[i];
           var seq = typeof rec.seq === "number" ? rec.seq : 0;
           if (seq > lastSeq) lastSeq = seq;
-          var payload = rec.payload || {};
-          if (rec.kind === "user.say" && !payload.is_tool_result) {
+          if (rec.kind === "user.say" || rec.kind === "agent.say") {
             skillSent = true;
-            var uText = cleanSessionText("usr", payload.text || "");
-            if (uText) appendBubble("usr", uText, { seq: seq, ts: rec.ts });
-          } else if (rec.kind === "agent.say") {
-            var aText = cleanSessionText("dir", payload.text || "");
-            if (aText) appendBubble("dir", aText, { seq: seq, ts: rec.ts });
           }
-        });
+        }
+        if (lastSeq > 0 || skillSent) {
+          setSessionActive(true);
+        }
       }).catch(function () {
         // 会话尚未创建或网络瞬断时静默等待下一轮同步
       }).then(function () {
@@ -2278,42 +2270,85 @@
       });
     }
 
-    els.syncSessionRecords = syncSessionRecords;
-    if (sid && !hasExplicitSession) {
-      fetch("/api/workbench/desktop-voice/active-session")
+    function queryActiveSessionForAgent(targetAgent, forceSwitch) {
+      var reqSeq = ++activeSessionReqSeq;
+      var req = targetAgent
+        ? fetch("/api/workbench/desktop-voice/active-session?agent=" + encodeURIComponent(targetAgent))
+        : fetch("/api/workbench/desktop-voice/active-session");
+      req
         .then(function (r) {
           if (!r.ok) return null;
           return r.json().catch(function () { return null; });
         })
         .then(function (res) {
+          if (reqSeq !== activeSessionReqSeq) return;
+          if (!res) {
+            if (!forceSwitch) syncSessionRecords();
+            return;
+          }
+          if (targetAgent && state.selectedAgent && state.selectedAgent !== targetAgent) {
+            return;
+          }
+          if (res.agent && !state.selectedAgent) {
+            state.selectedAgent = res.agent;
+            notifyParentState({ agent: res.agent });
+          }
           if (res && res.restored && res.session_id) {
-            if (lastSeq === 0 && !skillSent) {
-              sid = res.session_id;
-              hasRestoredSession = true;
-              try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
-              box.dataset.sessionId = sid;
-              if (sidTag) sidTag.textContent = sid.slice(0, 8);
+            if (!userSentThisLoad) {
+              applyBoundSession(res.session_id, { agent: res.agent || state.selectedAgent });
               syncSessionRecords();
+            } else if (forceSwitch) {
+              applyBoundSession(res.session_id, { agent: res.agent || state.selectedAgent });
+              syncSessionRecords();
+            }
+          } else {
+            if (forceSwitch || !userSentThisLoad) {
+              applyBoundSession(null, { agent: res.agent || state.selectedAgent });
             }
           }
         })
-        .catch(function () {});
+        .catch(function () {
+          if (!forceSwitch) syncSessionRecords();
+        });
     }
-    syncSessionRecords();
+
+    els.switchDesktopAgent = function (nextAgent) {
+      var clean = typeof nextAgent === "string" ? nextAgent.trim() : "";
+      if (!clean) return;
+      var changed = state.selectedAgent !== clean;
+      state.selectedAgent = clean;
+      if (els.stage) els.stage.dataset.agent = clean;
+      if (changed) {
+        stopPendingPoll();
+        hasExplicitSession = false;
+        applyBoundSession(null, { agent: clean });
+        queryActiveSessionForAgent(clean, true);
+      } else {
+        renderSessionTag();
+      }
+    };
+
+    els.syncSessionRecords = syncSessionRecords;
+    if (!hasExplicitSession) {
+      queryActiveSessionForAgent(state.selectedAgent, false);
+    } else {
+      syncSessionRecords();
+    }
     setInterval(syncSessionRecords, 2500);
 
     function submit() {
       var line = text.value.trim();
-      if (!line) return;
-      box.dataset.mode = "sending";
+      if (!line || isSending) return;
+      userSentThisLoad = true;
+      isSending = true;
       syncSendBtnState();
-      noteKey("statusQueueing", false);
       fetch("/api/workbench/desktop-voice/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: line,
-          session_id: sid || null
+          session_id: sid || null,
+          agent: state.selectedAgent || null
         })
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (body) {
@@ -2321,22 +2356,25 @@
           return body;
         });
       }).then(function (res) {
+        if (res && res.agent) {
+          state.selectedAgent = res.agent;
+        }
         if (res && res.session_id) {
-          sid = res.session_id;
-          try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
-          box.dataset.sessionId = sid;
-          if (sidTag) sidTag.textContent = sid.slice(0, 8);
+          applyBoundSession(res.session_id, { agent: (res && res.agent) || state.selectedAgent });
+        } else if (res && res.handle) {
+          pollPendingHandle(res.handle, (res && res.agent) || state.selectedAgent);
         }
         skillSent = true;
-        appendBubble("usr", line, { optimistic: true });
+        hasRestoredSession = true;
+        setSessionActive(!!sid);
         text.value = "";
         autoGrowInput();
-        noteKey("statusQueued", false);
+        showToast(tr("statusQueued"));
         syncSessionRecords();
       }).catch(function (err) {
-        noteKey("statusFailedPrefix", true, err && err.message ? err.message : String(err));
+        showToast(tr("statusFailedPrefix") + (err && err.message ? err.message : String(err)), { bad: true });
       }).then(function () {
-        box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
+        isSending = false;
         syncSendBtnState();
         if (!document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
           text.focus();
@@ -2364,22 +2402,20 @@
     text.addEventListener("keydown", function (e) {
       // 中文输入法候选上屏保护：组合输入期间或 keyCode===229 时绝不触发发送
       if (isComposing || e.isComposing || e.keyCode === 229) return;
-      // 仅在 Cmd+Enter (macOS) 或 Ctrl+Enter (Win/Linux) 时发送；普通 Enter 与 Shift+Enter 均为换行
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.altKey) {
+      // Enter 或 Cmd/Ctrl+Enter 发送；Shift+Enter 换行
+      if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         submit();
       }
     });
 
-    /* ── 右下角彩色偏心花瓣麦克风监听器 (#petal-listener) ──────────────────
+    /* ── 右下角彩色偏心花瓣开关与语音监听器 (#petal-listener) ──────────────────
+       - 点击小花朵：展开/收起透明输入框；
        - 按住右 Alt (AltRight)：按住期间开始录音与动态花瓣监听，松开立即送 Groq Whisper ASR 并投喂 desktop-operator；
        - 双击右 Ctrl (ControlRight)：开启持续监听模式（VAD 自动切句送转写），再次双击右 Ctrl 关闭持续监听；
-       - 监听期间：每片偏心花瓣围绕各自内部的偏心锚点随机放大/缩小（0.74 ~ 1.38），同时花瓣簇整体旋转。 */
+       - 监听期间：每片偏心花瓣围绕各自内部的偏心锚点平滑呼吸与音量律动，同时花瓣簇整体旋转。 */
     var petalDockRow = $("petal-dock-row"),
-        petalListener = $("petal-listener"),
         petalRotor = $("petal-rotor"),
-        petalStatusPill = $("petal-status-pill"),
-        petalStatusText = $("petal-status-text"),
         petalNodes = petalRotor ? petalRotor.querySelectorAll(".petal") : [];
 
     var listenMode = "idle"; // "idle" | "ptt" | "continuous"
@@ -2586,8 +2622,7 @@
     function showTranscribedText(recognizedText) {
       var clean = String(recognizedText || "").trim();
       if (!clean) return;
-      if (petalStatusText) petalStatusText.textContent = clean;
-      if (petalStatusPill) petalStatusPill.hidden = false;
+      showToast(clean, { ms: 4200, voice: true });
     }
 
     function sampleAudioLevel() {
@@ -2750,6 +2785,7 @@
             mime_type: blob.type || "audio/webm",
             filename: "speech.webm",
             session_id: sid || null,
+            agent: state.selectedAgent || null,
             auto_send: true
           })
         }).then(function (r) {
@@ -2759,15 +2795,19 @@
           });
         }).then(function (res) {
           var recognized = (res && res.text) ? cleanRecognizedSpeechText(res.text) : "";
+          if (res && res.agent) {
+            state.selectedAgent = res.agent;
+          }
           if (res && res.session_id) {
-            sid = res.session_id;
-            try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
-            box.dataset.sessionId = sid;
-            if (sidTag) sidTag.textContent = sid.slice(0, 8);
+            applyBoundSession(res.session_id, { agent: (res && res.agent) || state.selectedAgent });
+          } else if (res && res.handle) {
+            pollPendingHandle(res.handle, (res && res.agent) || state.selectedAgent);
           }
           if (recognized) {
+            userSentThisLoad = true;
             skillSent = true;
-            appendBubble("usr", recognized, { optimistic: true });
+            hasRestoredSession = true;
+            setSessionActive(true);
             syncSessionRecords();
             showTranscribedText(recognized);
           }
@@ -2779,8 +2819,7 @@
           var errHint = (!rawMsg || /ASR|asr_profile_id|Groq|Whisper|未找到|未配置/i.test(rawMsg))
             ? (rawMsg.indexOf("常规设置 → 旁路与轻量 AI") >= 0 ? rawMsg : fallbackHint)
             : rawMsg;
-          showTranscribedText(errHint);
-          note(errHint, true);
+          showToast(errHint, { bad: true });
           setPetalListenState(listenMode);
         }).then(function () {
           transcribingCount = Math.max(0, transcribingCount - 1);
@@ -2951,7 +2990,16 @@
       petalListener.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        toggleContinuousListening();
+        if (!inputAllowed) return;
+        setExpanded(!isInputOpen, true);
+      });
+      petalListener.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!inputAllowed) return;
+          setExpanded(!isInputOpen, true);
+        }
       });
     }
   }
@@ -3217,6 +3265,126 @@
     if (els.syncSessionRecords) els.syncSessionRecords();
   }
 
+  function applyDesktopConfig(d) {
+    if (!d || typeof d !== "object") return;
+    if (typeof d.resolution === "string" && d.resolution.trim()) {
+      var rm = d.resolution.trim().match(/(\d+)\s*[×xX]\s*(\d+)/);
+      if (rm) {
+        var rw = parseInt(rm[1], 10);
+        var rh = parseInt(rm[2], 10);
+        if (rw >= 320 && rh >= 240) {
+          CONFIG.desktop = { w: rw, h: rh };
+          state.customResolution = true;
+          if (els.stage) els.stage.dataset.resolution = rw + "×" + rh;
+          fitStage();
+          if (state.wsOpen && !state.syncing) sendLayout();
+        }
+      }
+    }
+    if (d.fps !== undefined && d.fps !== null) {
+      var fpsNum = parseInt(String(d.fps), 10);
+      if (fpsNum > 0 && isFinite(fpsNum)) {
+        state.fpsLimit = fpsNum;
+        if (els.stage) els.stage.dataset.fps = String(fpsNum);
+        if (state.frameThrottleTimer) {
+          clearTimeout(state.frameThrottleTimer);
+          state.frameThrottleTimer = null;
+          drainFrame();
+        }
+      }
+    }
+    if (typeof d.narrator === "boolean") {
+      setNarratorEnabled(d.narrator, { silentParent: true });
+    }
+    if ((d.mode === "takeover" || d.mode === "observe") && ROLE !== "camera") {
+      var wantTakeover = d.mode === "takeover";
+      if (!!state.takeover !== wantTakeover && typeof els.setTakeover === "function") {
+        els.setTakeover(wantTakeover, { silentParent: true });
+      }
+    }
+  }
+
+  function setViewApp(nextApp, opts) {
+    var allowedApps = ["all", "term", "browser", "image", "video", "slide", "overlay"];
+    var target = typeof nextApp === "string" ? nextApp.trim() : "all";
+    if (allowedApps.indexOf(target) < 0) target = "all";
+    state.viewApp = target;
+    if (els.stage) els.stage.dataset.viewApp = target;
+
+    if (target === "term" || target === "browser" || target === "image" || target === "video") {
+      if (els.slideLayer && !state.slideOn) {
+        els.slideLayer.removeAttribute("data-preview-empty");
+        els.slideLayer.classList.remove("in");
+        els.slideLayer.hidden = true;
+      }
+      if (els.overlayLayer) els.overlayLayer.removeAttribute("data-preview-active");
+      if (!state.open[target]) openWin(target, 0);
+      if (state.minimized[target]) restoreWin(target);
+      applyFocus(target);
+      if (state.wsOpen) send({ t: "human.focus", win: target, on: true });
+    } else if (target === "slide") {
+      if (els.overlayLayer) els.overlayLayer.removeAttribute("data-preview-active");
+      if (els.slideLayer) {
+        if (!state.slideOn) {
+          els.slideLayer.setAttribute("data-preview-empty", "true");
+        } else {
+          els.slideLayer.removeAttribute("data-preview-empty");
+        }
+        els.slideLayer.hidden = false;
+        void els.slideLayer.offsetWidth;
+        els.slideLayer.classList.add("in");
+      }
+      if (els.mbApp) els.mbApp.textContent = "Slide";
+    } else if (target === "overlay") {
+      if (els.slideLayer && !state.slideOn) {
+        els.slideLayer.removeAttribute("data-preview-empty");
+        els.slideLayer.classList.remove("in");
+        els.slideLayer.hidden = true;
+      }
+      if (els.overlayLayer) {
+        els.overlayLayer.setAttribute("data-preview-active", overlays.length ? "false" : "true");
+      }
+      if (els.mbApp) els.mbApp.textContent = "Overlay";
+    } else {
+      if (els.slideLayer) {
+        els.slideLayer.removeAttribute("data-preview-empty");
+        if (!state.slideOn) {
+          els.slideLayer.classList.remove("in");
+          els.slideLayer.hidden = true;
+        }
+      }
+      if (els.overlayLayer) els.overlayLayer.removeAttribute("data-preview-active");
+      if (els.mbApp) {
+        els.mbApp.textContent = state.focus ? (state.appNames[state.focus] || state.focus) : "Finder";
+      }
+    }
+
+    if (opts && opts.notifyParent) {
+      notifyParentState({ app: target });
+    }
+  }
+
+  function setupDockSwitcher() {
+    if (ROLE === "camera") return;
+    WINS.forEach(function (w) {
+      var d = dockEl(w);
+      if (!d) return;
+      d.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!state.open[w]) openWin(w, 0);
+        if (state.minimized[w]) restoreWin(w);
+        applyFocus(w);
+        if (state.wsOpen) send({ t: "human.focus", win: w, on: true });
+        if (state.viewApp && state.viewApp !== "all") {
+          setViewApp(w, { notifyParent: true });
+        } else {
+          notifyParentState({ app: w });
+        }
+      });
+    });
+  }
+
   function boot() {
     els.stage = $("stage");
     els.clock = $("mb-clock");
@@ -3255,6 +3423,14 @@
     els.spinner = $("addr-spinner");
     els.newtab = $("browser-newtab");
 
+    if (els.stage) {
+      els.stage.dataset.resolution = CONFIG.desktop.w + "×" + CONFIG.desktop.h;
+      els.stage.dataset.fps = String(state.fpsLimit);
+      els.stage.dataset.narrator = state.narratorMuted ? "muted" : "on";
+      els.stage.dataset.viewApp = state.viewApp;
+      els.stage.dataset.soundUnlocked = state.soundUnlocked ? "true" : "false";
+    }
+
     fitStage();
     measureHeaders();
     tickClock();
@@ -3266,14 +3442,24 @@
     document.addEventListener("visibilitychange", handleStageVisibilityChange);
     window.addEventListener("message", function (e) {
       var d = e && e.data;
-      if (d && d.type === "frago:desktop-visibility") {
+      if (!d || typeof d !== "object") return;
+      if (d.type === "frago:desktop-visibility") {
         state.hostVisible = !!d.visible;
         handleStageVisibilityChange();
+      } else if (d.type === "frago:desktop-config") {
+        applyDesktopConfig(d);
+      } else if (d.type === "frago:desktop-unlock-audio") {
+        unlockAudio();
+      } else if (d.type === "frago:desktop-app") {
+        setViewApp(d.app, { notifyParent: false });
+      } else if (d.type === "frago:desktop-agent") {
+        if (els.switchDesktopAgent) els.switchDesktopAgent(d.agent);
       }
     });
     setupHumanInput();
     els.soundUnlock = setupSoundUnlock();
     setupBrowserTakeover();
+    setupDockSwitcher();
     blockInput();
 
     startWallpaper();

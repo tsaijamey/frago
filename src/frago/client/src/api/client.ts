@@ -404,12 +404,21 @@ export function recipeAppUrl(name: string, slot?: string | null): string {
   return slot && slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
 }
 
-/** 虚拟桌面（agent_os）的嵌入地址。默认开启 userInput=true 并携带导演会话编号。 */
+/** 虚拟桌面（agent_os）的嵌入地址。默认开启 userInput=true；仅在显式指定会话时携带 session 参数。 */
 export function desktopAppUrl(sessionId?: string | null): string {
   const base = `${API_BASE_URL}/app/agent_os/`;
   return sessionId
     ? `${base}?userInput=true&session=${encodeURIComponent(sessionId)}`
     : `${base}?userInput=true`;
+}
+
+/** 查询当前后端 desktop-operator 最近活跃的桌面会话（供刷新后恢复展示）。 */
+export async function getActiveDesktopSession(): Promise<{
+  session_id: string | null;
+  employee: string;
+  restored: boolean;
+}> {
+  return fetchApi('/workbench/desktop-voice/active-session');
 }
 
 /** 告诉服务端：它推过来的那个「打开配方页面」这边已经打开了。 */

@@ -704,6 +704,10 @@ html, body {
 .dock-item {
   position: relative;
   width: 38px; height: 38px;
+  cursor: pointer;
+}
+.dock-item:hover .dock-icon {
+  transform: translateY(-2px) scale(1.04);
 }
 .dock-icon {
   width: 38px; height: 38px;
@@ -918,12 +922,11 @@ html, body {
 }
 #strap-layer[hidden] { display: none; }
 
-/* ── 右下角导演指挥舱面板 (#human-input) ──────────────────────────
-   采用 Cursor Composer / Linear Copilot / Raycast AI 范式重构：
-   1. 壳体：深空黑曜石毛玻璃 + 顶部星云电紫环境微光 + 1px 镜面内环；
-   2. 消息流：导演消息为高通透碳晶叙事卡（配 ✦ 星芒标），用户指令为电紫微光胶囊卡；
-   3. 底部输入区：将 .hi-foot 打造为一体式悬浮 Composer 命令舱（文本域在上、状态提示与
-      发送键在下），自适应多行顺滑长高，聚焦时整舱泛起四周均匀星云柔光。 */
+/* ── 右下角「透明区域输入框 + 小花朵」(#human-input) ──────────────────────────
+   去除具象化聊天卡片面板，仅保留：
+   1. 轻盈通透的悬浮透明/毛玻璃胶囊输入框（不遮挡虚拟桌面画面，内嵌极简会话标识与重置微胶囊）；
+   2. 瞬态反馈浮标（发送已投递 / 重置完成 / 错误 / 语音转写后自动淡出）；
+   3. 标志性彩色偏心小花朵（点击展开/收起透明输入框，并体现活跃会话呼吸态）。 */
 #human-input {
   position: absolute;
   right: 22px;
@@ -932,467 +935,285 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
-  pointer-events: auto;
+  pointer-events: none;
   user-select: text;
 }
 #human-input[hidden],
 #human-input [hidden] { display: none !important; }
 
-#human-input .hi-panel {
-  width: 404px;
-  border-radius: 18px;
-  background:
-    radial-gradient(110% 65% at 50% 0%, rgba(139, 124, 255, 0.085) 0%, transparent 62%),
-    linear-gradient(180deg, rgba(15, 18, 26, 0.92) 0%, rgba(9, 11, 16, 0.96) 100%);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 32px 80px -12px rgba(0, 0, 0, 0.82),
-    0 0 0 1px rgba(0, 0, 0, 0.65);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-#human-input[data-mode="open"] .hi-fab,
-#human-input[data-mode="sending"] .hi-fab {
-  display: none !important;
-}
-
-#human-input .hi-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 15px 11px;
-  background: rgba(255, 255, 255, 0.015);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.055);
-  user-select: none;
-}
-#human-input .hi-head-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--status-online);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16), 0 0 8px rgba(16, 185, 129, 0.5);
-  flex-shrink: 0;
-}
-#human-input .hi-head-dot.idle {
-  background: rgba(148, 163, 184, 0.35);
-  box-shadow: none;
-}
-#human-input .hi-head-info { flex: 1; min-width: 0; }
-#human-input .hi-head-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.25;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-#human-input .hi-tag {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
-#human-input .hi-sid {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: #c7d2fe;
-  padding: 1.5px 7px;
-  border-radius: 5px;
-  background: rgba(139, 124, 255, 0.12);
-  border: 1px solid rgba(139, 124, 255, 0.24);
-}
-#human-input .hi-head-sub {
-  font-size: 11px;
-  color: rgba(148, 163, 184, 0.65);
-  line-height: 1.35;
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#human-input .hi-head-reset {
-  height: 26px;
-  padding: 0 9px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  line-height: 1;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  cursor: pointer;
-  flex-shrink: 0;
-  user-select: none;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-}
-#human-input .hi-head-reset:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.14);
-  color: var(--text-primary);
-}
-#human-input .hi-head-reset.confirming {
-  background: rgba(244, 63, 94, 0.14);
-  border-color: rgba(244, 63, 94, 0.48);
-  color: #fda4af;
-  font-weight: 600;
-  box-shadow: 0 0 12px rgba(244, 63, 94, 0.18), inset 0 0 0 1px rgba(244, 63, 94, 0.10);
-}
-#human-input .hi-head-reset.confirming:hover:not(:disabled) {
-  background: rgba(244, 63, 94, 0.22);
-  border-color: rgba(244, 63, 94, 0.64);
-  color: #ffe4e6;
-}
-#human-input .hi-head-reset.resetting svg {
-  animation: spin 0.8s linear infinite;
-}
-#human-input .hi-head-reset:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-#human-input .hi-head-close {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-#human-input .hi-head-close:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.14);
-  color: var(--text-primary);
-}
-
-#human-input .hi-log {
-  padding: 13px 15px 8px;
-  max-height: min(460px, 52vh);
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-}
-#human-input .hi-log::-webkit-scrollbar,
-#human-input textarea::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-#human-input .hi-log::-webkit-scrollbar-track,
-#human-input textarea::-webkit-scrollbar-track {
-  background: transparent;
-  margin: 4px 0;
-}
-#human-input .hi-log::-webkit-scrollbar-thumb,
-#human-input textarea::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+.hi-toast {
+  height: 28px;
+  max-width: 380px;
+  padding: 0 12px;
   border-radius: 999px;
-}
-#human-input .hi-log:hover::-webkit-scrollbar-thumb,
-#human-input textarea:hover::-webkit-scrollbar-thumb {
-  background: rgba(139, 124, 255, 0.45);
-}
-
-#human-input .hi-msg {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-width: 92%;
-  font-size: 12.5px;
-  line-height: 1.54;
-}
-#human-input .hi-msg.dir { align-self: flex-start; }
-#human-input .hi-msg.usr { align-self: flex-end; align-items: flex-end; }
-#human-input .hi-msg-meta {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: rgba(148, 163, 184, 0.55);
-  padding: 0 2px;
-  user-select: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-#human-input .hi-msg.dir .hi-msg-meta::before {
-  content: "✦";
-  color: var(--accent-bright);
-  font-size: 9px;
-  line-height: 1;
-}
-#human-input .hi-bubble {
-  padding: 9.5px 13px;
-  border-radius: 11px;
-  word-break: break-word;
-  white-space: pre-wrap;
-}
-#human-input .hi-msg.dir .hi-bubble {
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
-  color: rgba(241, 245, 249, 0.93);
-}
-#human-input .hi-msg.usr .hi-bubble {
-  background: linear-gradient(135deg, rgba(139, 124, 255, 0.18) 0%, rgba(99, 102, 241, 0.09) 100%);
-  border: 1px solid rgba(139, 124, 255, 0.30);
-  box-shadow:
-    inset 0 0 0 1px rgba(139, 124, 255, 0.08),
-    0 4px 14px rgba(0, 0, 0, 0.24);
-  color: #f8fafc;
-}
-#human-input .hi-empty {
-  padding: 14px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px dashed rgba(255, 255, 255, 0.1);
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  text-align: center;
-}
-#human-input .hi-line {
-  font-size: 12.5px;
-  color: var(--text-primary);
-}
-
-/* 一体式悬浮 Composer 命令舱（.hi-foot 采用 Cursor / Linear 双层 Grid 架构：
-   上方全宽自适应多行文本域，下方左状态提示、右发送动作胶囊） */
-#human-input .hi-foot {
-  margin: 4px 12px 12px;
-  padding: 10px 11px 8px 13px;
-  border-radius: 13px;
-  background: rgba(6, 8, 13, 0.80);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.5),
-    0 4px 12px rgba(0, 0, 0, 0.22);
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 10px;
-  row-gap: 7px;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-}
-#human-input .hi-foot:focus-within,
-#human-input.has-text .hi-foot {
-  background: rgba(7, 9, 15, 0.92);
-  border-color: rgba(139, 124, 255, 0.44);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.5),
-    0 0 0 3px rgba(139, 124, 255, 0.12);
-}
-#human-input .hi-row {
-  display: contents;
-}
-#human-input textarea {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  width: 100%;
-  resize: none;
-  height: 22px;
-  min-height: 22px;
-  max-height: 112px;
-  padding: 1px 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font: 12.5px/1.5 var(--font-sans);
-  outline: none;
-  overflow-y: hidden;
-  transition: height 0.08s ease;
-}
-#human-input textarea:placeholder-shown {
-  overflow-y: hidden;
-}
-#human-input textarea::placeholder { color: rgba(148, 163, 184, 0.46); }
-#human-input textarea:disabled { opacity: 0.5; cursor: not-allowed; }
-#human-input .hi-send {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  height: 25px;
-  padding: 0 11px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.055);
-  color: #cbd5e1;
-  font-family: var(--font-sans);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
-}
-#human-input .hi-send::after {
-  content: attr(data-shortcut);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  opacity: 0.78;
-}
-#human-input .hi-send:not([data-shortcut])::after {
-  content: "⌘↵";
-}
-#human-input.has-text .hi-send:not(:disabled),
-#human-input .hi-send:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8b7cff 0%, #6d5ce8 100%);
-  border-color: rgba(186, 179, 255, 0.45);
-  color: #ffffff;
-  box-shadow: 0 2px 12px rgba(139, 124, 255, 0.35);
-}
-#human-input .hi-send:hover:not(:disabled) {
-  transform: translateY(-0.5px);
-}
-#human-input .hi-send:disabled { opacity: 0.38; cursor: default; }
-#human-input .hi-status {
-  grid-column: 1;
-  grid-row: 2;
-  min-height: 16px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: rgba(148, 163, 184, 0.46);
-  display: flex;
-  align-items: center;
-  padding: 0;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#human-input .hi-status.bad { color: var(--status-danger); }
-
-#human-input .hi-fab {
-  height: 38px;
-  min-width: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: rgba(12, 15, 22, 0.88);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 12px 32px rgba(0, 0, 0, 0.62);
-  color: var(--text-primary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  user-select: none;
-  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-}
-#human-input .hi-fab:hover {
-  background: rgba(18, 22, 32, 0.94);
-  border-color: rgba(139, 124, 255, 0.40);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.68), 0 0 18px rgba(139, 124, 255, 0.16);
-  transform: translateY(-1px);
-}
-#human-input .hi-fab .dot {
-  width: 6.5px;
-  height: 6.5px;
-  border-radius: 50%;
-  background: var(--status-online);
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
-  flex-shrink: 0;
-}
-#human-input .hi-fab .dot.idle {
-  background: rgba(148, 163, 184, 0.35);
-  box-shadow: none;
-}
-#human-input .hi-fab .cnt {
-  font: 10.5px var(--font-mono);
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(139, 124, 255, 0.16);
-  border: 1px solid rgba(139, 124, 255, 0.32);
-  color: #e0e7ff;
-}
-
-/* ── 右下角彩色偏心花瓣麦克风监听器 (#petal-listener) ──────────────────
-   视觉特征：
-   1. 6 片不同配色的半透明水滴状花瓣围绕同一个公共圆心排布；
-   2. 圆心位于每片花瓣的内部且偏心（transform-origin: 34% 68%），使各片花瓣在圆心处交叠、向外偏心散开；
-   3. 监听时（右 Alt 按住说话 / 双击右 Ctrl 持续监听）每片花瓣围绕各自的内部偏心圆心随机放大或缩小，且花瓣簇整体旋转。 */
-.petal-dock-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  pointer-events: auto;
-}
-
-.petal-status-pill {
-  height: 34px;
-  max-width: 340px;
-  padding: 0 13px;
-  border-radius: 999px;
-  background: rgba(10, 13, 20, 0.84);
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-  color: rgba(226, 232, 240, 0.9);
+  background: rgba(10, 13, 22, 0.42);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  color: rgba(241, 245, 249, 0.94);
   font-size: 11.5px;
   font-weight: 500;
-  letter-spacing: 0.01em;
   display: inline-flex;
   align-items: center;
   gap: 7px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: auto;
   user-select: none;
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  animation: hi-toast-in 0.18s ease-out;
 }
-
-.petal-status-pill[hidden] {
-  display: none !important;
-}
-
-.petal-status-dot {
-  width: 7px;
-  height: 7px;
+.hi-toast-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #38bdf8;
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.65);
+  background: var(--status-online);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.75);
   flex-shrink: 0;
-  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
-
-.petal-status-text {
+.hi-toast.is-error {
+  border-color: rgba(244, 63, 94, 0.45);
+  background: rgba(28, 12, 18, 0.56);
+  color: #fecdd3;
+}
+.hi-toast.is-error .hi-toast-dot {
+  background: var(--status-danger);
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.85);
+}
+.hi-toast.is-voice .hi-toast-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
+}
+.hi-toast-text {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+@keyframes hi-toast-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.hi-transparent-bar {
+  width: 410px;
+  padding: 8px 10px 8px 13px;
+  border-radius: 20px;
+  background: rgba(12, 15, 24, 0.16);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 28px rgba(0, 0, 0, 0.20);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  pointer-events: auto;
+  transform-origin: right center;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s cubic-bezier(.4, 0, .2, 1),
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.hi-transparent-bar:focus-within,
+#human-input.has-text .hi-transparent-bar {
+  background: rgba(12, 15, 24, 0.28);
+  border-color: rgba(139, 124, 255, 0.52);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 10px 32px rgba(0, 0, 0, 0.28),
+    0 0 0 2px rgba(139, 124, 255, 0.14);
+}
+#human-input[data-mode="collapsed"] .hi-transparent-bar {
+  opacity: 0;
+  transform: translateX(14px) scale(0.95);
+  pointer-events: none;
+  visibility: hidden;
+  position: absolute;
+  right: 90px;
+  bottom: 0;
+}
+
+.hi-bar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  user-select: none;
+}
+.hi-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+#human-input .hi-head-dot {
+  width: 6.5px;
+  height: 6.5px;
+  border-radius: 50%;
+  background: var(--status-online);
+  box-shadow: 0 0 0 2.5px rgba(16, 185, 129, 0.18), 0 0 8px rgba(16, 185, 129, 0.6);
+  flex-shrink: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+#human-input .hi-head-dot.idle {
+  background: rgba(148, 163, 184, 0.48);
+  box-shadow: none;
+}
+#human-input .hi-sid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: rgba(226, 232, 240, 0.86);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.hi-reset-chip {
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.78);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.hi-reset-chip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: #ffffff;
+}
+.hi-reset-chip.confirming {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.55);
+  color: #fecdd3;
+  font-weight: 600;
+}
+.hi-reset-chip.resetting svg {
+  animation: spin 0.8s linear infinite;
+}
+.hi-reset-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hi-bar-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+#human-input textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  height: 24px;
+  min-height: 24px;
+  max-height: 108px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #f8fafc;
+  font: 13px/1.45 var(--font-sans);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  outline: none;
+  overflow-y: hidden;
+  transition: height 0.08s ease;
+}
+#human-input textarea::placeholder {
+  color: rgba(226, 232, 240, 0.54);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
+}
+#human-input textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+#human-input textarea::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+#human-input textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+#human-input textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+}
+
+#human-input .hi-send {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(241, 245, 249, 0.85);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+#human-input.has-text .hi-send:not(:disabled),
+#human-input .hi-send:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8b7cff 0%, #6d5ce8 100%);
+  border-color: rgba(186, 179, 255, 0.55);
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(139, 124, 255, 0.42);
+}
+#human-input .hi-send:hover:not(:disabled) {
+  transform: translateY(-0.5px);
+}
+#human-input .hi-send:disabled {
+  opacity: 0.36;
+  cursor: default;
+}
+
+/* ── 右下角彩色偏心花瓣开关与语音监听器 (#petal-listener) ──────────────────
+   视觉特征：
+   1. 6 片不同配色的半透明水滴状花瓣围绕同一个公共圆心排布；
+   2. 圆心位于每片花瓣的内部且偏心（transform-origin: 34% 68%），使各片花瓣在圆心处交叠、向外偏心散开；
+   3. 活跃会话时花瓣外环呈现柔和呼吸光晕；监听时（右 Alt 按住说话 / 双击右 Ctrl 持续监听）按音量律动并加速旋转。 */
+.petal-dock-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
+  pointer-events: auto;
+  position: relative;
+}
+
+#human-input[data-session-active="true"] .petal-aura {
+  opacity: 0.86;
+  background: radial-gradient(
+    circle,
+    rgba(16, 185, 129, 0.26) 0%,
+    rgba(139, 124, 255, 0.22) 48%,
+    transparent 74%
+  );
+  animation: petal-session-breathe 3.2s ease-in-out infinite;
+}
+@keyframes petal-session-breathe {
+  0%, 100% { transform: scale(0.98); opacity: 0.72; }
+  50% { transform: scale(1.06); opacity: 0.94; }
 }
 
 .petal-listener {
@@ -1513,26 +1334,17 @@ html, body {
   border-color: rgba(255, 255, 255, 0.42);
 }
 
-.petal-dock-row[data-listen-state="ptt"] .petal-status-pill,
-.petal-dock-row[data-listen-state="continuous"] .petal-status-pill {
-  border-color: rgba(244, 114, 182, 0.55);
-  background: rgba(16, 12, 28, 0.92);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65), 0 0 18px rgba(244, 114, 182, 0.22);
-}
-
-.petal-dock-row[data-listen-state="ptt"] .petal-status-dot {
+.petal-listener[data-listen-state="ptt"] .petal-core-pivot {
   background: #f472b6;
-  box-shadow: 0 0 10px rgba(244, 114, 182, 0.9);
+  box-shadow: 0 0 12px rgba(244, 114, 182, 0.95);
 }
-
-.petal-dock-row[data-listen-state="continuous"] .petal-status-dot {
+.petal-listener[data-listen-state="continuous"] .petal-core-pivot {
   background: #34d399;
-  box-shadow: 0 0 10px rgba(52, 211, 153, 0.9);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.95);
 }
-
-.petal-dock-row[data-listen-state="transcribing"] .petal-status-dot {
+.petal-listener[data-listen-state="transcribing"] .petal-core-pivot {
   background: #fbbf24;
-  box-shadow: 0 0 10px rgba(251, 191, 36, 0.9);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.95);
 }
 
 #strap-layer.at-bottom { bottom: 132px; }
@@ -1651,6 +1463,60 @@ html, body {
   height: 18px;
   z-index: 900;
   opacity: 0.36;
+  pointer-events: none;
+}
+
+/* ── 顶部工具条单应用视图切换 (#stage[data-view-app]) ── */
+#stage[data-view-app="term"] .stage-window:not(#win-term),
+#stage[data-view-app="browser"] .stage-window:not(#win-browser),
+#stage[data-view-app="image"] .stage-window:not(#win-image),
+#stage[data-view-app="video"] .stage-window:not(#win-video) {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+#stage[data-view-app="slide"] .stage-window {
+  opacity: 0.16;
+  pointer-events: none;
+}
+#stage[data-view-app="overlay"] .stage-window {
+  opacity: 0.32;
+  pointer-events: none;
+}
+#slide-layer[data-preview-empty="true"] {
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+#slide-layer[data-preview-empty="true"]::after {
+  content: "Slide Layer · Ready";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(241, 245, 249, 0.65);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+#overlay-layer[data-preview-active="true"] {
+  box-shadow: inset 0 0 0 2px rgba(139, 124, 255, 0.35);
+}
+#overlay-layer[data-preview-active="true"]::after {
+  content: "Progress & Overlay Layer · Ready";
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(11, 13, 20, 0.85);
+  border: 1px solid rgba(139, 124, 255, 0.38);
+  color: rgba(241, 245, 249, 0.78);
+  font-size: 16px;
+  font-weight: 600;
   pointer-events: none;
 }
 

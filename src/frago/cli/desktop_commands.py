@@ -48,12 +48,16 @@ from .agent_friendly import AgentFriendlyCommand
     context_settings={
         # 舞台自己解析参数。这里不能让 click 插手：它会把 --zoom、--ref 这类
         # 它不认识的选项当成错误挡下来，而那些正是舞台的正常用法。
+        # 关闭 click 默认的 --help 截胡，使 `frago desktop <subcommand> --help`
+        # 能透传给 aos.main() 打印针对该子命令的参数说明与用法示例。
         "ignore_unknown_options": True,
         "allow_extra_args": True,
+        "help_option_names": [],
     },
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def desktop_group(args: tuple[str, ...]) -> None:
+@click.pass_context
+def desktop_group(ctx: click.Context, args: tuple[str, ...]) -> None:
     """Drive the virtual desktop stage (recording / demo).
 
     A fake macOS desktop whose windows show a real tmux session, a real browser
@@ -69,11 +73,14 @@ def desktop_group(args: tuple[str, ...]) -> None:
       frago desktop down            # stop it — intent is remembered, it stays down
 
     \b
-    Then drive it:
+    Then drive it (or run `frago desktop <subcommand> --help` for subcommand flags):
       frago desktop browser open <url>
-      frago desktop browser click --text "Sign in"
+      frago desktop browser click --text "Sign in" [--index 0]
+      frago desktop browser scroll --pixels 500 | --to "Save Provider"
+      frago desktop elements --in browser --text "Save Provider"
       frago desktop term run "ls -la"
       frago desktop camera focus --ref page:text:Explore --zoom 1.8
+      frago desktop play '["rec start --name demo", "browser click --text Save", "rec stop"]'
       frago desktop say "旁白一句"
       frago desktop say "边说边点" --speak --async   # 开口（Edge 语音），不等讲完
       frago desktop wait --speech all              # 动作做完了，等话讲完再往下
@@ -92,18 +99,22 @@ def desktop_group(args: tuple[str, ...]) -> None:
     aim at are not visible, and the receipt would be green anyway.
 
     \b
-    Addressing a page element (`page:` refs) — four spellings, one meaning each:
-      page:text:某段文字   by visible text; safe on the command line
-      page:css:.selector   by CSS selector; no fallback, a typo says so
-      page:"某段文字"      by visible text; quote it as 'page:"..."' or the
-                           shell eats the quotes and it reads as a selector
-      page:裸串            selector first, visible text if that finds nothing
+    Addressing a page element (`page:` refs) — five spellings, one meaning each:
+      page:text:某段文字     by visible text; safe on the command line
+      page:css:.selector     by CSS selector; no fallback, a typo says so
+      page:"某段文字"        by visible text; quote it as 'page:"..."' or the
+                             shell eats the quotes and it reads as a selector
+      page:nth:N:<target>    0-based Nth match when multiple elements match
+      page:裸串              selector first, visible text if that finds nothing
 
     \b
     Every verb, flag and receipt is the stage's own — this command forwards
-    verbatim and returns its exit code unchanged. Run it bare to list the
-    resources, or see `frago book desktop-usage` for the full path.
+    verbatim and returns its exit code unchanged. Run `frago desktop <subcommand> --help`
+    for detailed flags & examples, or see `frago book desktop-usage` for the full path.
     """
+    if args in (("-h",), ("--help",)):
+        click.echo(ctx.get_help())
+        sys.exit(0)
     # 这里没有"舞台不在本机"这条分支，是刻意的。舞台跟着 frago 包分发，import 不到
     # 就是这个装置装坏了，Python 自己的 ImportError 是最诚实的报告。给一个不可能
     # 发生的状态编一段回执，等于给下一个人埋一条要去查的假线索。

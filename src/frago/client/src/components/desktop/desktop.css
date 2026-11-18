@@ -24,6 +24,10 @@
   height: 24px;
 }
 
+.dt-select--agent {
+  max-width: 240px;
+}
+
 .dt-compact-btn {
   display: inline-flex;
   align-items: center;

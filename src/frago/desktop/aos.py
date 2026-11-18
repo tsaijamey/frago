@@ -357,7 +357,7 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         # op_elements）；带上就只看不做，焦点不动。
         observe = "--observe" in rest
         rest = [t for t in rest if t != "--observe"]
-        f = take_flags(rest, {"in", "text", "selector"})
+        f = take_flags(rest, {"in", "text", "selector", "index"})
         step: dict = {"op": "elements"}
         if observe:
             step["observe"] = True
@@ -370,13 +370,24 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         for k in ("text", "selector"):
             if k in f:
                 step[k] = f[k]
+        if "index" in f:
+            idx = as_int(f, "index")
+            if idx is not None and idx < 0:
+                raise die(f"--index 需要非负整数，得到: {idx}")
+            step["index"] = idx
         return "steps", [step]
 
     if res == "mouse":
         verb, rest = one_positional(rest, "mouse 的动词（to / drift / click）")
         if verb == "to":
             ref, rest = one_positional(rest, "目标 ref")
-            f = take_flags(rest, {"ms"})
+            f = take_flags(rest, {"ms", "index"})
+            if "index" in f:
+                idx = as_int(f, "index")
+                if idx is not None and idx < 0:
+                    raise die(f"--index 需要非负整数，得到: {idx}")
+                if refs.is_page_ref(ref) and not refs.page_body(ref).startswith("nth:"):
+                    ref = f"page:nth:{idx}:{refs.page_body(ref)}"
             return "steps", [{"op": "cursor", "ref": ref,
                               "ms": as_int(f, "ms", 700)}]
         if verb == "drift":
@@ -569,10 +580,17 @@ def parse(tokens: list[str]) -> tuple[str, object]:
             take_flags(rest, set())
             return "steps", [{"op": "navigate", "url": url}]
         if verb == "click":
-            f = take_flags(rest, {"text", "selector", "ms"})
+            f = take_flags(rest, {"text", "selector", "ms", "index"})
             which = need_exactly_one(f, ["text", "selector"], "browser click")
-            ref = (f'page:"{f["text"]}"' if which == "text"
-                   else f"page:{f['selector']}")
+            idx = as_int(f, "index")
+            if idx is not None and idx < 0:
+                raise die(f"--index 需要非负整数，得到: {idx}")
+            if idx is not None:
+                ref = (f'page:nth:{idx}:"{f["text"]}"' if which == "text"
+                       else f"page:nth:{idx}:css:{f['selector']}")
+            else:
+                ref = (f'page:"{f["text"]}"' if which == "text"
+                       else f"page:{f['selector']}")
             # 走真实鼠标：先移过去（同时建立悬停绑定），再点。不直接派发 DOM
             # click——那样画面里鼠标没动过，录出来的片子对不上，而且 hover 效果
             # 不会触发。
@@ -580,22 +598,108 @@ def parse(tokens: list[str]) -> tuple[str, object]:
                               "ms": as_int(f, "ms", 700)},
                              {"op": "click"}]
         if verb == "scroll":
-            f = take_flags(rest, {"to", "pixels"})
+            f = take_flags(rest, {"to", "pixels", "index"})
             which = need_exactly_one(f, ["to", "pixels"], "browser scroll")
             if which == "pixels":
-                js = ("(()=>{window.scrollBy(0,"
-                      + str(as_int(f, "pixels")) + ");"
-                      "return{scrollY:Math.round(window.scrollY)};})()")
+                px = as_int(f, "pixels")
+                js = (
+                    "(()=>{const px=" + str(px) + ";"
+                    "const isScrollable=el=>{"
+                    "if(!el||el===document.body||el===document.documentElement)return false;"
+                    "const st=getComputedStyle(el);"
+                    "const oy=st.overflowY;"
+                    "if(oy!=='auto'&&oy!=='scroll'&&oy!=='overlay')return false;"
+                    "const r=el.getBoundingClientRect();"
+                    "return r.width>20&&r.height>20&&(el.scrollHeight>el.clientHeight+1);"
+                    "};"
+                    "const inModal=el=>{"
+                    "let p=el;"
+                    "while(p&&p!==document.body){"
+                    "const st=getComputedStyle(p);"
+                    "const cls=typeof p.className==='string'?p.className:'';"
+                    "if(p.getAttribute('role')==='dialog'||st.position==='fixed'||cls.includes('fixed')||cls.includes('modal'))return true;"
+                    "p=p.parentElement;"
+                    "}"
+                    "return false;"
+                    "};"
+                    "const cands=Array.from(document.querySelectorAll('body *')).filter(isScrollable);"
+                    "const modalCands=cands.filter(inModal);"
+                    "let scroller=null;"
+                    "if(modalCands.length>0){"
+                    "scroller=modalCands[modalCands.length-1];"
+                    "}else if(cands.length>0){"
+                    "cands.sort((a,b)=>{"
+                    "const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();"
+                    "return (rb.width*rb.height)-(ra.width*ra.height);"
+                    "});"
+                    "scroller=cands[0];"
+                    "}"
+                    "if(scroller){"
+                    "const before=scroller.scrollTop;"
+                    "scroller.scrollBy(0,px);"
+                    "const after=scroller.scrollTop;"
+                    "const tag=scroller.tagName.toLowerCase()+(scroller.id?'#'+scroller.id:'');"
+                    "return{scrollY:Math.round(after),scrollTop:Math.round(after),"
+                    "delta:Math.round(after-before),container:tag};"
+                    "}"
+                    "const winBefore=window.scrollY;"
+                    "window.scrollBy(0,px);"
+                    "const winAfter=window.scrollY;"
+                    "return{scrollY:Math.round(winAfter),scrollTop:Math.round(winAfter),"
+                    "delta:Math.round(winAfter-winBefore),container:'window'};})()"
+                )
             else:
+                idx = as_int(f, "index")
+                if idx is not None and idx < 0:
+                    raise die(f"--index 需要非负整数，得到: {idx}")
                 js = (
                     "(()=>{const t=" + js_literal(f["to"]) + ";"
-                    "const w=document.createTreeWalker(document.body,"
-                    "NodeFilter.SHOW_TEXT);let n;"
-                    "while((n=w.nextNode())){if(n.textContent.includes(t)){"
-                    "const e=n.parentElement;"
-                    "e.scrollIntoView({block:'center'});"
-                    "return{found:true,scrollY:Math.round(window.scrollY)};}}"
-                    "return{found:false,scrollY:Math.round(window.scrollY)};})()"
+                    "const idx=" + ("null" if idx is None else str(idx)) + ";"
+                    "const norm=s=>String(s||'').replace(/\\s+/g,' ').trim().toLowerCase();"
+                    "const needle=norm(t);"
+                    "let hits=[];"
+                    "try{const selHits=Array.from(document.querySelectorAll(t)).filter(e=>{"
+                    "const r=e.getBoundingClientRect();return r.width>0&&r.height>0;});"
+                    "if(selHits.length>0)hits=selHits;}catch(e){}"
+                    "if(hits.length===0&&needle){"
+                    "const CLICKABLE='a,button,[role=button],[role=link],[role=tab],[onclick],input,select,textarea,label,summary';"
+                    "const seen=new Set();"
+                    "document.querySelectorAll('body *').forEach(e=>{"
+                    "const tag=e.tagName;"
+                    "if(tag==='SCRIPT'||tag==='STYLE'||tag==='NOSCRIPT')return;"
+                    "const raw=e.innerText||e.value||e.getAttribute('aria-label')||e.getAttribute('title')||'';"
+                    "if(!norm(raw).includes(needle))return;"
+                    "for(const c of e.children){"
+                    "const cr=c.innerText||c.value||c.getAttribute('aria-label')||c.getAttribute('title')||'';"
+                    "if(norm(cr).includes(needle))return;"
+                    "}"
+                    "const target=e.closest(CLICKABLE)||e;"
+                    "if(seen.has(target))return;"
+                    "const r=target.getBoundingClientRect();"
+                    "if(!r.width||!r.height)return;"
+                    "seen.add(target);"
+                    "hits.push(target);"
+                    "});"
+                    "}"
+                    "const getScrollY=el=>{"
+                    "let p=el?el.parentElement:null;"
+                    "while(p&&p!==document.body){"
+                    "const oy=getComputedStyle(p).overflowY;"
+                    "if((oy==='auto'||oy==='scroll'||oy==='overlay')&&p.scrollHeight>p.clientHeight+1)"
+                    "return Math.round(p.scrollTop);"
+                    "p=p.parentElement;"
+                    "}"
+                    "const se=document.scrollingElement||document.documentElement;"
+                    "return Math.round(window.scrollY||(se?se.scrollTop:0));"
+                    "};"
+                    "const e=idx!==null?hits[idx]:hits[0];"
+                    "if(!e)return{found:false,scrollY:getScrollY(null)};"
+                    "e.scrollIntoView({block:'center',inline:'nearest'});"
+                    "const r=e.getBoundingClientRect();"
+                    "const sy=getScrollY(e);"
+                    "return{found:true,scrollY:sy,scrollTop:sy,"
+                    "rect:{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),"
+                    "w:Math.round(r.width),h:Math.round(r.height)}};})()"
                 )
             return "steps", [{"op": "exec", "js": js}]
         if verb == "read":
@@ -661,12 +765,25 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         if verb == "focus":
             # --context 只对 term:match 有意义：命中行往上下各扩几行。
             # 报错那一行单独框住往往读不懂，得看见它前面那条命令。
-            f = take_flags(rest, {"ref", "zoom", "ms", "expand-to", "context"},
+            f = take_flags(rest, {"ref", "zoom", "ms", "expand-to", "context", "index"},
                            multi={"ref"})
             if "ref" not in f:
                 raise die("camera focus 需要 --ref <ref>（可给多个，取外接矩形）")
-            step = {"op": "camera.focus", "refs": f["ref"],
+            refs_list = list(f["ref"])
+            if "index" in f:
+                idx = as_int(f, "index")
+                if idx is not None and idx < 0:
+                    raise die(f"--index 需要非负整数，得到: {idx}")
+                refs_list = [
+                    (f"page:nth:{idx}:{refs.page_body(r)}"
+                     if refs.is_page_ref(r) and not refs.page_body(r).startswith("nth:")
+                     else r)
+                    for r in refs_list
+                ]
+            step = {"op": "camera.focus", "refs": refs_list,
                     "ms": as_int(f, "ms", 1200)}
+            if "index" in f:
+                step["index"] = as_int(f, "index")
             if "zoom" in f:
                 step["zoom"] = as_float(f, "zoom")
             if "expand-to" in f:
@@ -703,7 +820,9 @@ def parse(tokens: list[str]) -> tuple[str, object]:
     if res == "wait":
         release = "--release" in rest
         rest = [t for t in rest if t != "--release"]
-        f = take_flags(rest, {"for", "url", "text", "speech", "timeout"})
+        f = take_flags(rest, {"for", "url", "text", "speech", "timeout", "ms"})
+        if "ms" in f and not ({"for", "url", "text", "speech"} & set(f)) and not release:
+            return "steps", [{"op": "sleep", "ms": as_int(f, "ms")}]
         if release:
             if {"for", "url", "text", "speech"} & set(f):
                 raise die("wait --release 不接受 --for / --url / --text / --speech",
@@ -736,7 +855,7 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         return "steps", [{"op": "sleep", "ms": as_int(f, "ms")}]
 
     if res == "rec":
-        verb, rest = one_positional(rest, "rec 的动词（start / stop）")
+        verb, rest = one_positional(rest, "rec 的动词（start / stop / play / take）")
         if verb == "start":
             # --force 是无值 flag（另一个是 term scroll 的 --to-end），
             # 在进 take_flags 之前先摘掉。不给解析器开一个通用的无值分支：
@@ -754,7 +873,12 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         if verb == "stop":
             take_flags(rest, set())
             return "steps", [{"op": "record.stop"}]
-        raise die(f"未知 rec 动词: {verb}", allowed=["start", "stop"])
+        if verb in ("play", "take"):
+            return _parse_play(rest)
+        raise die(f"未知 rec 动词: {verb}", allowed=["start", "stop", "play", "take"])
+
+    if res == "play":
+        return _parse_play(rest)
 
     if res == "say":
         text, rest = one_positional(rest, "字幕文字")
@@ -772,20 +896,30 @@ def parse(tokens: list[str]) -> tuple[str, object]:
                       hint="--interrupt 连排着的一起丢（重来一遍用）；"
                            "--interject 只掐正在说的、排着的留着（插播用）")
         voice_flags = {"out", "voice", "rate", "volume", "pitch"}
-        f = take_flags(rest, {"ms"} | voice_flags)
+        f = take_flags(rest, {"ms", "channel"} | voice_flags)
+        if "channel" in f and f["channel"] not in SPEECH_CHANNELS:
+            raise die(
+                f"--channel 只支持 {'|'.join(SPEECH_CHANNELS)}，得到: {f['channel']!r}",
+                allowed=list(SPEECH_CHANNELS),
+            )
         if "--speak" not in switches:
             extra = sorted(["--" + k for k in voice_flags if k in f]
                            + list(switches))
             if extra:
                 raise die(f"{' '.join(extra)} 只在开口时有意义，需要同时给 --speak",
-                          hint='say "<文字>" --speak [--async] [--out page|local|both|none]')
-            return "steps", [{"op": "say", "text": text,
-                              "ms": as_int(f, "ms", 2600)}]
+                          hint='say "<文字>" --speak [--async] [--channel narration|ambient] [--out page|local|both|none]')
+            step_caption: dict = {"op": "say", "text": text,
+                                  "ms": as_int(f, "ms", 2600)}
+            if "channel" in f:
+                step_caption["channel"] = f["channel"]
+            return "steps", [step_caption]
         if "ms" in f:
             raise die("开口时字幕跟着声音走，不接受 --ms",
                       hint="字幕留多久由这句话实际多长决定")
         step = {"op": "say", "text": text, "speak": True,
                 "out": f.get("out", "page")}
+        if "channel" in f:
+            step["channel"] = f["channel"]
         for k in ("voice", "rate", "volume", "pitch"):
             if k in f:
                 step[k] = f[k]
@@ -827,6 +961,297 @@ def parse(tokens: list[str]) -> tuple[str, object]:
     raise die(f"未知指令: {res}", allowed=sorted(RESOURCES))
 
 
+def _strip_cli_prefix(line: str) -> str:
+    s = line.strip()
+    for prefix in ("frago desktop ", "aos "):
+        if s.startswith(prefix):
+            return s[len(prefix):].strip()
+    return s
+
+
+_NATIVE_BROKER_OPS = {
+    "cursor", "click", "focus", "type", "key", "shell",
+    "term.scroll", "term.fontsize", "navigate", "exec", "win",
+    "viewport", "tab", "elements", "browser.mode", "stage.reset",
+    "say", "sleep", "speech.wait", "speech.stop",
+    "camera.focus", "camera.pan", "camera.reset", "camera.up", "camera.down",
+    "overlay", "overlay.clear", "slide.open", "slide.close",
+    "video.open", "video.act", "strap.show", "strap.hide",
+    "image.open", "record.start", "record.stop",
+}
+
+
+def _dict_step_to_plan(item: dict) -> tuple[str, object]:
+    """将 JSON 字典形态的剧本步骤转换为 `parse()` 产出的 `(kind, obj)` 计划。"""
+    extra_keys = set(item.keys()) - {"cmd", "command"}
+    if ("cmd" in item or "command" in item) and not extra_keys:
+        raw_cmd = item.get("cmd") if "cmd" in item else item.get("command")
+        if isinstance(raw_cmd, list):
+            return parse([str(x) for x in raw_cmd])
+        if isinstance(raw_cmd, str):
+            return parse(shlex.split(_strip_cli_prefix(raw_cmd)))
+        raise die(f"play 步骤 cmd/command 必须是字符串或数组，得到: {raw_cmd!r}")
+
+    op = str(item.get("op") or item.get("verb") or item.get("cmd") or item.get("command") or "").strip()
+    if not op:
+        raise die(f"play 字典步骤缺少 op / cmd 字段: {item}")
+
+    normalized_op = op.replace(".", " ").strip()
+    parts = normalized_op.split()
+    head = parts[0] if parts else ""
+
+    if head in ("browser", "mouse", "camera", "strap", "rec", "term", "window",
+                "wait", "pause", "elements", "say", "voice", "tab", "image",
+                "video", "slide", "focus", "viewport", "status", "up", "down"):
+        # 若本身已经是原生 broker step 且无需转 CLI（如 navigate / sleep / record.start 等不在 head 分支），
+        # 但对于 camera.focus / strap.show / record.start 等，优先兼容 CLI 参数字典与 broker 原生字典：
+        if op == "camera.focus" and "refs" in item:
+            return "steps", [dict(item)]
+        if op == "strap.show" and "text" in item:
+            step = {
+                "op": "strap.show",
+                "text": str(item["text"]),
+                "style": str(item.get("style", "news")),
+                "at": str(item.get("at", "bottom")),
+            }
+            if "title" in item:
+                step["title"] = str(item["title"])
+            if "ms" in item:
+                step["ms"] = int(item["ms"])
+            return "steps", [step]
+        tokens: list[str] = list(parts)
+        # 补充位置参数
+        if parts == ["browser", "open"] and "url" in item:
+            tokens.append(str(item["url"]))
+        elif parts == ["mouse", "to"] and "ref" in item:
+            tokens.append(str(item["ref"]))
+        elif parts == ["strap", "show"] and "text" in item:
+            tokens.append(str(item["text"]))
+        elif parts == ["term", "run"] and ("command" in item or "text" in item):
+            tokens.append(str(item.get("command") or item.get("text")))
+        elif parts == ["term", "fontsize"] and "px" in item:
+            tokens.append(str(item["px"]))
+        elif parts == ["say"] and "text" in item:
+            tokens.append(str(item["text"]))
+        elif parts == ["voice", "synth"] and "text" in item:
+            tokens.append(str(item["text"]))
+        elif parts == ["focus"] and "win" in item:
+            tokens.append(str(item["win"]))
+        elif parts == ["image", "open"] and "path" in item:
+            tokens.append(str(item["path"]))
+        elif parts == ["video", "open"] and "path" in item:
+            tokens.append(str(item["path"]))
+        elif parts == ["slide", "open"] and "path" in item:
+            tokens.append(str(item["path"]))
+        elif len(parts) == 2 and parts[0] == "tab" and parts[1] == "open" and "url" in item:
+            tokens.append(str(item["url"]))
+        elif len(parts) == 2 and parts[0] == "tab" and parts[1] in ("switch", "close") and "index" in item:
+            tokens.append(str(item["index"]))
+
+        skip_keys = {"op", "verb", "cmd", "command"}
+        if parts == ["browser", "open"]:
+            skip_keys.add("url")
+        elif parts == ["mouse", "to"]:
+            skip_keys.add("ref")
+        elif parts == ["strap", "show"]:
+            skip_keys.add("text")
+        elif parts == ["term", "fontsize"]:
+            skip_keys.add("px")
+        elif parts == ["say"]:
+            skip_keys.add("text")
+        elif parts == ["voice", "synth"]:
+            skip_keys.add("text")
+        elif parts == ["focus"]:
+            skip_keys.add("win")
+        elif parts in (["image", "open"], ["video", "open"], ["slide", "open"]):
+            skip_keys.add("path")
+        elif len(parts) == 2 and parts[0] == "tab":
+            skip_keys.add("url" if parts[1] == "open" else "index")
+
+        for k, v in item.items():
+            if k in skip_keys or v is None:
+                continue
+            flag = "--" + str(k).replace("_", "-")
+            if isinstance(v, bool):
+                if v:
+                    tokens.append(flag)
+            elif isinstance(v, list):
+                for sub_v in v:
+                    tokens.extend([flag, str(sub_v)])
+            else:
+                tokens.extend([flag, str(v)])
+        return parse(tokens)
+
+    if op in _NATIVE_BROKER_OPS:
+        return "steps", [dict(item)]
+
+    raise die(f"未知 play 步骤 op: {op!r}", allowed=sorted(RESOURCES | _NATIVE_BROKER_OPS))
+
+
+def _expand_play_items(raw_items: list[object], clip_name: str | None = None,
+                       force: bool = False) -> list[tuple[str, object]]:
+    """将剧本数组展开为 `run()` 可直接执行的 `(kind, obj)` 列表。"""
+    if not raw_items:
+        raise die("play 剧本步骤不能为空")
+    plans: list[tuple[str, object]] = []
+    for idx, item in enumerate(raw_items):
+        try:
+            if isinstance(item, str):
+                cleaned = _strip_cli_prefix(item)
+                if not cleaned or cleaned.startswith("#"):
+                    continue
+                kind, obj = parse(shlex.split(cleaned))
+            elif isinstance(item, list):
+                if not item:
+                    continue
+                tokens = [str(x) for x in item]
+                if len(tokens) >= 2 and tokens[0] == "frago" and tokens[1] == "desktop":
+                    tokens = tokens[2:]
+                elif tokens[0] == "aos":
+                    tokens = tokens[1:]
+                kind, obj = parse(tokens)
+            elif isinstance(item, dict):
+                kind, obj = _dict_step_to_plan(item)
+            else:
+                raise die(f"play 第 {idx} 步格式不支持: {item!r}（支持命令字符串、token 数组或 step 对象）")
+        except Fail as exc:
+            exc.payload["play_step_index"] = idx
+            raise
+        if kind == "play":
+            plans.extend(obj)  # type: ignore[arg-type]
+        else:
+            plans.append((kind, obj))
+
+    if not plans:
+        raise die("play 剧本解析后没有任何可执行步骤")
+
+    if clip_name:
+        has_rec_start = any(
+            kind == "steps" and any(s.get("op") == "record.start" for s in (obj or []))  # type: ignore[union-attr]
+            for kind, obj in plans
+        )
+        has_rec_stop = any(
+            kind == "steps" and any(s.get("op") == "record.stop" for s in (obj or []))  # type: ignore[union-attr]
+            for kind, obj in plans
+        )
+        if not has_rec_start:
+            start_step: dict = {"op": "record.start", "name": clip_name}
+            if force:
+                start_step["force"] = True
+            plans.insert(0, ("steps", [start_step]))
+        if not has_rec_stop:
+            plans.append(("steps", [{"op": "record.stop"}]))
+
+    # 当录制剧本包含 say --speak 步骤且末尾含 record.stop 时，在最后的 record.stop 之前自动补齐
+    # speech.wait(target="all")，确保成片中最后一句 Narration 解说词完整播完、不被截断。
+    has_spoken_narration = any(
+        kind == "steps"
+        and any(
+            s.get("op") == "say"
+            and s.get("speak")
+            and str(s.get("channel") or "narration").strip().lower() == "narration"
+            for s in (obj or [])  # type: ignore[union-attr]
+        )
+        for kind, obj in plans
+    )
+    if has_spoken_narration:
+        last_stop_plan_idx: int | None = None
+        last_stop_step_idx: int | None = None
+        for p_idx in range(len(plans) - 1, -1, -1):
+            p_kind, p_obj = plans[p_idx]
+            if p_kind != "steps" or not isinstance(p_obj, list):
+                continue
+            for s_idx in range(len(p_obj) - 1, -1, -1):
+                if isinstance(p_obj[s_idx], dict) and p_obj[s_idx].get("op") == "record.stop":
+                    last_stop_plan_idx = p_idx
+                    last_stop_step_idx = s_idx
+                    break
+            if last_stop_plan_idx is not None:
+                break
+        if last_stop_plan_idx is not None and last_stop_step_idx is not None:
+            # 检查该 record.stop 紧邻的前一条 step 是否已经是 speech.wait
+            prev_op = None
+            steps_list = plans[last_stop_plan_idx][1]
+            assert isinstance(steps_list, list)
+            if last_stop_step_idx > 0:
+                prev_op = steps_list[last_stop_step_idx - 1].get("op")
+            else:
+                for prev_p_idx in range(last_stop_plan_idx - 1, -1, -1):
+                    pk, po = plans[prev_p_idx]
+                    if pk == "steps" and isinstance(po, list) and po:
+                        prev_op = po[-1].get("op")
+                        break
+            if prev_op != "speech.wait":
+                steps_list.insert(last_stop_step_idx, {"op": "speech.wait", "target": "all"})
+
+    return plans
+
+
+def _parse_raw_script_text(raw: str) -> list[object]:
+    """解析 JSON 步骤数组或多行命令脚本。"""
+    text = (raw or "").strip()
+    if not text:
+        raise die("play 剧本内容为空")
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and isinstance(parsed.get("steps"), list):
+            return list(parsed["steps"])
+        if isinstance(parsed, list):
+            return list(parsed)
+    except json.JSONDecodeError:
+        if text.startswith("[") or text.startswith("{"):
+            raise die("play JSON 解析失败，请检查引号与括号是否配对", raw_preview=text[:200]) from None
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not lines:
+        raise die("play 剧本内容为空")
+    return lines
+
+
+def _parse_play(rest: list[str]) -> tuple[str, object]:
+    """解析 `frago desktop play`（及 `rec play` / `rec take`）。
+
+    支持三种传参形态：
+      1. 位置参数直接给 JSON 数组或多行文本：`frago desktop play '["browser open ...", "browser click ..."]'`
+      2. `--steps '<JSON数组>'`：`frago desktop play --steps '[...]' [--name <clip>]`
+      3. `--file <路径>`：`frago desktop play --file /tmp/take.json [--name <clip>]`
+    """
+    force = "--force" in rest
+    rest = [t for t in rest if t != "--force"]
+    positional_steps: str | None = None
+    if rest and not rest[0].startswith("--"):
+        positional_steps = rest[0]
+        rest = rest[1:]
+    f = take_flags(rest, {"steps", "file", "name"})
+    sources = [k for k in ("steps", "file") if k in f]
+    if positional_steps is not None:
+        sources.append("positional")
+    if len(sources) == 0:
+        raise die(
+            "play 需要提供剧本步骤：传位置参数 '<JSON步骤数组>'、或 --steps '<JSON>'、或 --file <路径>",
+            hint='示例：frago desktop play \'["rec start --name demo", "browser click --text Save", "rec stop"]\'',
+        )
+    if len(sources) > 1:
+        raise die("play 的剧本来源只能指定一种（位置参数 | --steps | --file）")
+
+    if "file" in f:
+        path = Path(f["file"]).expanduser()
+        if not path.is_file():
+            raise die(f"play 剧本文件不存在: {path}")
+        raw_text = path.read_text(encoding="utf-8")
+    elif "steps" in f:
+        raw_text = f["steps"]
+    else:
+        raw_text = positional_steps or ""
+
+    items = _parse_raw_script_text(raw_text)
+    plans = _expand_play_items(items, clip_name=f.get("name"), force=force)
+    return "play", plans
+
+
 def need_target(f: dict) -> str:
     if "target" not in f:
         raise die("需要 --target " + "|".join(WINDOWS))
@@ -843,7 +1268,7 @@ WINDOWS = ("term", "browser", "image", "video")
 
 RESOURCES = {"up", "down", "status", "elements", "mouse", "window", "focus",
              "term", "image", "video", "slide", "strap", "browser", "tab",
-             "camera", "viewport", "wait", "pause", "rec", "say", "voice"}
+             "camera", "viewport", "wait", "pause", "rec", "play", "say", "voice"}
 
 #: 裸跑 `frago desktop` 时，每个资源一句话。
 #:
@@ -854,8 +1279,8 @@ RESOURCE_HELP = {
     "up": "拉起虚拟桌面（身份已存在则复用，桌面页自行重连）",
     "down": "停掉它。意图会被记住，守护不会把它拉回来",
     "status": "舞台在不在跑、画面活不活、几块荧幕连着——任何指令之前先问这句",
-    "elements": "现在能寻址的东西有哪些（桌面级全量 / 页面内按需；--observe 只查不顶窗）",
-    "mouse": "虚拟鼠标：to <ref> 移到某元素、drift 闲晃、click 点当前位置",
+    "elements": "现在能寻址的东西有哪些（桌面级全量 / 页面内按需；带 id/name/title/aria_label/value/selected_text；--observe 只查不顶窗）",
+    "mouse": "虚拟鼠标：to <ref> [--index <N>] 移到某元素、drift 闲晃、click 点当前位置",
     "window": "开关程序与摆窗口：open|close / min|max|restore / move",
     "focus": "把某个程序置前台（关着就顺手打开）",
     "term": "虚拟终端：run 执行、read 读缓冲区（--observe 静默读不置顶）、"
@@ -867,24 +1292,274 @@ RESOURCE_HELP = {
              "自己做的动画走这条，看真实网页走 browser",
     "strap": "贴纸栏（电视节目那条说明字条）：show <文字> --style news|bar|"
              "ghost|chip，hide 撤掉。挂着不走，与 say 的字幕分层",
-    "browser": "虚拟浏览器窗口：open <url> / click / scroll / read（--observe "
-               "静默读不顶窗）/ mode --to takeover|release|head|headless"
-               "（窗格人工接管或弹出真窗过检）",
+    "browser": "虚拟浏览器窗口：open <url> / click [--text|--selector] [--index <N>] / "
+               "scroll [--pixels|--to] / read（--observe 静默读不顶窗）/ "
+               "mode --to takeover|release|head|headless",
     "tab": "浏览器标签：open / switch <n> / close <n>",
-    "camera": "摄像机（不是窗口）：up / down / focus --ref / pan --to / reset",
+    "camera": "摄像机（不是窗口）：up / down / focus --ref [--zoom] [--index] / pan --to / reset",
     "viewport": "refresh：重读演员视口并按新比例重摆虚拟浏览器窗口",
     "wait": "语义等待：--release（等人类点「退出接管」或关掉真窗）| --for <ref> | "
             "--url <模式> | --text <文字> | --speech all|<编号>（等语音讲完）",
     "pause": "纯演示节拍 --ms，与语义等待分开的动词",
-    "rec": "录制：start --name <n> / stop（回执带冻帧指标与 2×3 宫格；"
-           "录制期间开口的话封成音轨）",
+    "rec": "录制：start --name <n> / stop / play --steps '<JSON>' [--name <n>]",
+    "play": "一键批量执行剧本：play '<JSON步骤数组>' | --steps '<JSON>' | --file <路径> [--name <片名>]",
     "say": "旁白字幕，一句句流过去，各自计时。加 --speak 开口（Edge 语音，"
-           "默认等讲完；--async 边说边做；--out page|local|both|none；"
+           "默认 --channel narration 录制显式解说层；--channel ambient 为日常伴随播音层，"
+           "录制期自动静默；--async 边说边做；--out page|local|both|none；"
            "--interrupt 掐掉正在说的与排着的；--interject 掐掉正在说的、"
            "这一句立刻说、排着的留着接着放）",
     "voice": "语音：synth <文字> 只合成不出声（不要求舞台在跑）/ stop 掐掉"
              "（--keep-queue 只掐正在说的、排着的留着）/ cache 看缓存 / clear 清缓存",
 }
+
+SUBCOMMAND_HELP: dict[str, dict] = {
+    "browser": {
+        "summary": "操控虚拟浏览器窗口（自动处理内部滚动容器与视口外元素滚入视口点击）",
+        "verbs": {
+            "open <url>": "导航到目标网址",
+            "click --text <文字> | --selector <CSS选择器> [--index <N>] [--ms <毫秒>]":
+                "移动鼠标到匹配元素并点击；命中多个时用 --index <0-based> 指定第几个；视口外元素自动 scrollIntoView 后点击",
+            "scroll --pixels <整数> | --to <文字或选择器> [--index <N>]":
+                "自动识别当前打开的 Modal 弹窗或主滚动容器执行滚动；--to 直接将目标元素滚入视口中央",
+            "read [--selector <CSS选择器>] [--observe]":
+                "读取页面或指定选择器的文本（带 --observe 时静默读取不置顶窗口）",
+            "mode --to head|headless|takeover|release":
+                "切换浏览器运行与人工接管模式",
+        },
+        "flags": ["--text", "--selector", "--index", "--ms", "--pixels", "--to", "--observe"],
+        "examples": [
+            "frago desktop browser open http://127.0.0.1:8093/#/settings",
+            'frago desktop browser click --text "AI Providers" --index 1',
+            'frago desktop browser click --selector "button[aria-label=\'Edit Groq Whisper\']"',
+            "frago desktop browser scroll --pixels 400",
+            'frago desktop browser scroll --to "Save Provider"',
+            "frago desktop browser read --observe",
+        ],
+    },
+    "browser click": {
+        "summary": "移动虚拟鼠标到页面目标元素并执行真实点击（视口外元素自动滚入视口）",
+        "usage": "frago desktop browser click (--text <文字> | --selector <CSS选择器>) [--index <N>] [--ms <毫秒>]",
+        "flags": {
+            "--text <文字>": "按可见文字、aria-label 或 title 匹配元素（空白符与换行自动归一化）",
+            "--selector <CSS选择器>": "按标准 CSS 选择器匹配元素",
+            "--index <N>": "0-based 序号，当命中多个元素时指定点击第 N 个（默认 0）",
+            "--ms <毫秒>": "鼠标移动动画时长（默认 700）",
+        },
+        "examples": [
+            'frago desktop browser click --text "Save Provider"',
+            'frago desktop browser click --text "AI Providers" --index 1',
+            'frago desktop browser click --selector "select" --index 1',
+        ],
+    },
+    "browser scroll": {
+        "summary": "滚动当前打开的 Modal 弹窗内部容器或页面主滚动容器",
+        "usage": "frago desktop browser scroll (--pixels <整数> | --to <文字或CSS选择器>) [--index <N>]",
+        "flags": {
+            "--pixels <整数>": "纵向滚动像素数（正数向下滚，负数向上滚）",
+            "--to <文字或CSS选择器>": "将匹配该文字或 CSS 选择器的元素滚入视口中央（scrollIntoView）",
+            "--index <N>": "配合 --to 使用，当命中多个元素时指定滚到第 N 个（0-based）",
+        },
+        "examples": [
+            "frago desktop browser scroll --pixels 500",
+            'frago desktop browser scroll --to "Save Provider"',
+            'frago desktop browser scroll --to "button.btn-primary" --index 0',
+        ],
+    },
+    "elements": {
+        "summary": "查询桌面级或浏览器页面内可寻址元素及其属性摘要（id/name/type/title/aria_label/value/selected_text）",
+        "usage": "frago desktop elements [--in browser (--text <文字> | --selector <CSS选择器>) [--index <N>]] [--observe]",
+        "flags": {
+            "--in browser": "在虚拟浏览器 DOM 内按需搜索元素（不传则列出桌面级窗口与 dock 元素）",
+            "--text <文字>": "按文字、aria-label 或 title 搜索页面元素（包含视口外元素）",
+            "--selector <CSS选择器>": "按 CSS 选择器搜索页面元素（对 input/select/textarea 返回当前 value 与 selected_text）",
+            "--index <N>": "只返回第 N 个匹配项（0-based）",
+            "--observe": "静默查询，不激活或置顶浏览器窗口",
+        },
+        "examples": [
+            "frago desktop elements",
+            'frago desktop elements --in browser --text "Save Provider"',
+            'frago desktop elements --in browser --selector "select" --observe',
+        ],
+    },
+    "play": {
+        "summary": "一键批量连贯执行多步桌面剧本（支持在单条命令内完成 rec start -> 连贯动作与字幕 -> rec stop）",
+        "usage": "frago desktop play ('<JSON步骤数组>' | --steps '<JSON步骤数组>' | --file <剧本路径>) [--name <片名>] [--force]",
+        "flags": {
+            "'<JSON步骤数组>'": "位置参数传入 JSON 数组（每项可为 CLI 短语字符串、token 数组或 step 字典）",
+            "--steps '<JSON>'": "具名参数传入 JSON 步骤数组",
+            "--file <路径>": "从 JSON 文件或按行指令脚本文件读取步骤",
+            "--name <片名>": "可选：若剧本未显式包含 rec start/stop，自动在首尾包裹录制开始与停录",
+            "--force": "配合 --name 使用，强制绕过开录门禁",
+        },
+        "examples": [
+            'frago desktop play \'["rec start --name demo", "browser open http://127.0.0.1:8093/#/settings", "browser click --text \\"AI Providers\\" --index 1", "pause --ms 1000", "rec stop"]\'',
+            'frago desktop play --name groq-demo --steps \'["browser click --text \\"Save Provider\\"", "pause --ms 800"]\'',
+        ],
+    },
+    "mouse": {
+        "summary": "操控虚拟鼠标指针移动、闲晃与点击",
+        "verbs": {
+            "to <ref> [--index <N>] [--ms <毫秒>]":
+                "移动鼠标到目标 ref（注意：<ref> 是位置参数，不带 --ref！如 page:text:Save 或 page:nth:1:text:Edit）",
+            "drift --x <X> --y <Y> [--ms <毫秒>]": "移动鼠标到指定桌面坐标",
+            "click": "在鼠标当前位置执行点击",
+        },
+        "flags": ["--index", "--ms", "--x", "--y"],
+        "examples": [
+            'frago desktop mouse to \'page:"Save Provider"\'',
+            'frago desktop mouse to page:text:Edit --index 0 --ms 500',
+            "frago desktop mouse drift --x 960 --y 540 --ms 600",
+            "frago desktop mouse click",
+        ],
+    },
+    "camera": {
+        "summary": "操控录制摄像机推拉摇移与机位预热（遇桌面边界夹紧时自动平滑降级 zoom，不抛错中断）",
+        "verbs": {
+            "up": "预热并拉起 9223 录制机位（使后续 rec start 毫秒级启动）",
+            "down": "关闭并回收录制机位",
+            "focus --ref <ref> [--zoom <倍率>] [--index <N>] [--expand-to <选择器>] [--context <行数>] [--ms <毫秒>]":
+                "推镜聚焦到一个或多个目标元素；若倍率在边界处夹紧出框会自动降级到可用倍率",
+            "pan --to <ref> [--expand-to <选择器>] [--context <行数>] [--ms <毫秒>]":
+                "保持倍率平移摇镜到新目标",
+            "reset [--ms <毫秒>]": "拉回 1.0 倍全景画面",
+        },
+        "flags": ["--ref", "--zoom", "--index", "--to", "--expand-to", "--context", "--ms"],
+        "examples": [
+            "frago desktop camera up",
+            'frago desktop camera focus --ref \'page:"API Key"\' --zoom 1.5',
+            "frago desktop camera reset --ms 1000",
+        ],
+    },
+    "rec": {
+        "summary": "录制桌面成片（开录时自动清空探路期排队残留语音，停录自动合成音轨与宫格自检）",
+        "verbs": {
+            "start --name <片名> [--force]": "启动录制（自动清空开录前残留语音队列）",
+            "stop": "停止录制并编码输出 MP4 与自检报告",
+            "play ('<JSON步骤数组>' | --steps '<JSON>' | --file <路径>) [--name <片名>]":
+                "一键批量执行录制剧本（同 frago desktop play）",
+        },
+        "flags": ["--name", "--force", "--steps", "--file"],
+        "examples": [
+            "frago desktop rec start --name my-demo",
+            "frago desktop rec stop",
+            'frago desktop rec play --name my-demo --steps \'["browser click --text Save", "pause --ms 800"]\'',
+        ],
+    },
+    "strap": {
+        "summary": "在桌面顶部或底部挂载/隐藏说明字条（最长 60 字）",
+        "verbs": {
+            "show <文字> [--title <标题>] [--style news|bar|ghost|chip] [--at bottom|top] [--ms <毫秒>]":
+                "显示贴纸字条（不传 --ms 则常驻直到 strap hide）",
+            "hide": "隐藏当前字条",
+        },
+        "flags": ["--title", "--style", "--at", "--ms"],
+        "examples": [
+            'frago desktop strap show "步骤 1：打开 AI 服务商配置" --title "设置" --style news',
+            "frago desktop strap hide",
+        ],
+    },
+    "term": {
+        "summary": "操控虚拟终端窗口执行命令、读取缓冲区、回滚与改字号",
+        "verbs": {
+            "run <命令字符串>": "在虚拟终端 tmux 会话中执行命令",
+            "read [--lines <行数>] [--observe]": "读取终端输出（--observe 静默读取不置顶终端窗口）",
+            "scroll (--lines <行数> | --to <文字> | --to-end) [--ms <毫秒>]": "滚动终端视口或回到底部",
+            "fontsize <字号8-64>": "调整终端渲染字号",
+        },
+        "flags": ["--lines", "--to", "--to-end", "--ms", "--observe"],
+        "examples": [
+            'frago desktop term run "ls -la"',
+            "frago desktop term read --lines 30 --observe",
+            "frago desktop term scroll --to-end",
+            "frago desktop term fontsize 22",
+        ],
+    },
+    "window": {
+        "summary": "管理虚拟桌面四扇程序窗口（term / browser / image / video）的开关与几何位置",
+        "verbs": {
+            "open --target term|browser|image|video [--ms <毫秒>]": "打开指定程序窗口",
+            "close --target term|browser|image|video [--ms <毫秒>]": "关闭指定程序窗口（保留后台载体）",
+            "min|max|restore --target term|browser|image|video [--ms <毫秒>]": "最小化 / 最大化 / 还原窗口",
+            "move --target term|browser|image|video --x <X> --y <Y> --w <W> --h <H> [--ms <毫秒>]": "移动并调整窗口大小",
+        },
+        "flags": ["--target", "--x", "--y", "--w", "--h", "--ms"],
+        "examples": [
+            "frago desktop window max --target browser",
+            "frago desktop window close --target term",
+        ],
+    },
+    "wait": {
+        "summary": "语义等待页面元素、URL、文本、语音播报完成或人工接管释放",
+        "usage": "frago desktop wait (--for <ref> | --url <子串> | --text <文字> | --speech all|<编号> | --release) [--timeout <秒>]",
+        "flags": ["--for", "--url", "--text", "--speech", "--release", "--timeout"],
+        "examples": [
+            'frago desktop wait --text "AI Providers" --timeout 10',
+            'frago desktop wait --for \'page:"Save Provider"\'',
+            "frago desktop wait --speech all",
+        ],
+    },
+    "voice": {
+        "summary": "Edge TTS 语音预合成、停止播报与缓存管理",
+        "verbs": {
+            "synth <文字> [--voice <音色>] [--rate <语速>] [--volume <音量>] [--pitch <音高>]":
+                "预合成语音并返回精确 duration_ms（不出声，不要求舞台在跑）",
+            "stop [--keep-queue]": "停止当前播报语音（不带 --keep-queue 时同时清空排队队列）",
+            "cache": "查看语音缓存统计",
+            "clear": "清空语音缓存文件",
+        },
+        "flags": ["--voice", "--rate", "--volume", "--pitch", "--keep-queue"],
+        "examples": [
+            'frago desktop voice synth "First, open the AI Providers tab." --voice en-US-AvaMultilingualNeural',
+            "frago desktop voice stop",
+        ],
+    },
+    "say": {
+        "summary": "显示底部旁白字幕，或带 --speak 触发 Edge TTS 语音播报（默认 channel=narration 显式解说音；channel=ambient 日常伴随音在录制期自动静默）",
+        "usage": 'frago desktop say "<文字>" [--ms <毫秒>] | --speak [--async] [--channel narration|ambient] [--interrupt | --interject] [--out page|local|both|none] [--voice <音色>]',
+        "flags": ["--speak", "--async", "--channel", "--interrupt", "--interject", "--out", "--voice", "--rate", "--volume", "--pitch", "--ms"],
+        "examples": [
+            'frago desktop say "正在打开设置页面" --ms 2500',
+            'frago desktop say "Opening the settings panel now." --speak --async --voice en-US-AvaMultilingualNeural',
+        ],
+    },
+    "pause": {
+        "summary": "在剧本或动作链中插入毫秒级演示节拍停顿",
+        "usage": "frago desktop pause --ms <毫秒>",
+        "flags": ["--ms"],
+        "examples": ["frago desktop pause --ms 1000"],
+    },
+}
+
+
+def _subcommand_help_payload(argv: list[str]) -> dict | None:
+    """当 argv 中带有 --help / -h 且指定了子命令时，返回针对该子命令的参数说明。"""
+    if "-h" not in argv and "--help" not in argv:
+        return None
+    words = [t for t in argv if t not in ("-h", "--help") and not t.startswith("-")]
+    if not words:
+        return None
+    res = words[0]
+    verb = words[1] if len(words) > 1 else None
+    if verb and f"{res} {verb}" in SUBCOMMAND_HELP:
+        key = f"{res} {verb}"
+        info = SUBCOMMAND_HELP[key]
+        return {"ok": True, "help": key, "help_for": f"frago desktop {key}", **info}
+    if res in SUBCOMMAND_HELP:
+        info = SUBCOMMAND_HELP[res]
+        out = {"ok": True, "help": res, "help_for": f"frago desktop {res}", **info}
+        if verb and isinstance(info.get("verbs"), dict):
+            matched = {k: v for k, v in info["verbs"].items() if k.split()[0] == verb}
+            if matched:
+                out["matched_verb"] = matched
+        return out
+    if res in RESOURCE_HELP:
+        return {
+            "ok": True,
+            "help_for": f"frago desktop {res}",
+            "summary": RESOURCE_HELP[res],
+            "resources": sorted(RESOURCES),
+        }
+    return None
 
 
 # ── 客户端侧组合（broker 协议不动） ──
@@ -936,6 +1611,7 @@ def cmd_status(rec: dict) -> dict:
 
 ACTOR_MODES = ("headless", "head")
 BROWSER_MODES = ("headless", "head", "takeover", "release")
+SPEECH_CHANNELS = ("narration", "ambient")
 
 
 def cmd_up(flags: dict) -> dict:
@@ -1287,7 +1963,13 @@ def cmd_wait(rec: dict, mode: str, needle: str, timeout: int) -> dict:
 def run(phrases: list[list[str]], to: str | None) -> dict:
     # 全部先解析再执行：一批里有任何一条语法错，就一条都不发。半批打进画面
     # 之后再报语法错，留下的是个说不清做到哪一步的中间态。
-    plans = [parse(p) for p in phrases]
+    raw_plans = [parse(p) for p in phrases]
+    plans: list[tuple[str, object]] = []
+    for kind, obj in raw_plans:
+        if kind == "play":
+            plans.extend(obj)  # type: ignore[arg-type]
+        else:
+            plans.append((kind, obj))
 
     # up 之外的任何指令都要先定位实例；up 自己负责创建，不能反过来要求它先存在。
     # "any" 那一档（目前只有 down）只要求实例**存在**，不要求它在跑。
@@ -1361,9 +2043,14 @@ def main(argv: list[str] | None = None) -> int:
                           "what": {k: RESOURCE_HELP[k]
                                    for k in sorted(RESOURCES)
                                    if k in RESOURCE_HELP},
-                          "batch": "aos - 从标准输入按行读"},
+                          "batch": "aos - 从标准输入按行读，或用 `frago desktop play '<JSON步骤数组>'` 一键执行剧本"},
                          ensure_ascii=False))
         return 2
+
+    sub_help = _subcommand_help_payload(argv)
+    if sub_help is not None:
+        print(json.dumps(sub_help, ensure_ascii=False))
+        return 0
 
     # 实例选择器叫 --instance 而不是 --to：spec 两处各写了一个 --to，一处指实例、
     # 一处指 browser scroll 的目标文字。同一个 flag 承载两种语义，正是"同一语义

@@ -506,7 +506,7 @@ def test_asr_profile_resolution_and_desktop_operator_tool_boundary(tmp_path, mon
     with pytest.raises(ValueError, match="常规设置 → 旁路与轻量 AI"):
         so.resolve_asr_connection()
 
-    # 验证 desktop-operator 会话构建命令时强制注入 --allowed-tools 与 --disallowed-tools
+    # 验证 desktop-operator 会话构建命令时强制注入 --allowed-tools，且不再封禁 Bash(frago desktop say:*)
     monkeypatch.setattr(coreagent_runner, "binary", lambda: Path("/usr/local/bin/frago-core"))
     cmd = coreagent_runner.build_command(
         "core_op_bound",
@@ -515,8 +515,8 @@ def test_asr_profile_resolution_and_desktop_operator_tool_boundary(tmp_path, mon
     )
     assert "--allowed-tools" in cmd
     assert cmd[cmd.index("--allowed-tools") + 1] == "Bash(frago desktop:*)"
-    assert "--disallowed-tools" in cmd
-    assert cmd[cmd.index("--disallowed-tools") + 1] == "Bash(frago desktop say:*)"
+    assert "Bash(frago desktop say:*)" not in coreagent_runner._DESKTOP_OPERATOR_DISALLOWED_TOOLS
+    assert "Bash(frago desktop say:*)" not in cmd
 
 
 def test_desktop_operator_single_employee_tag_without_duplicate_directive_tail(tmp_path, monkeypatch):
@@ -701,11 +701,11 @@ def test_resolve_active_desktop_operator_session_restores_and_mounts_summarizer(
     monkeypatch.setattr(so, "ensure_speech_summarizer", _fake_ensure)
 
     res = so.resolve_active_desktop_operator_session(ensure_summarizer=True)
-    assert res == {
-        "session_id": target_sid,
-        "employee": "desktop-operator",
-        "restored": True,
-    }
+    assert res["session_id"] == target_sid
+    assert res["employee"] == "desktop-operator"
+    assert res["restored"] is True
+    assert res["agent"] == "coreagent"
+    assert isinstance(res["agents"], list)
     assert len(mounted) == 1
     assert mounted[0][0] == target_sid
 
@@ -928,6 +928,255 @@ def test_whisper_hallucination_filter_and_transcribe_route_guard(monkeypatch):
     assert route_res["dispatched"] is False
     assert route_res.get("reason") == "hallucination_filtered"
     assert dispatched_calls == []
+
+
+def test_speech_summarizer_daemon_uses_ambient_channel_and_mutes_during_recording(
+    tmp_path, monkeypatch
+):
+    """验证旁路 SpeechSummarizerDaemon 显式使用 channel='ambient'，且在舞台录制期间彻底静默跳过旁路总结。"""
+    fake_records = [
+        UnifiedRecord(
+            id="rec_op_1",
+            session_id="core_rec_mute_test",
+            group_id=None,
+            seq=10,
+            ts=2000,
+            kind="agent.say",
+            payload={"text": "正式录制已经开始了，我现在打开 AI Providers 页面。"},
+        )
+    ]
+    monkeypatch.setattr(
+        "frago.session.record_reader.read_records",
+        lambda sid, limit=100, tail=False, after=None: (
+            fake_records if after is not None and after <= 10 else []
+        ),
+    )
+
+    posted_steps: list[dict] = []
+    monkeypatch.setattr(
+        "frago.desktop.registry.read_instance",
+        lambda _id: {"status": "running", "port": 8770},
+    )
+    monkeypatch.setattr(
+        "frago.desktop.aos.post",
+        lambda rec, steps, timeout=8.0: posted_steps.extend(steps) or {"ok": True, "results": [{"status": "ok"}]},
+    )
+
+    summarizer_calls: list[str] = []
+
+    def fake_summarize(session_id, previous_summary="", **kw):
+        summarizer_calls.append(session_id)
+        return "现在开始录制，我已经打开了设置页。"
+
+    monkeypatch.setattr(so, "summarize_operator_for_speech", fake_summarize)
+
+    # 1. 录制进行中（is_stage_recording() == True）：step_once 直接跳过 LightAgent 总结且不发语音，游标仍推进
+    monkeypatch.setattr(so, "is_stage_recording", lambda port=None, timeout=1.5: True)
+    daemon = so.SpeechSummarizerDaemon("core_rec_mute_test", cwd=str(tmp_path))
+    daemon.last_summarized_seq = 0
+    out_rec = daemon.step_once()
+    assert out_rec == ""
+    assert summarizer_calls == []
+    assert posted_steps == []
+    assert daemon.last_summarized_seq == 10
+
+    # 2. 非录制状态（is_stage_recording() == False）：正常总结并以 channel="ambient" 发送
+    monkeypatch.setattr(so, "is_stage_recording", lambda port=None, timeout=1.5: False)
+    daemon.last_summarized_seq = 0
+    out_live = daemon.step_once()
+    assert out_live == "现在开始录制，我已经打开了设置页。"
+    assert len(summarizer_calls) == 1
+    assert len(posted_steps) == 1
+    assert posted_steps[0]["op"] == "say"
+    assert posted_steps[0]["channel"] == "ambient"
+    assert posted_steps[0]["speak"] is True
+
+
+def test_desktop_operator_agent_priority_and_fallback(monkeypatch):
+    """验证主操作员严格按 coreagent > claude > codex > agy > opencode 探测优先级，并在 coreagent 缺连接时自动降级。"""
+    from frago.server.services import workbench_agents
+
+    assert so.DESKTOP_OPERATOR_AGENT_PRIORITY == (
+        "coreagent",
+        "claude",
+        "codex",
+        "agy",
+        "opencode",
+    )
+
+    def _make_agent(agent_type: str, display_name: str, selectable: bool, reason: str | None = None):
+        return workbench_agents.WorkbenchAgent(
+            agent_type=agent_type,
+            display_name=display_name,
+            installed=selectable,
+            path=f"/usr/local/bin/{agent_type}" if selectable else None,
+            family="coreagent" if agent_type == "coreagent" else agent_type,
+            selectable=selectable,
+            reason=reason,
+            id_origin="caller" if agent_type in ("coreagent", "claude") else "claimed",
+        )
+
+    # Case 1: coreagent 可用时必须排第一并优先选中
+    agents_all = [
+        _make_agent("opencode", "OpenCode", True),
+        _make_agent("claude", "Claude Code", True),
+        _make_agent("coreagent", "CoreAgent", True),
+        _make_agent("codex", "Codex CLI", True),
+        _make_agent("agy", "Antigravity CLI", True),
+    ]
+    chosen, ordered = so.resolve_desktop_operator_agent(agents=agents_all)
+    assert chosen == "coreagent"
+    assert [a.agent_type for a in ordered] == ["coreagent", "claude", "codex", "agy", "opencode"]
+
+    # Case 2: coreagent 未配置连接时，按优先级自动降级到 claude
+    agents_no_conn = [
+        _make_agent("coreagent", "CoreAgent", False, workbench_agents.REASON_NO_CONNECTION),
+        _make_agent("claude", "Claude Code", True),
+        _make_agent("codex", "Codex CLI", True),
+        _make_agent("agy", "Antigravity CLI", False, workbench_agents.REASON_NOT_INSTALLED),
+        _make_agent("opencode", "OpenCode", True),
+    ]
+    chosen2, _ = so.resolve_desktop_operator_agent(agents=agents_no_conn)
+    assert chosen2 == "claude"
+
+    # Case 3: coreagent 与 claude 都不可用，自动降级到 codex -> agy -> opencode
+    agents_codex = [
+        _make_agent("coreagent", "CoreAgent", False, workbench_agents.REASON_NO_CONNECTION),
+        _make_agent("claude", "Claude Code", False, workbench_agents.REASON_NOT_INSTALLED),
+        _make_agent("codex", "Codex CLI", True),
+        _make_agent("agy", "Antigravity CLI", True),
+        _make_agent("opencode", "OpenCode", True),
+    ]
+    chosen3, _ = so.resolve_desktop_operator_agent(agents=agents_codex)
+    assert chosen3 == "codex"
+
+    # Case 4: 显式传入可用 preferred_agent 时尊重用户选择，不可用时回退优先级
+    chosen4, _ = so.resolve_desktop_operator_agent("opencode", agents=agents_codex)
+    assert chosen4 == "opencode"
+    chosen5, _ = so.resolve_desktop_operator_agent("claude", agents=agents_codex)
+    assert chosen5 == "codex"
+
+
+def test_dispatch_desktop_voice_command_multi_agent_and_non_core_session(tmp_path, monkeypatch):
+    """验证在非 coreagent 内核下创建与恢复 desktop-operator 会话：不捏造 core_ 前缀，且 is_desktop_operator_session 支持多家族。"""
+    from types import SimpleNamespace
+    from frago.employee import get_post
+    from frago.server.services import workbench_agents, workbench_new_session
+    from frago.session.unified_record import UnifiedRecord
+
+    emp_dir = tmp_path / "employees"
+    monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(emp_dir))
+    monkeypatch.setattr(
+        "frago.employee.store.employees_dir",
+        lambda base_dir=None: Path(base_dir) if base_dir else emp_dir,
+    )
+    so._reset_excluded_sids.clear()
+    so._stage_reset_active = False
+    so.cleanup_all_speech_summarizers()
+    monkeypatch.setattr(so, "ensure_stage_up", lambda: None)
+
+    fake_agents = [
+        workbench_agents.WorkbenchAgent(
+            agent_type="coreagent",
+            display_name="CoreAgent",
+            installed=True,
+            path="/bin/core",
+            family="coreagent",
+            selectable=False,
+            reason=workbench_agents.REASON_NO_CONNECTION,
+            id_origin="caller",
+        ),
+        workbench_agents.WorkbenchAgent(
+            agent_type="claude",
+            display_name="Claude Code",
+            installed=True,
+            path="/usr/local/bin/claude",
+            family="claude-code",
+            selectable=True,
+            reason=None,
+            id_origin="caller",
+        ),
+    ]
+    monkeypatch.setattr(workbench_agents, "list_agents", lambda: fake_agents)
+
+    launched_calls: list[tuple[str, str, str]] = []
+    bound_calls: list[tuple[str, str]] = []
+
+    def _fake_start_with_id(agent_type: str, cwd: str, prompt: str, *, session_id: str | None = None):
+        launched_calls.append((agent_type, cwd, prompt))
+        return SimpleNamespace(
+            handle="webui-claude-handle-1",
+            agent_type=agent_type,
+            display_name="Claude Code",
+            cwd=cwd,
+            session_id="11111111-2222-3333-4444-555555555555",
+            error=None,
+            finished=False,
+        )
+
+    monkeypatch.setattr(workbench_new_session, "start_with_id", _fake_start_with_id)
+    monkeypatch.setattr(
+        workbench_new_session,
+        "bind_employee",
+        lambda handle, emp_id: bound_calls.append((handle, emp_id)),
+    )
+
+    class _DummyDaemon:
+        def __init__(self):
+            self.notified: list[str] = []
+
+        def notify_human_asr(self, text: str) -> None:
+            self.notified.append(text)
+
+    dummy_daemon = _DummyDaemon()
+    monkeypatch.setattr(so, "ensure_speech_summarizer", lambda sid, cwd=None: dummy_daemon)
+    monkeypatch.setattr(
+        "frago.session.coreagent_store.session_exists",
+        lambda sid: False,
+    )
+    monkeypatch.setattr(
+        "frago.session.record_reader.read_records",
+        lambda sid, limit=1, tail=False, **kw: [],
+    )
+
+    res = so.dispatch_desktop_voice_command("打开设置检查连接", cwd=str(tmp_path))
+    assert res["agent"] == "claude"
+    assert res["session_id"] == "11111111-2222-3333-4444-555555555555"
+    assert not str(res["session_id"]).startswith("core_")
+    assert len(launched_calls) == 1
+    assert launched_calls[0][0] == "claude"
+    assert '<frago-employee id="desktop-operator"' in launched_calls[0][2]
+    assert bound_calls == [("webui-claude-handle-1", "desktop-operator")]
+    assert dummy_daemon.notified == ["打开设置检查连接"]
+
+    post = get_post("desktop-operator", base_dir=emp_dir)
+    assert post is not None
+    assert "11111111-2222-3333-4444-555555555555" in post.active_session_ids
+
+    # 验证非 core_ 会话（如 ses_opencode_001）同样能通过首轮 user.say 识别为 desktop-operator
+    opencode_sid = "ses_opencode_op_001"
+    monkeypatch.setattr(
+        "frago.session.record_reader.read_records",
+        lambda sid, limit=2, tail=False, **kw: (
+            [
+                UnifiedRecord(
+                    id="r1",
+                    session_id=opencode_sid,
+                    group_id=None,
+                    seq=1,
+                    ts=1000,
+                    kind="user.say",
+                    payload={"text": '<frago-employee id="desktop-operator" title="桌面主操作员" kernel="opencode">\n职责\n</frago-employee>\n\n测试'},
+                )
+            ]
+            if sid == opencode_sid
+            else []
+        ),
+    )
+    assert so.is_desktop_operator_session(opencode_sid) is True
+    so.cleanup_all_speech_summarizers()
+
+
 
 
 

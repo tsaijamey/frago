@@ -13,9 +13,9 @@ description: 指导 agent 作为「主操作员」（或协同专职员工 deskt
 
 | 组件 | 是谁 | 职责与音色规范 | 边界约束 |
 |---|---|---|---|
-| **主操作员**（`desktop-operator` 或当前舞台会话） | 绑定桌面右下角对话面板（`?userInput=true&session=<会话编号>`）的会话 | 虚拟桌面的**键鼠与程序操作权**：`frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`window`、`mouse to/drift/click` | `desktop-operator` 常驻会话自身不直接调 `say`，语音由旁路 `SpeechSummarizerDaemon` 自动生成 |
-| **旁路女声总结器**（`SpeechSummarizerDaemon`） | 服务端自动为 `desktop-operator` 会话挂载的旁路守护线程 | 实时监听用户语音 ASR / 面板输入与主操作员动作及响应，调用 `LightAgent` 提炼第一人称口语并由 `voice.resolve_emotional_voice` 合成女声：**中文默认 `zh-CN-XiaoxiaoNeural`（女声），英文默认 `en-US-AvaMultilingualNeural`（女声）** | 全程第一人称「我 / I」，严禁第三人称「主操作员正在……」转述 |
-| **一拍一动分镜录制**（`acts/actN.txt`） | 录制演示成片时的确定性幕脚本 | 每一拍在幕脚本中显式编排 `strap show` + `say --speak --async --voice en-US-AvaMultilingualNeural`（或中文 `zh-CN-XiaoxiaoNeural`）+ 窗口动作 + `mouse to` + `pause --ms` | 录制分镜脚本时使用女声 `en-US-AvaMultilingualNeural` / `zh-CN-XiaoxiaoNeural`，严禁使用已退役的英文男声 |
+| **主操作员**（`desktop-operator` 或当前舞台会话） | 绑定桌面右下角对话面板（`?userInput=true&session=<会话编号>`）的会话 | 虚拟桌面的**键鼠与程序操作权**：`frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`window`、`mouse to/drift/click`、`play`、`say` | 日常非录制交互时只需输出第一人称文本（由旁路 `SpeechSummarizerDaemon` 以 `ambient` 通道播报）；**录制视频或执行演示剧本时**，主动在 `play` 剧本中调用 `say "<解说词>" --speak`（默认 `narration` 通道）发出成片解说旁白 |
+| **第一层 · 旁路日常伴随播音**（`SpeechSummarizerDaemon` / `channel=ambient`） | 服务端自动为 `desktop-operator` 会话挂载的旁路守护线程 | 实时监听用户语音 ASR / 面板输入与主操作员动作及响应，调用 `LightAgent` 提炼第一人称口语并以 `channel="ambient"` 播放女声：**中文默认 `zh-CN-XiaoxiaoNeural`，英文默认 `en-US-AvaMultilingualNeural`** | 仅服务屏幕前用户的日常非录制交互；**一旦进入录制状态（`rec start` 或 `play --name`），系统自动彻底静默 `ambient` 通道且绝不录入 MP4 音轨** |
+| **第二层 · 录制显式解说旁白**（`frago desktop say --speak` / `channel=narration`） | 录制演示成片或执行 `frago desktop play` 剧本时的显式旁白层 | 在 `frago desktop play` 剧本（或 `acts/actN.txt`）中显式编排 `strap show` + `say "<解说词>" --speak [--async]`（默认 `channel="narration"`）+ 窗口动作 + `mouse to` + `pause --ms` | `StageRecorder` 仅收录 `narration` 通道语音；解说词必须直接讲解业务操作内容本身，**严禁出现「现在开始录制」「我已经把录制停下来了」等跳戏的元状态话术** |
 
 **工具载体绝不是代理角色。** 虚拟桌面上的 `frago-stage` 终端、9222 演员浏览器、图片查看器、视频播放器、虚拟鼠标，统统是**虚拟桌面这台电脑上的被操作工具**，绝不是「主操作员」。「主操作员」指的是驱动这些工具的 agent 会话，两者 NEVER 混称。
 
@@ -25,10 +25,10 @@ description: 指导 agent 作为「主操作员」（或协同专职员工 deskt
 2. **后台 worker + 人类输入行协同**：耗时任务交由后台 worker 借住在桌面终端（`--tmux-target frago-stage`）里执行，主操作员在外围轮询终端与产物，随时把观众在桌面右下角对话面板（输入行）敲下的补充要求转达给 worker。
 3. **同步录制演示视频（仅在用户明示要求录屏时开启）**：当用户明确要求把演示录成视频交付时，开启舞台机位（`rec start`）把画面与英文女声（`en-US-AvaMultilingualNeural`）或中文女声（`zh-CN-XiaoxiaoNeural`）合成为可交付的 MP4 视频。
 
-## 何时委派 `desktop-operator`，何时走一拍一动幕脚本
+## 双层语音体系（日常伴随播音 `ambient` vs. 显式解说旁白 `narration`）
 
-- **日常桌面交互与跨员工协作**：优先委派专职员工 `desktop-operator`（`frago employee invoke desktop-operator "..."`），由其操作桌面并由服务端 `SpeechSummarizerDaemon` 自动播报第一人称女声。
-- **录制确定性演示视频或一拍一动同轨演出**：按下方「一拍一动同轨剧本」编写幕脚本（`acts/actN.txt`），使用女声 `--voice en-US-AvaMultilingualNeural`（英文）或 `--voice zh-CN-XiaoxiaoNeural`（中文）预合成测算 `duration_ms` 并执行。
+- **第一层（日常非录制交互 · 旁路伴随播音 `ambient`）**：平时在桌面上推进日常任务、未开启录制时，操作员只需输出第一人称文本回复，无需手动调用 `say --speak`，由服务端 `SpeechSummarizerDaemon` 自动以 `--channel ambient` 向屏幕前的人类用户播报第一人称女声进展。
+- **第二层（录制视频或剧本演示 · 显式解说旁白 `narration`）**：当执行视频录制（`rec start` 或 `play --name <片名>`）时，系统自动清空开录前残留语音并彻底静默 `ambient` 通道；此时操作员**应当**在 `frago desktop play` 剧本（或「一拍一动同轨剧本」`acts/actN.txt`）中通过 `say "<解说词>" --speak`（CLI 默认 `--channel narration`）主动发出面向成片观众的明确解说旁白（Narration），与操作步骤节拍同步收录进视频音轨。解说词必须直接讲解业务操作内容本身，严禁出现「现在开始录制」「我已经把录制停下来了」等跳戏的元状态话术。
 
 ## 主操作员标准开场三步
 
@@ -181,13 +181,15 @@ say "..." --speak --async --voice en-US-AvaMultilingualNeural
 
 ## 同步录制视频（需要交付录屏成片时）
 
-当任务要求把演示或执行过程录制成视频（或边讲解边录屏）时，叠加以下录制规矩：
+当任务要求把演示或执行过程录制成视频（或边讲解边录屏）时，叠加以下录制规矩与「先探明、后连贯执行」方法论：
 
-1. **开录前准备干净现场**：开窗、关掉多余程序、登录、初始导航全部在开录前做完；要铺 `slide` 的，先架机位或开录再 `slide open`，让成片从第一帧起完整。
+1. **先单步探路消除不确定性，再重置干净起点用 `frago desktop play` 一口气连贯录制**：
+   - 在非录制态下先走通完整路径：用 `frago desktop elements --in browser`（直接返回 `id`/`name`/`aria_label`/`value`/`selected_text`）与 `--index <N>` 确认每一步引用均可命中，再重置回干净起始状态（关闭多余弹窗、回到起始页；要铺 `slide` 的，开录再 `slide open`，让成片从第一帧起完整）。
+   - 路径确认后，用单条 **`frago desktop play '<JSON步骤数组>'`**（或 `frago desktop play --name <片名> --steps '<JSON步骤数组>'`）将 `rec start`、连贯操作与字幕、`camera focus/reset`、`pause --ms` 与 `rec stop` 一次性成批下发，严禁开录后「一轮思考 → 一步命令」单步交互录制。
 2. **直接 `rec start`，不要在有人开着桌面页时单独 `camera up`**：
    开录门禁要求「本实例有且仅有一块主荧幕 + tmux 会话存在」。如果没人开桌面页，`frago desktop rec start --name <片名>` 会自己架起 9223 机位并通过门禁；如果已经有人开着桌面页，再起机位会变成两块荧幕导致 409 门禁拒绝（排查时用 `camera down` 再 `status`）。
 3. **防休眠塌帧**：
    macOS 一旦进入休眠（Sleep），CDP 停止产帧但命令不报错，几十分钟的动线会被压成几秒。整段录制脚本外层用 `caffeinate -dimsu` 包裹，并确认没有合盖；停录后用 `pmset -g log` 检查录制期间是否有 `Entering Sleep` / `DarkWake`。
 4. **收尾必保 `rec stop` 完全返回**：
-   把 `frago desktop rec stop` 放进 `finally` / `trap` 里，先 `wait --speech all` 等语音说完再停录。停录会把录制期间每一句 `say --speak` 的音频按开口时刻（含 `--interject` 的 `cut_ms` 截断位置）贴成音轨封进 MP4。长片编码耗时数分钟，**必须等 `rec stop` 完全返回后**再用 `ffprobe -count_frames` 核验帧数与时长，并抽查音频片段与 `<片名>-voice/` 副本的相似度（正常接近 1.000，叠音约 0.70），防止半途读取报 `moov atom not found` 或漏检叠音。
+   使用 `frago desktop play --name <片名>` 时会自动在末尾执行 `record.stop`（手工脚本须把 `frago desktop rec stop` 放进 `finally` / `trap` 里，先 `wait --speech all` 等语音说完再停录）。开录会自动清空开录前排队的残留语音，停录会把录制期间每一句 `say --speak` 的音频按开口时刻（含 `--interject` 的 `cut_ms` 截断位置）贴成音轨封进 MP4。长片编码耗时数分钟，**必须等 `rec stop` / `play` 完全返回后**再用 `ffprobe -count_frames` 核验帧数与时长，并抽查音频片段与 `<片名>-voice/` 副本的相似度（正常接近 1.000，叠音约 0.70），防止半途读取报 `moov atom not found` 或漏检叠音。
 5. **收尾保持舞台在线**：终幕播完、`rec stop` 返回后，舞台本身保持活着（NEVER `frago desktop down`）。

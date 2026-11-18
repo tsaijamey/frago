@@ -25,23 +25,24 @@ frago desktop browser open https://...     # 然后才是干活
 | 资源 | 动词 |
 |---|---|
 | 生命周期 | `status` / `up` / `down` |
-| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read [--observe]` / `browser mode --to takeover\|release\|head\|headless` |
+| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector [--index <N>]` / `browser scroll --to\|--pixels [--index <N>]` / `browser read [--observe]` / `browser mode --to takeover\|release\|head\|headless` |
 | 标签页 | `tab open <url>` / `tab switch <n>` / `tab close <n>` |
 | 终端窗口 | `term run "<命令>"` / `term read [--observe]` / `term scroll --lines <n>\|--to "<文字>"\|--to-end` |
 | 图片浏览器 | `image open <本地图片路径>` |
 | 视频播放器 | `video open <本地视频>` / `video play` / `video pause` / `video seek --sec <秒>` |
 | 全屏 HTML | `slide open <本地 html>` / `slide close` |
 | 贴纸栏 | `strap show "<少量文字>" [--title <标签>] [--style news\|bar\|ghost\|chip] [--at bottom\|top] [--ms <毫秒>]` / `strap hide` |
-| 鼠标 | `mouse to <ref>` / `mouse drift` / `mouse click` |
+| 鼠标 | `mouse to <ref> [--index <N>]` / `mouse drift` / `mouse click` |
 | 开关程序 | `window open\|close --target term\|browser\|image\|video` |
 | 窗口 | `window min\|max\|restore\|move` / `focus term\|browser\|image\|video` |
-| 镜头 | `camera focus --ref <ref> --zoom <k>` / `camera pan` / `camera reset` / `camera up\|down` |
-| 录制 | `rec start --name <n>` / `rec stop` |
-| 讲解 | `say "<旁白>"`（纯字幕）/ `say "<旁白>" --speak [--async] [--interrupt] [--out page\|local\|both\|none] [--voice <声音>] [--rate +10%] [--volume +0%] [--pitch +0Hz]`（开口） |
+| 镜头 | `camera focus --ref <ref> --zoom <k> [--index <N>]` / `camera pan` / `camera reset` / `camera up\|down` |
+| 录制 | `rec start --name <n>` / `rec stop` / `rec play\|take` |
+| 批量执行 | `play '<JSON步骤数组>' [--name <片名>]` / `play --steps '<JSON>' [--name <片名>]` / `play --file <路径> [--name <片名>]` |
+| 讲解 | `say "<旁白>"`（纯字幕）/ `say "<旁白>" --speak [--async] [--channel narration\|ambient] [--interrupt] [--out page\|local\|both\|none] [--voice <声音>] [--rate +10%] [--volume +0%] [--pitch +0Hz]`（开口，默认 `narration` 解说通道） |
 | 语音 | `voice synth "<文字>"`（只合成不出声，不要求舞台在跑）/ `voice stop` / `voice cache` / `voice clear` |
-| 等待与观察 | `wait --release [--timeout <秒>]` / `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements [--observe]` / `viewport refresh` |
+| 等待与观察 | `wait --release [--timeout <秒>]` / `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements [--in browser (--text\|--selector) [--index <N>]] [--observe]` / `viewport refresh` |
 
-`ref` 是元素地址：页面里的写 `page:"按钮文字"` 或 `page:<css选择器>`，终端里的写 `term:...`，桌面级的写 `dock:browser` / `tab:0`。用 `elements` 先看有哪些可寻址的东西，别猜。
+`ref` 是元素地址：页面里的写 `page:"按钮文字"` 或 `page:<css选择器>`（命中多个时可用 `--index <N>` 或 `page:nth:<N>:<目标>` 0-based 精确指定），终端里的写 `term:...`，桌面级的写 `dock:browser` / `tab:0`。通用方法论是**「先单步探测、再批量连贯执行」**：遇到未知界面先用 `elements`（返回 `id`/`name`/`aria_label`/`value`/`selected_text`）或单步动词探明结构并消除不确定性，确认整条路径后再重置干净起点、用 `play` 一次性连贯跑完已知序列；遇不熟的子命令或参数可运行 `frago desktop <subcommand> --help`。
 
 `mouse to` 的目标是**位置参数**，不是 `--ref`；镜头那一族的 `camera focus --ref` 才带 `--ref`。两者写法不同不是笔误，照抄这两条即可：
 
@@ -97,7 +98,8 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 - **掐断分两种，别混。** `--interrupt` 掐掉正在说的**和排着的**，再说这一句——给「重来一遍」用，后面排的也不要了。`voice stop` 只掐不说，排着的同样一起丢。**`--interject` 是插播**：掐掉正在说的那一句，这一句**立刻**说，排着的**留着接着放**——话说到一半有件当下的事必须马上讲，讲完原来的接着走，用的就是它。同理 `voice stop --keep-queue` 只掐正在说的、保住队列。少了插播这一条，想说一句当下的事就只能排到队尾，而队尾可能压着一两分钟的闲话，等轮到时那句话早没意义了。
 - **在哪出声。** `--out page`（默认）在打开着的桌面页上放，远程看的人也听得见；`local` 从本机扬声器放；`both` 两处都放；`none` 不出声，只按时长走字幕、照样录进音轨——给「录后配音」用。
 - **浏览器会拦自动播放。** 桌面页第一次放声被拦时，右上角露出「启用声音」，人点一下之后这张页面就都放得出来。3 秒内没有任何一块桌面页报「开始放了」，这句按时长走完，回执里写 `heard: false` 并说明是没人开着页面还是被拦了——不许把「发出去了」当成「说出来了」。`status` 的 `speech.listening_screens` 提前告诉你有几块页面能出声。
-- **录进片子。** 机位只收画面不收声音。录制期间开口的每一句，音频当场复制进 `<片名>-voice/`，停录时按开口时刻贴成一条音轨封进 mp4（画面不重编码），回执的 `voice` 字段写着封没封进去；开口时刻与音频副本另存 `<片名>-voice.json`。机位那一页不放声、不露按钮。
+- **双层语音体系（日常伴随播音 `ambient` vs. 显式解说旁白 `narration`）。** 舞台语音分为两层通道：① **第一层 `ambient`（日常伴随/主持播音）**：由服务端旁路守护 `SpeechSummarizerDaemon` 在非录制交互期间自动以 `--channel ambient` 发送，向屏幕前用户播报工作状态；一旦进入录制状态（`rec start` 或 `play --name <片名>`），系统自动静默跳过一切 `ambient` 请求（返回 `suppressed: true`），且 `StageRecorder` 永远不会将 `ambient` 语音写入成片音轨。② **第二层 `narration`（显式解说旁白，CLI 默认通道）**：Agent 主动调用 `frago desktop say "<解说词>" --speak` 或在 `frago desktop play` 剧本中编排 `say` 时，默认属于 `narration` 通道；录制期间仅收录 `narration` 通道语音，并在 `play --name` 停录前自动等待未播完的 `narration` 语音完整收尾。解说词必须直接讲解业务操作内容本身，严禁出现「现在开始录制」「我已经把录制停下来了」等跳戏的元状态话术。
+- **录进片子。** 机位只收画面不收声音。录制期间开口的每一句 `narration` 通道语音，音频当场复制进 `<片名>-voice/`，停录时按开口时刻贴成一条音轨封进 mp4（画面不重编码），回执的 `voice` 字段写着封没封进去；开口时刻与音频副本另存 `<片名>-voice.json`。机位那一页不放声、不露按钮。
 - **打断在音轨里也是打断。** 录制中被 `--interrupt`、`--interject` 或 `voice stop` 掐掉的那句，清单里记着它实际说了多久（`cut_ms`），贴音轨时只贴说出的那一段、到点直接掐断，不淡出。回执里 `heard: false` 只说明桌面页没放出声，不影响片子里的音轨。
 - **声音对不对，回执和宫格证明不了。** 交片前取某句开口之后的一段音轨，和这句的音频副本比相似度：只有它一个声音时接近 1，叠着别的声音时明显偏低（2026-09-14 实测叠音 0.701、正常 1.000）。
 - **合成失败不停整批。** Edge 走的是非公开接口，出过整片 403/503。重试三次仍失败，这句退回纯字幕、批次照常往下走，回执写 `spoken: false` 和原因，音轨里也没有这一句。
@@ -125,7 +127,7 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **右下角对话面板（人类输入行）是唯一的例外。** 虚拟桌面右下角常驻客服式对话入口：地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开（可收起为右下角胶囊图标）；不带参数时仍显示右下角图标但不展开面板（录制机位自动隐藏，录制画面里不会出现它）。人在里面打的字**不进桌面终端**——终端里跑着的是 worker，人的话要先到主控会话那里：输入行发的是 frago 服务的会话发送接口（`POST /api/workbench/sessions/<编号>/send`，`wait: false` 只排队不等答），排进地址里那场会话的队列。
 
-**面板绑的是主控会话，不是终端。** 地址里那个 `session=<编号>` 就是主控会话（日常由专职员工 `desktop-operator` 担任）的编号。`desktop-operator` 专职在桌面终端与浏览器上操作，服务端旁路守护 `SpeechSummarizerDaemon` 实时监听用户语音/面板输入与 `desktop-operator` 的操作及响应，自动用第一人称女声（中文 `zh-CN-XiaoxiaoNeural` / 英文 `en-US-AvaMultilingualNeural`）进行暖场应答与增量解说。一拍一动纯脚本回放演示下，由剧本自身通过 `say --speak --async --voice en-US-AvaMultilingualNeural` 发声。
+**面板绑的是主控会话，不是终端。** 地址里那个 `session=<编号>` 就是主控会话（日常由专职员工 `desktop-operator` 担任）的编号。`desktop-operator` 专职在桌面终端与浏览器上操作，遵循「双层语音体系」：日常非录制交互时，服务端旁路守护 `SpeechSummarizerDaemon` 实时监听用户语音/面板输入与 `desktop-operator` 的操作及响应，自动以 `ambient` 通道用第一人称女声（中文 `zh-CN-XiaoxiaoNeural` / 英文 `en-US-AvaMultilingualNeural`）进行暖场应答与增量解说；当执行视频录制（`rec start` 或 `play --name <片名>`）时，旁路 `ambient` 播音自动静默，由主操作员在 `frago desktop play` 剧本中通过 `say "<解说词>" --speak`（默认 `narration` 通道）主动发出面向成片观众的显式解说旁白。
 
 主操作员怎么把人的话转达给终端里的 worker：通常是 `focus term` → `type "<原话>"` → `key Enter`，把话排进 worker 的 TUI。这条链是「WebUI 创建配方」的展示面：桌面是显示器，主控会话是遥控器，人对着遥控器说话。worker 怎么进桌面终端见 `frago book recipe-creation` 的 `--tmux-target`。
 

@@ -374,6 +374,13 @@ def _adopt_claimed(launch: PendingLaunch) -> bool:
     launch.session_id = claimed
     if launch.employee_id:
         _record_employee_session(launch.employee_id, claimed)
+        if launch.employee_id == "desktop-operator":
+            try:
+                from frago.server.services import stage_orchestrator
+
+                stage_orchestrator.ensure_speech_summarizer(claimed, cwd=launch.cwd)
+            except Exception:  # noqa: BLE001
+                logger.debug("为 desktop-operator 认领会话 %s 挂载语音提炼器失败", claimed, exc_info=True)
     logger.info(
         "webui 新建会话认到编号：handle=%s agent=%s session=%s",
         launch.handle,
