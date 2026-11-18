@@ -1028,11 +1028,15 @@ describe('RecordStream 中栏', () => {
       expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1条提问 · 1次工具调用 · 1条回复');
 
       // 切换到英文状态：Talk 切片计数词条切换为英文
-      await i18n.changeLanguage('en');
+      await act(async () => {
+        await i18n.changeLanguage('en');
+      });
       rerender(<RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />);
       expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1 prompts · 1 tool calls · 1 replies');
 
-      await i18n.changeLanguage('zh');
+      await act(async () => {
+        await i18n.changeLanguage('zh');
+      });
     });
 
     it('Watcher「② 阶段里程碑追加记录」按 #N → #1 倒序置顶渲染，新增里程碑自动排首行且 Talk 切片与原始批次号精确绑定零串行', () => {
@@ -1358,6 +1362,312 @@ describe('RecordStream 中栏', () => {
       );
       expect(screen.getByTestId('watcher-decision-banner').textContent).toContain('请问是否确认直接发布？');
       expect(screen.queryByText('定位决策卡 ↓')).toBeNull();
+    });
+
+    it('长会话 Progress 视图下早期条目未加载时自动触发 onLoadOlder 补齐历史记录，且真实无对话条目禁用展开避免渲染空框', () => {
+      // 模拟长会话首屏只加载了尾部 seq 325..326，而早期条目 #48 位于 [322, 325)、#47 位于 [320, 322)（全量历史中也无记录）
+      const tailOnlyRecords = [
+        record({ id: 'u-tail', seq: 325, kind: 'user.say', payload: { text: '启动 Batch 1 修复' } }),
+        record({ id: 'a-tail', seq: 326, kind: 'agent.say', payload: { text: '正在检索同类 E2E 门禁先例' } }),
+      ];
+      const earlyAndTailRecords = [
+        record({ id: 't-48', seq: 322, kind: 'agent.think', payload: { text: '思考批次拆分' } }),
+        record({ id: 'a-48', seq: 323, kind: 'agent.say', payload: { text: '24 张纯 PIN Issue 已拆为 5 大批' } }),
+        ...tailOnlyRecords,
+      ];
+      const longObserver: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '分析并分批修复 PIN Issue',
+          tail: { kind: 'now', text: '正在检索同类 E2E 门禁先例' },
+          decision: '',
+          happened: ['24 张纯 PIN Issue 已拆为 5 大批'],
+          updated_at: 1_753_800_005_000,
+          model: 'gpt-6.4',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-47',
+              run_id: 47,
+              task_id: 'T4',
+              actor: '主会话',
+              at: 1_753_800_001_000,
+              cursor_from: 320,
+              cursor_to: 322,
+              phase_goal: '按问题性质分组并逐批修复 PIN Issue',
+              tail: { kind: 'now', text: '准备生成确认卡' },
+              happened_add: [],
+              decision: '',
+              summary: '准备生成确认卡',
+            },
+            {
+              id: 'run-48',
+              run_id: 48,
+              task_id: 'T4',
+              actor: '主会话',
+              at: 1_753_800_002_000,
+              cursor_from: 322,
+              cursor_to: 325,
+              phase_goal: '按问题性质分组并逐批修复 PIN Issue',
+              tail: { kind: 'output', text: '24 张纯 PIN Issue 已拆为 5 大批' },
+              happened_add: ['24 张纯 PIN Issue 已拆为 5 大批'],
+              decision: '',
+              summary: '24 张纯 PIN Issue 已拆为 5 大批',
+            },
+            {
+              id: 'run-49',
+              run_id: 49,
+              task_id: 'T4',
+              actor: '主会话',
+              at: 1_753_800_003_000,
+              cursor_from: 325,
+              cursor_to: 327,
+              phase_goal: '从 Batch 1 修复并验证 APEXP-4591',
+              tail: { kind: 'now', text: '正在检索同类 E2E 门禁先例' },
+              happened_add: ['首批修复顺序已拍板'],
+              decision: '',
+              summary: '正在检索同类 E2E 门禁先例',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const onLoadOlder = vi.fn();
+      const { rerender } = render(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-long-progress',
+            records: tailOnlyRecords,
+            hasOlder: true,
+            loadingOlder: false,
+            onLoadOlder,
+            observer: longObserver,
+          })}
+        />
+      );
+
+      // 切换到 Progress 视图：由于 earliestWatcherSeq(320) < records[0].seq(325) 且 hasOlder=true，自动触发 onLoadOlder
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+      expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+      // 历史尚未补齐前，#48 显示「正在加载早期记录…」而非误导性的「暂无对话记录」
+      const toggle48Before = screen.getByTestId('watcher-talk-toggle-48') as HTMLButtonElement;
+      expect(toggle48Before.textContent).toContain('正在加载早期记录');
+      expect(toggle48Before.disabled).toBe(false);
+
+      // 若用户在补齐完成前点击展开 #48，展开区显示 loading 指示器而非空黑框
+      fireEvent.click(toggle48Before);
+      expect(screen.getByTestId('watcher-talk-loading-48')).toBeTruthy();
+
+      // 模拟历史记录补齐完成（hasOlder=false，earlyAndTailRecords 已加载）
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-long-progress',
+            records: earlyAndTailRecords,
+            hasOlder: false,
+            loadingOlder: false,
+            onLoadOlder,
+            observer: longObserver,
+          })}
+        />
+      );
+
+      // #48 自动更新为「1次thinking · 1条回复」，且已展开区域渲染出真实的早期对话内容
+      const toggle48After = screen.getByTestId('watcher-talk-toggle-48') as HTMLButtonElement;
+      expect(toggle48After.textContent).toContain('1次thinking · 1条回复');
+      expect(screen.queryByTestId('watcher-talk-loading-48')).toBeNull();
+      expect(screen.getByTestId('watcher-talk-body-48').textContent).toContain(
+        '24 张纯 PIN Issue 已拆为 5 大批'
+      );
+
+      // #47 在全量历史记录下确实无任何对话记录：按钮显示「暂无对话记录」且为 disabled，点击不会展开空框
+      const toggle47 = screen.getByTestId('watcher-talk-toggle-47') as HTMLButtonElement;
+      expect(toggle47.textContent).toContain('暂无对话记录');
+      expect(toggle47.disabled).toBe(true);
+      fireEvent.click(toggle47);
+      expect(screen.queryByTestId('watcher-talk-body-47')).toBeNull();
+    });
+
+    it('Progress 视图切换会话时等待 records 与 observer 均落定后再一次成型渲染，且后台 loadingOlder 不在顶部插条也不触发 scrollTop 补偿', () => {
+      const sessionARecords = [
+        record({ id: 'a-u1', seq: 0, kind: 'user.say', payload: { text: '会话A目标' } }),
+        record({ id: 'a-a1', seq: 1, kind: 'agent.say', payload: { text: '会话A回复' } }),
+      ];
+      const sessionAObserver: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '会话A目标',
+          tail: { kind: 'output', text: '会话A完成' },
+          decision: '',
+          happened: ['会话A完成'],
+          updated_at: 1_753_800_001_000,
+          model: 'gpt-6.4',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-a1',
+              run_id: 1,
+              task_id: 'T1',
+              actor: '主会话',
+              at: 1_753_800_001_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              phase_goal: '会话A阶段',
+              tail: { kind: 'output', text: '会话A完成' },
+              happened_add: ['会话A完成'],
+              decision: '',
+              summary: '会话A完成',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+      const sessionBRecords = [
+        record({ id: 'b-u2', seq: 2, kind: 'user.say', payload: { text: '会话B后续提问' } }),
+        record({ id: 'b-a2', seq: 3, kind: 'agent.say', payload: { text: '会话B后续回复' } }),
+      ];
+      const sessionBAllRecords = [
+        record({ id: 'b-u1', seq: 0, kind: 'user.say', payload: { text: '会话B首轮提问' } }),
+        record({ id: 'b-a1', seq: 1, kind: 'agent.say', payload: { text: '会话B首轮回复' } }),
+        ...sessionBRecords,
+      ];
+      const sessionBObserver: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '会话B总目标',
+          tail: { kind: 'output', text: '会话B阶段进展' },
+          decision: '',
+          happened: ['会话B阶段进展'],
+          updated_at: 1_753_800_002_000,
+          model: 'gpt-6.4',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-b1',
+              run_id: 1,
+              task_id: 'T1',
+              actor: '主会话',
+              at: 1_753_800_002_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              phase_goal: '会话B首轮',
+              tail: { kind: 'output', text: '会话B首轮完成' },
+              happened_add: ['会话B首轮完成'],
+              decision: '',
+              summary: '会话B首轮完成',
+            },
+            {
+              id: 'run-b2',
+              run_id: 2,
+              task_id: 'T1',
+              actor: '主会话',
+              at: 1_753_800_003_000,
+              cursor_from: 2,
+              cursor_to: 4,
+              phase_goal: '会话B次轮',
+              tail: { kind: 'output', text: '会话B次轮完成' },
+              happened_add: ['会话B次轮完成'],
+              decision: '',
+              summary: '会话B次轮完成',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const { rerender } = render(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-A',
+            records: sessionARecords,
+            observer: sessionAObserver,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+      expect(screen.getByTestId('watcher-anchor-card').textContent).toContain('会话A目标');
+
+      // 模拟用户曾滚动浏览，scrollTop 非 0
+      const scroller = screen.getByTestId('record-stream-scroll') as HTMLDivElement;
+      Object.defineProperty(scroller, 'scrollHeight', { value: 2400, configurable: true });
+      scroller.scrollTop = 320;
+
+      // 1. 切到会话 B：records 已先到达，但 observer 仍在 loading，绝不抢跑渲染回退版 watcher-unsummarized-tail 或空表
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-B',
+            records: sessionBRecords,
+            loading: false,
+            observer: { state: null, loading: true, error: null },
+          })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(0);
+      expect(screen.getByTestId('record-stream-loading')).toBeTruthy();
+      expect(screen.queryByTestId('stream-lens')).toBeNull();
+      expect(screen.queryByTestId('watcher-view')).toBeNull();
+      expect(screen.queryByTestId('watcher-unsummarized-tail')).toBeNull();
+
+      // 2. 换另一种时序：observer 先到达，但 records 仍在首取 loading，同样不抢跑渲染无镜头栏/无里程碑的半截 Progress
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-B',
+            records: [],
+            loading: true,
+            observer: sessionBObserver,
+          })}
+        />
+      );
+      expect(screen.getByTestId('record-stream-loading')).toBeTruthy();
+      expect(screen.queryByTestId('stream-lens')).toBeNull();
+      expect(screen.queryByTestId('watcher-view')).toBeNull();
+
+      // 3. records 与 observer 均落定（同时后台 loadingOlder=true 正在补齐早期记录）：
+      //    同帧一次性出现 stream-lens 与完整 watcher-view，且顶部绝不出现「正在加载更早记录」挤压行
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-B',
+            records: sessionBRecords,
+            loading: false,
+            loadingOlder: true,
+            hasOlder: true,
+            observer: sessionBObserver,
+          })}
+        />
+      );
+      expect(screen.queryByTestId('record-stream-loading')).toBeNull();
+      expect(screen.getByTestId('stream-lens')).toBeTruthy();
+      expect(screen.getByTestId('watcher-view')).toBeTruthy();
+      expect(screen.getByTestId('watcher-anchor-card').textContent).toContain('会话B总目标');
+      expect(screen.queryByText('正在加载更早记录…')).toBeNull();
+      expect(scroller.scrollTop).toBe(0);
+
+      // 4. 后台早期页前插合并后，Progress 视图 scrollTop 依然保持为 0（不触发正序流 prepend scrollTop 补偿）
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-B',
+            records: sessionBAllRecords,
+            loading: false,
+            loadingOlder: false,
+            hasOlder: false,
+            observer: sessionBObserver,
+          })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(0);
+      expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1条提问 · 1条回复');
     });
   });
 });
@@ -1763,12 +2073,16 @@ describe('SessionRail 左栏', () => {
   });
 
   it('搜索那一行只是入口：点它打开全站的搜会话浮窗，清单不跟着筛', () => {
-    useUIStore.getState().setSessionSearchOpen(false);
+    act(() => {
+      useUIStore.getState().setSessionSearchOpen(false);
+    });
     render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     expect(screen.queryByRole('textbox', { name: '搜会话' })).toBeNull();
     fireEvent.click(screen.getByTestId('session-search-trigger'));
     expect(useUIStore.getState().sessionSearchOpen).toBe(true);
-    useUIStore.getState().setSessionSearchOpen(false);
+    act(() => {
+      useUIStore.getState().setSessionSearchOpen(false);
+    });
   });
 
   it('左栏摆 Timeline 入口与「只看今天」口径，不再有时间范围档位', () => {

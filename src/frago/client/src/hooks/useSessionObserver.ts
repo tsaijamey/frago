@@ -139,6 +139,8 @@ export interface SessionObserverView {
 
 export function useSessionObserver(sessionId: string | null): SessionObserverView {
   const [state, setState] = useState<ObserverState | null>(null);
+  const [stateSessionId, setStateSessionId] = useState<string | null>(null);
+  const [settledFor, setSettledFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const current = useRef<string | null>(sessionId);
@@ -150,17 +152,22 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
       const fetched = await fetchObserverState(sid);
       if (current.current !== sid) return;
       setState((prev) => newer(prev, fetched));
+      setStateSessionId(sid);
       setError(null);
     } catch (e: unknown) {
       if (current.current === sid) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (current.current === sid) setSettledFor(sid);
     }
   }, []);
 
   useEffect(() => {
     // 换会话先清空：上一场的内容留在这里，人会以为说的是眼下这一场。
     setState(null);
+    setStateSessionId(null);
     setError(null);
     if (!sessionId) {
+      setSettledFor(null);
       setLoading(false);
       return;
     }
@@ -174,6 +181,8 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
       const data = msg.data as { session_id?: string; state?: ObserverState } | undefined;
       if (!data || data.session_id !== sessionId || !data.state) return;
       setState((prev) => newer(prev, data.state!));
+      setStateSessionId(sessionId);
+      setSettledFor(sessionId);
       setError(null);
     };
     const unsubscribe = client.on(MessageType.SESSION_OBSERVER_UPDATE, onUpdate);
@@ -197,5 +206,17 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
     };
   }, [sessionId, pull]);
 
-  return useMemo(() => ({ state, loading, error }), [state, loading, error]);
+  return useMemo(() => {
+    const alignedState = sessionId !== null && stateSessionId === sessionId ? state : null;
+    const alignedLoading = loading || (sessionId !== null && settledFor !== sessionId);
+    const alignedError =
+      sessionId !== null && (stateSessionId === sessionId || settledFor === sessionId)
+        ? error
+        : null;
+    return {
+      state: alignedState,
+      loading: alignedLoading,
+      error: alignedError,
+    };
+  }, [sessionId, state, stateSessionId, settledFor, loading, error]);
 }

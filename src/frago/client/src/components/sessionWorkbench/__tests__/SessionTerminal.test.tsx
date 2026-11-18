@@ -19,6 +19,7 @@ vi.mock('../../../api', () => ({
 
 import {
   buildTerminalSnippet,
+  lastActivityTs,
   resolveTerminalEmptyState,
   SessionTerminal,
 } from '../SessionTerminal';
@@ -297,5 +298,108 @@ describe('SessionTerminal 空状态与本体映射', () => {
     expect(mockGetSessionTerminal).toHaveBeenCalledTimes(3);
     const screenEl = document.querySelector('[data-terminal-screen]');
     expect(screenEl?.textContent).toContain('Resumed live session');
+  });
+
+  it('从 Progress 切换到 Terminal 首帧与请求在途期间展示加载态，不抢跑闪现无 tmux 诊断卡', async () => {
+    let resolveFetch!: (val: SessionTerminalSnapshot) => void;
+    mockGetSessionTerminal.mockReturnValue(
+      new Promise<SessionTerminalSnapshot>((r) => {
+        resolveFetch = r;
+      })
+    );
+    const onAliveChange = vi.fn();
+
+    render(
+      <SessionTerminal
+        sessionId="d3bfe101-011a-4a25-b3e9-7ab2b667947a"
+        open
+        session={makeSession({
+          session_id: 'd3bfe101-011a-4a25-b3e9-7ab2b667947a',
+          family: 'agy',
+          status: 'running',
+          in_tmux: true,
+        })}
+        sessionRunning
+        recordCounts={{ all: 803, talk: 149 }}
+        onAliveChange={onAliveChange}
+      />
+    );
+
+    // 挂载首帧与请求返回前：必须显示加载胶囊与加载指示，严禁闪现空状态诊断卡
+    expect(screen.getByTestId('terminal-loading-pill')).toBeTruthy();
+    expect(screen.getByTestId('terminal-initial-loading')).toBeTruthy();
+    expect(document.querySelector('[data-terminal-empty]')).toBeNull();
+    expect(screen.queryByTestId('terminal-empty-pill')).toBeNull();
+
+    // 接口返回未挂载快照后，同帧通知外层熄灭绿点并展示待命诊断卡
+    await act(async () => {
+      resolveFetch(makeSnapshot({ session_id: 'd3bfe101-011a-4a25-b3e9-7ab2b667947a', alive: false, hosting_mode: 'unmounted' }));
+      await Promise.resolve();
+    });
+
+    expect(onAliveChange).toHaveBeenCalledWith(false);
+    expect(document.querySelector('[data-terminal-empty]')?.getAttribute('data-empty-kind')).toBe(
+      'dormant'
+    );
+  });
+
+  it('活跃 tmux 窗格即使屏幕内容为空也渲染终端屏幕，不误入无 tmux 诊断卡片', async () => {
+    mockGetSessionTerminal.mockResolvedValue(
+      makeSnapshot({
+        alive: true,
+        source: 'tmux',
+        hosting_mode: 'tmux',
+        tmux_name: 'frago-agent-11111111-2222-4333-8444-555555555555',
+        content: '',
+      })
+    );
+
+    render(
+      <SessionTerminal
+        sessionId="11111111-2222-4333-8444-555555555555"
+        open
+        session={makeSession({ in_tmux: true, status: 'running' })}
+        sessionRunning
+        recordCounts={{ all: 10, talk: 4 }}
+      />
+    );
+
+    expect(await screen.findByText('tmux 运行中')).toBeTruthy();
+    expect(document.querySelector('[data-terminal-screen]')).toBeTruthy();
+    expect(document.querySelector('[data-terminal-empty]')).toBeNull();
+  });
+
+  it('hosting_mode=unmounted 且无前端在途回合时不假阳性报 headless_running，且 lastActivityTs 取最新活动时刻', () => {
+    const staleRunningSession = makeSession({
+      session_id: 'd3bfe101-011a-4a25-b3e9-7ab2b667947a',
+      family: 'agy',
+      status: 'running',
+      in_tmux: true,
+      last_reply_at: NOW - 14 * 60_000,
+      last_active_at: NOW - 4 * 60_000,
+    });
+
+    // 最近活跃时间应取较新的 last_active_at（4 分钟前）而非 last_reply_at（14 分钟前）
+    expect(lastActivityTs(staleRunningSession)).toBe(NOW - 4 * 60_000);
+
+    // 后端实测 unmounted 时，不应因陈旧 status='running' 或等待 worker 而假阳性报 headless_running
+    const spec = resolveTerminalEmptyState({
+      session: staleRunningSession,
+      snapshot: makeSnapshot({ alive: false, hosting_mode: 'unmounted' }),
+      sessionRunning: true,
+      awaitingTurn: false,
+      recordCounts: { all: 803, talk: 149 },
+    });
+    expect(spec.kind).toBe('dormant');
+
+    // 当用户刚在底部发送消息（awaitingTurn=true）且非陈旧 tmux 状态时，允许提示后台拉起/运行中
+    const wakingSpec = resolveTerminalEmptyState({
+      session: makeSession({ in_tmux: false, status: 'idle' }),
+      snapshot: makeSnapshot({ alive: false, hosting_mode: 'unmounted' }),
+      sessionRunning: true,
+      awaitingTurn: true,
+      recordCounts: { all: 12, talk: 5 },
+    });
+    expect(wakingSpec.kind).toBe('headless_running');
   });
 });

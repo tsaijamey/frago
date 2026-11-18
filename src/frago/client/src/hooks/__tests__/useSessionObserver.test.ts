@@ -121,4 +121,48 @@ describe('useSessionObserver 推送漏了也能自己跟上', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(result.current.state?.tail?.text).toBe('推送来的新内容');
   });
+
+  it('切换 sessionId 时首帧即同步清空旧会话 state 并进入 loading，绝不向新会话泄露上一场残影', async () => {
+    let resolveSecond: ((v: unknown) => void) | null = null;
+    globalThis.fetch = vi.fn((url: string) => {
+      if (String(url).includes('second-session')) {
+        return new Promise((resolve) => {
+          resolveSecond = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => base });
+    }) as unknown as typeof fetch;
+
+    const snapshots: Array<{ sid: string; anchor: string | null; loading: boolean }> = [];
+    const { rerender } = renderHook(
+      ({ sid }: { sid: string }) => {
+        const obs = useSessionObserver(sid);
+        snapshots.push({ sid, anchor: obs.state?.anchor ?? null, loading: obs.loading });
+        return obs;
+      },
+      { initialProps: { sid: SID } }
+    );
+
+    await waitFor(() =>
+      expect(snapshots.some((s) => s.sid === SID && s.anchor === '原锚' && !s.loading)).toBe(true)
+    );
+
+    rerender({ sid: 'second-session' });
+    const secondSnapshots = snapshots.filter((s) => s.sid === 'second-session');
+    // 切换后每一帧（包含刚换 sid 的第 0 帧）都不能出现旧会话的 '原锚'，且 loading 必须为 true
+    expect(secondSnapshots.length).toBeGreaterThan(0);
+    expect(secondSnapshots.every((s) => s.anchor === null && s.loading === true)).toBe(true);
+
+    await act(async () => {
+      resolveSecond?.({
+        ok: true,
+        json: async () => ({ ...base, anchor: '第二场新锚', updated_at: 20 }),
+      });
+    });
+
+    await waitFor(() => {
+      const last = snapshots[snapshots.length - 1];
+      expect(last).toEqual({ sid: 'second-session', anchor: '第二场新锚', loading: false });
+    });
+  });
 });

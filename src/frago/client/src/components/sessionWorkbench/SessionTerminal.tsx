@@ -20,7 +20,6 @@ import {
   type SessionTerminalSnapshot,
 } from '../../api';
 import {
-  activityTs,
   useWorkbenchLabels,
   type WorkbenchSession,
 } from '@/hooks/useWorkbenchSessions';
@@ -36,6 +35,8 @@ export interface SessionTerminalProps {
   session?: WorkbenchSession | null;
   /** 会话是否正在执行（包含服务端 running、awaitingAgent、inFlight） */
   sessionRunning?: boolean;
+  /** 前端当前是否有刚发出等待响应的在途回合（awaitingAgent || inFlight） */
+  awaitingTurn?: boolean;
   /** 最近一条用量与模型读数 */
   usage?: ComposerUsage | null;
   /** 记录流统计（来自 RecordStream counts） */
@@ -81,16 +82,28 @@ export interface TerminalEmptyStateSpec {
   errorSummary: string | null;
 }
 
+/**
+ * 会话最近一次真实活动时间戳（取 last_active_at 与 last_reply_at 的较大值）。
+ * 区别于左栏排序用的 activityTs（优先取 last_reply_at），终端诊断卡展示「最近活跃」
+ * 必须反映最新的思考、工具调用或回调注入时刻，避免出现「正在执行但最近活跃是 14 分钟前」的矛盾。
+ */
+export function lastActivityTs(session: WorkbenchSession | null | undefined): number {
+  if (!session) return 0;
+  return Math.max(session.last_active_at ?? 0, session.last_reply_at ?? 0);
+}
+
 export function resolveTerminalEmptyState({
   session,
   snapshot,
   sessionRunning = false,
+  awaitingTurn = false,
   usage = null,
   recordCounts = { all: 0, talk: 0 },
 }: {
   session: WorkbenchSession | null;
   snapshot: SessionTerminalSnapshot | null;
   sessionRunning?: boolean;
+  awaitingTurn?: boolean;
   usage?: ComposerUsage | null;
   recordCounts?: { all: number; talk: number };
 }): TerminalEmptyStateSpec {
@@ -104,10 +117,27 @@ export function resolveTerminalEmptyState({
         : 'not_resumable'
       : null;
 
+  // 当后端已明确返回 hosting_mode === 'unmounted'（即既无 tmux 窗格也无 coreagent 常驻进程）时：
+  // - 若 session.in_tmux 仍为 true，说明 session 快照是 tmux 关闭前的陈旧状态；
+  // - 若 session.has_running_worker 或 callback_queued 为 true，说明主会话只是挂起等待后台子任务/回调；
+  // - 若前端并无刚发出的在途消息（!awaitingTurn），而仅靠陈旧的 session.status === 'running'，
+  //   则不应谎报「正在后台无头进程中持续产出（Generating output in background）」。
+  const isWaitingOnWorker = Boolean(
+    session?.has_running_worker === true || session?.callback_queued === true
+  );
+  const isStaleTmuxState = Boolean(session?.in_tmux === true && snapshot && !snapshot.alive);
+  const isUnmountedWithoutLiveTurn =
+    snapshot?.hosting_mode === 'unmounted' && !awaitingTurn;
+
   // 1. 场景 B：后台无头执行中（进程在跑，但未挂载交互式 tmux 窗格）
   if (
     snapshot?.hosting_mode === 'headless_subprocess' ||
-    (session && (sessionRunning || session.status === 'running') && !snapshot?.alive)
+    (session &&
+      !snapshot?.alive &&
+      !isWaitingOnWorker &&
+      !isStaleTmuxState &&
+      !isUnmountedWithoutLiveTurn &&
+      (awaitingTurn || sessionRunning || session.status === 'running'))
   ) {
     return {
       kind: 'headless_running',
@@ -344,6 +374,7 @@ export function SessionTerminal({
   open,
   session = null,
   sessionRunning = false,
+  awaitingTurn = false,
   usage = null,
   recordCounts = { all: 0, talk: 0 },
   hasOlderRecords = false,
@@ -355,7 +386,7 @@ export function SessionTerminal({
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const [snapshot, setSnapshot] = useState<SessionTerminalSnapshot | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(open && sessionId));
   const [error, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copiedKey, setCopiedKey] = useState<'attach' | 'cmd' | 'cwd' | 'sid' | null>(null);
@@ -407,7 +438,10 @@ export function SessionTerminal({
     setSnapshot(null);
     setError(null);
     if (open && sessionId) {
+      setLoading(true);
       void fetchSnapshot(false);
+    } else {
+      setLoading(false);
     }
   }, [sessionId, open, fetchSnapshot]);
 
@@ -455,16 +489,19 @@ export function SessionTerminal({
   );
 
   const hasContent = Boolean(snapshot?.content && snapshot.content.trim().length > 0);
+  const isInitialLoading = Boolean(open && sessionId && !snapshot && !error);
+  const showTerminalScreen = !error && Boolean(snapshot && (snapshot.alive || hasContent));
   const emptySpec = useMemo(
     () =>
       resolveTerminalEmptyState({
         session,
         snapshot,
         sessionRunning,
+        awaitingTurn,
         usage,
         recordCounts,
       }),
-    [session, snapshot, sessionRunning, usage, recordCounts]
+    [session, snapshot, sessionRunning, awaitingTurn, usage, recordCounts]
   );
   const snippet = useMemo(
     () => buildTerminalSnippet(session, emptySpec.hasResumableHistory),
@@ -472,7 +509,7 @@ export function SessionTerminal({
   );
 
   const familyMeta = session ? FAMILY_ICON[session.family] : null;
-  const activeTs = session ? activityTs(session) : 0;
+  const activeTs = lastActivityTs(session);
   const modelDisplay =
     usage?.model && usage.model !== '<synthetic>'
       ? usage.model
@@ -498,7 +535,15 @@ export function SessionTerminal({
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border-color bg-bg-secondary px-4 py-2 text-[12px]">
         <div className="flex min-w-0 items-center gap-2">
           <Terminal size={14} strokeWidth={1.5} className="shrink-0 text-text-muted" />
-          {snapshot?.alive ? (
+          {isInitialLoading ? (
+            <span
+              data-testid="terminal-loading-pill"
+              className="inline-flex h-[22px] items-center gap-1.5 rounded-full border border-border-color bg-bg-tertiary px-2 text-[11px] font-medium text-text-muted"
+            >
+              <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />
+              {t('workbench.terminal.loading')}
+            </span>
+          ) : snapshot?.alive ? (
             <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full border border-accent-primary-border bg-accent-primary-10 px-2 text-[11px] font-medium text-accent-primary">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-primary animate-pulse" />
               {t('workbench.terminal.liveBadge')}
@@ -605,8 +650,8 @@ export function SessionTerminal({
         </div>
       </div>
 
-      {/* 终端屏幕主体：有真实 ANSI 内容走深色终端屏；其余走双主题工作台地层级画布 */}
-      {!loading && !error && hasContent ? (
+      {/* 终端屏幕主体：活跃 tmux 窗格或有真实 ANSI 内容走深色终端屏；其余走双主题工作台地层级画布 */}
+      {showTerminalScreen ? (
         <div className="relative flex min-h-0 flex-1 flex-col bg-[#0d1117]">
           <pre
             ref={viewportRef}
@@ -629,8 +674,11 @@ export function SessionTerminal({
         </div>
       ) : (
         <div className="wb-term-empty-canvas relative flex min-h-0 flex-1 flex-col overflow-y-auto p-6 phone:p-4">
-          {loading && !snapshot ? (
-            <div className="m-auto flex items-center justify-center gap-2 text-[13px] text-text-muted">
+          {isInitialLoading ? (
+            <div
+              data-testid="terminal-initial-loading"
+              className="m-auto flex items-center justify-center gap-2 text-[13px] text-text-muted"
+            >
               <Loader2 size={16} strokeWidth={1.5} className="animate-spin" />
               <span>{t('workbench.terminal.loading')}</span>
             </div>
