@@ -194,6 +194,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                     onClick={() => handleEditClick(profile)}
                     className="btn btn-ghost btn-sm p-1.5"
                     title={t('settings.profiles.edit')}
+                    aria-label={`Edit ${profile.name}`}
                   >
                     <Pencil size={14} />
                   </button>
@@ -203,6 +204,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                     disabled={deletingId === profile.id}
                     className="btn btn-ghost btn-sm p-1.5 text-[var(--accent-error)] disabled:opacity-50"
                     title={t('settings.profiles.delete')}
+                    aria-label={`Delete ${profile.name}`}
                   >
                     <Trash2 size={14} />
                   </button>

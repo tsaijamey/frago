@@ -58,12 +58,6 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     setFormResponsesModel,
     showFormApiKey,
     setShowFormApiKey,
-    formSubmitting,
-    initialMode,
-    onClose,
-    setViewMode,
-    resetForm,
-    handleFormSubmit,
   } = pm;
 
   // A preset already knows its URL and its models. Showing them as the field's
@@ -473,36 +467,6 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
           </div>
         </div>
       )}
-
-      {/* Form actions */}
-      <div className="flex gap-2 pt-2">
-        <button
-          type="button"
-          onClick={handleFormSubmit}
-          disabled={formSubmitting || !formName.trim() || isWorkbuddy}
-          className="btn btn-primary btn-sm disabled:opacity-50"
-        >
-          {formSubmitting
-            ? viewMode === 'add'
-              ? t('settings.profiles.creating')
-              : t('settings.profiles.updating')
-            : t('settings.profiles.save')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            resetForm();
-            if (initialMode && initialMode !== 'list') {
-              onClose();
-            } else {
-              setViewMode('list');
-            }
-          }}
-          className="btn btn-ghost btn-sm"
-        >
-          {t('settings.profiles.cancel')}
-        </button>
-      </div>
     </div>
   );
 }

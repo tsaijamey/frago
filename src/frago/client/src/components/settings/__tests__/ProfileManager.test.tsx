@@ -411,5 +411,23 @@ describe('Antigravity CLI (agy) 三档上下文窗口切换', () => {
       agy_context_window: null,
     });
   });
+
+  it('编辑弹窗采用 max-h-[85vh] flex-col 结构，Body 独立滚动且底部保存/取消按钮栏固定在 Footer', async () => {
+    open();
+    await openEditForm();
+
+    const container = screen.getByTestId('profile-modal-container');
+    const body = screen.getByTestId('profile-modal-body');
+    const footer = screen.getByTestId('profile-modal-footer');
+
+    expect(container.className).toContain('max-h-[85vh]');
+    expect(container.className).toContain('flex-col');
+    expect(body.className).toContain('flex-1');
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.className).toContain('min-h-0');
+    expect(footer.className).toContain('shrink-0');
+    expect(footer.textContent).toContain('settings.profiles.save');
+    expect(footer.textContent).toContain('settings.profiles.cancel');
+  });
 });
 

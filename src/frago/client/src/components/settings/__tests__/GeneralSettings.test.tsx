@@ -235,7 +235,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     // 验证桌面语音识别（asr）行支持自动匹配展示、切换绑定与报错提示
     const asrSelect = screen.getByLabelText('桌面语音识别服务商') as HTMLSelectElement;
     expect(asrSelect.value).toBe('');
-    expect(screen.getByText('转写：OpenRouter (anthropic/claude-sonnet-4.5)')).toBeTruthy();
+    expect(screen.getByText('OpenRouter · anthropic/claude-sonnet-4.5')).toBeTruthy();
 
     fireEvent.change(asrSelect, { target: { value: 'deepseek' } });
     await waitFor(() => expect(bindRole).toHaveBeenCalledWith('asr', 'deepseek'));
@@ -251,14 +251,20 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     fireEvent.click(screen.getByTestId('decision-model-toggle-btn'));
     expect(screen.getByTestId('decision-model-wire-select')).toBeTruthy();
 
-    // 切到「AI 服务商」
+    // 切到「AI 服务商」：首层最多 2 个芯片 + +2 展开按钮，自动回退带 (自动) 后缀
     fireEvent.click(screen.getByTestId('general-tab-profiles'));
     expect(await screen.findByTestId('zone-profiles')).toBeTruthy();
     expect(screen.getByTestId('profile-row-deepseek')).toBeTruthy();
     expect(screen.getByText('CoreAgent 日常')).toBeTruthy();
     expect(screen.getByText('Claude Code 日常')).toBeTruthy();
+    expect(screen.queryByText('Codex CLI Worker')).toBeNull();
+    const deepseekRefsToggle = screen.getByTestId('profile-refs-toggle-deepseek');
+    expect(deepseekRefsToggle.textContent).toBe('+2');
+    fireEvent.click(deepseekRefsToggle);
+    expect(deepseekRefsToggle.textContent).toBe('−');
     expect(screen.getByText('Codex CLI Worker')).toBeTruthy();
-    expect(screen.getByText('桌面语音识别')).toBeTruthy();
+    expect(screen.getByText('轻量 AI')).toBeTruthy();
+    expect(screen.getByText('桌面语音识别 (自动)')).toBeTruthy();
     expect(screen.queryByText('内核代理')).toBeNull();
   });
 
@@ -270,8 +276,8 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     expect(screen.getByText('Harness Tools')).toBeTruthy();
     expect(screen.getByText('Sidecar & Light AI')).toBeTruthy();
     expect(screen.getByText('AI Providers')).toBeTruthy();
-    expect(screen.getByText('Built-in Core · Anthropic')).toBeTruthy();
-    expect(screen.getByText('Gemini / Vendor CLI')).toBeTruthy();
+    expect(screen.getByText('Anthropic (Core)')).toBeTruthy();
+    expect(screen.getByText('Gemini')).toBeTruthy();
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
 
     // 切换到 Sidecar & Light AI 并展开决策模型配置
@@ -287,8 +293,9 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     await screen.findByTestId('zone-profiles');
     expect(screen.getByText('CoreAgent Daily')).toBeTruthy();
     expect(screen.getByText('Claude Code Daily')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('profile-refs-toggle-deepseek'));
     expect(screen.getByText('Codex CLI Worker')).toBeTruthy();
-    expect(screen.getByText('Desktop ASR')).toBeTruthy();
+    expect(screen.getByText('Desktop ASR (auto)')).toBeTruthy();
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
 
     // 校验 en.json 与 zh.json 中 settings.general 递归键路径完全对称
@@ -444,5 +451,107 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     fireEvent.click(screen.getByTestId('general-tab-profiles'));
     expect(await screen.findByTestId('profile-fix-nokey_ep')).toBeTruthy();
     expect(screen.getByTestId('profile-fix-wb_old')).toBeTruthy();
+  });
+
+  it('Sidecar 动态角色数、Why 原理微卡展开、env_off 徽标、无重复标签与 Decision Model 完整表单闭环', async () => {
+    await i18n.changeLanguage('en');
+    getHookReviewStatus.mockResolvedValue({
+      enabled: false,
+      env_off: true,
+      static_rules: { available: true, count: 12 },
+      lightagent: { status: 'enabled', profile_name: 'DeepSeek', model: 'deepseek-flash', detail: null },
+    });
+    updateDecisionModelSettings.mockResolvedValue({
+      configured: true,
+      enabled: false,
+      wire: 'decisions',
+      url: 'https://api.deepseek.com/v1/decisions',
+      model: 'deepseek-chat',
+      has_api_key: true,
+      api_key_masked: 'sk-****',
+      temperature: 0.7,
+    });
+
+    render(<GeneralSettings />);
+    await screen.findByTestId('zone-harnesses');
+
+    // Tab 徽标动态读取 SIDECAR_ROLE_IDS.length (= 4)
+    const sidecarTab = screen.getByTestId('general-tab-sidecar');
+    expect(sidecarTab.textContent).toContain('4');
+
+    fireEvent.click(sidecarTab);
+    const zone = await screen.findByTestId('zone-sidecar-ai');
+
+    // 无原始 <code> 标签且无重复 "Decision Model · Decision Model"
+    expect(zone.querySelectorAll('code').length).toBe(0);
+    expect(zone.textContent).not.toContain('Decision Model · Decision Model');
+
+    // env_off 时展示警告徽标，且行内徽标不超过 1 个
+    expect(screen.getByText('ENV OFF')).toBeTruthy();
+    expect(screen.getByTestId('sidecar-lightagent').querySelectorAll('.s-kind, .s-pill').length).toBe(1);
+
+    // 点击 Why 按钮展开/收起原理说明
+    expect(screen.queryByTestId('sidecar-why-box-lightagent')).toBeNull();
+    fireEvent.click(screen.getByTestId('sidecar-why-btn-lightagent'));
+    expect(screen.getByTestId('sidecar-why-box-lightagent')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('sidecar-why-btn-lightagent'));
+    expect(screen.queryByTestId('sidecar-why-box-lightagent')).toBeNull();
+
+    // 行内快捷开关直接切换 Decision Model enabled 状态
+    fireEvent.click(screen.getByTestId('decision-model-quick-toggle'));
+    await waitFor(() =>
+      expect(updateDecisionModelSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false }),
+      ),
+    );
+
+    // 展开表单提交 temperature 与 clear_api_key
+    fireEvent.click(screen.getByTestId('decision-model-toggle-btn'));
+    fireEvent.change(screen.getByTestId('decision-model-temperature-input'), {
+      target: { value: '0.7' },
+    });
+    fireEvent.click(screen.getByTestId('decision-model-clear-key-btn'));
+    fireEvent.click(screen.getByTestId('decision-model-save-btn'));
+    await waitFor(() =>
+      expect(updateDecisionModelSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ temperature: 0.7, clear_api_key: true }),
+      ),
+    );
+  });
+
+  it('仅 Worker 为自定义绑定时仍展示全部重置按钮，删除被引用的服务商时弹窗列出受影响绑定', async () => {
+    await i18n.changeLanguage('en');
+    getConnections.mockResolvedValue({
+      connections: SAMPLE_PROFILES,
+      bindings: [
+        { role: 'lightagent', profile_id: 'deepseek', connection: SAMPLE_PROFILES[0], targets: [] },
+        { role: 'observer', profile_id: null, connection: null, targets: [] },
+        { role: 'asr', profile_id: null, connection: null, targets: [] },
+      ],
+      vendor_cores: [],
+      harnesses: SAMPLE_HARNESSES.map((h) => ({
+        ...h,
+        main_profile_id: 'official',
+        worker_profile_id: h.agent_type === 'codex' ? 'deepseek' : 'follow',
+      })),
+    });
+
+    render(<GeneralSettings />);
+    await screen.findByTestId('zone-harnesses');
+
+    // 仅 codex worker_profile_id !== 'follow'，应展示重置按钮并调用 bindHarness('codex', 'worker', 'follow')
+    const revertBtn = screen.getByTestId('revert-all-harnesses-btn');
+    fireEvent.click(revertBtn);
+    await waitFor(() => expect(bindHarness).toHaveBeenCalledWith('codex', 'worker', 'follow'));
+
+    // 切到 AI Providers，验证行操作按钮具备明确的 aria-label，且点击删除被引用的 DeepSeek 时弹窗展示受影响绑定列表
+    fireEvent.click(screen.getByTestId('general-tab-profiles'));
+    await screen.findByTestId('zone-profiles');
+    expect(screen.getByLabelText('Edit DeepSeek')).toBeTruthy();
+    expect(screen.getByLabelText('Delete DeepSeek')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('delete-profile-deepseek'));
+    const warn = await screen.findByTestId('delete-profile-affected-warn');
+    expect(warn.textContent).toContain('Codex CLI Worker');
+    expect(warn.textContent).toContain('Light AI');
   });
 });

@@ -662,7 +662,7 @@
 }
 
 .ssec {
-  padding: 12px 14px;
+  padding: 16px 20px;
 }
 
 .ssec + .ssec {
@@ -673,8 +673,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 /* 卡头左边那坨（标题 + 说明）可以缩，右边那颗动作按钮不缩——不然长说明一挤，
@@ -761,6 +761,15 @@
 .sselect {
   max-width: 100%;
   flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 22px;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.sselect:hover:not(:disabled) {
+  border-color: var(--border-strong);
 }
 
 .sselect:focus,
@@ -820,14 +829,14 @@
   text-transform: uppercase;
   color: var(--text-secondary);
   text-align: left;
-  padding: 8px 10px;
+  padding: 9px 10px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
 .stbl td {
-  padding: 10px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
   color: var(--text-secondary);
 }
@@ -856,6 +865,9 @@
   color: var(--text-muted);
   margin-top: 3px;
   line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 模型那一列：模型名走等宽（沿用 `.stbl td.mono` 的 12px），底下的上下文窗口与
@@ -865,6 +877,9 @@
   color: var(--text-muted);
   margin-top: 3px;
   line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stbl td.acts {
@@ -1215,57 +1230,70 @@
    原先这里自己写了一套 `.g-seg`：同样的胶囊形状，计数却是另一种字号另一种底色，
    和配方页、事务页那几处对不上。现在只有一套，计数内嵌在胶囊里。 */
 
-.proto-tag {
-  display: inline-flex;
+.proto-text-list {
+  display: flex;
   align-items: center;
-  gap: 3px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 4px;
-  font: 500 11px var(--font-mono);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-color);
+  gap: 5px;
+  flex-wrap: wrap;
+  font: 11.5px var(--font-mono);
   color: var(--text-secondary);
-  white-space: nowrap;
 }
 
 .ref-chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  height: 18px;
+  height: 19px;
   padding: 0 6px;
-  border-radius: 999px;
-  background: var(--sel-bg);
-  border: 1px solid var(--sel-border);
-  color: var(--text-primary);
-  font-size: 11px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 10.5px;
   font-weight: 500;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ref-chip.idle {
-  background: var(--bg-hover);
-  border-color: transparent;
+.ref-chip--auto {
+  border-style: dashed;
   color: var(--text-muted);
   font-weight: 400;
+}
+
+.ref-chip--more {
+  cursor: pointer;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border-color);
+}
+
+.ref-chip--more:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.ref-unused-text {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .htbl {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
 }
 
-/* 表头说明与单元格说明原先都是 11px，五列表格上下叠着五行，读起来是一片灰雾。
-   表头抬到 11.5 并加字距，单元格说明抬到 12 并给足行高——两档都还在弱色里，但
-   能一眼读下去。 */
 .htbl th {
   text-align: left;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-secondary);
-  padding: 8px 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
@@ -1276,12 +1304,12 @@
   font-size: 11.5px;
   color: var(--text-muted);
   margin-top: 2px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .htbl td {
-  padding: 10px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
   vertical-align: top;
 }
 
@@ -1295,18 +1323,26 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.htbl .h-nm > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .htbl .h-meta {
   font: 11.5px var(--font-mono);
   color: var(--text-muted);
-  margin-top: 3px;
+  margin-top: 4px;
   line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 下拉框占满它那一列。Harness 矩阵每列 35.5%，此前被 `.sselect` 的 230px 上限压住，
-   「OpenRouter DeepSeek · deepse…」在右边被腰斩，左边还留着空白。 */
 .htbl .sselect {
   width: 100%;
   max-width: none;
@@ -1315,44 +1351,174 @@
 }
 
 .htbl .cell-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.45;
-}
-
-.sc-compact .srow {
-  padding: 10px 0;
-  align-items: flex-start;
-}
-
-.sc-compact .srow:first-child {
-  padding-top: 2px;
-}
-
-.sc-compact .srow:last-child {
-  padding-bottom: 2px;
-}
-
-.sc-compact .t {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.htbl .cell-sub-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htbl .cell-sub-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.sidecar-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidecar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 392px;
+  align-items: center;
+  gap: 20px;
+  padding: 15px 0;
+}
+
+.sidecar-row:first-child {
+  padding-top: 4px;
+}
+
+.sidecar-row:last-child {
+  padding-bottom: 4px;
+}
+
+.sidecar-row + .sidecar-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sidecar-row--expandable {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.sidecar-row--expandable .sidecar-form-slot {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+}
+
+.sidecar-info {
+  min-width: 0;
+}
+
+.sidecar-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   flex-wrap: wrap;
   font-size: 13px;
   font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
 }
 
-.sc-compact .d {
+.sidecar-desc-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
-  margin-top: 3px;
+  min-width: 0;
 }
 
-.sc-compact .d b {
+.sidecar-desc-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidecar-why-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: help;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sidecar-why-btn:hover,
+.sidecar-why-btn:focus-visible {
   color: var(--text-primary);
-  font-weight: 500;
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.sidecar-why-box {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.sidecar-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidecar-ctl .sselect {
+  width: 276px;
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.sidecar-switch-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  .sidecar-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .sidecar-ctl {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sidecar-ctl .sselect {
+    width: min(100%, 280px);
+  }
 }
 
 .ptile-strip {
@@ -1423,7 +1589,7 @@
   margin-top: 12px;
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent-error) 5%, var(--surface-elevated));
-  padding: 11px 14px;
+  padding: 12px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1463,11 +1629,9 @@
   flex-shrink: 0;
 }
 
-/* 危险区那个下拉框装的是「工具名 · 原生配置文件的绝对路径」，是最长的一项。
-   它需要的是宽度，不是被截断——上限交给内容。 */
 .dzone-bar-r .sselect {
-  min-width: 300px;
-  max-width: min(460px, 46vw);
+  min-width: 220px;
+  max-width: 280px;
 }
 
 @media (max-width: 640px) {

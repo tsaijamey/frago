@@ -49,7 +49,10 @@ export default function ProfileManager({
     <div
       className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1100]"
     >
-      <div className="bg-[var(--bg-base)] rounded-lg shadow-xl max-w-lg w-full mx-4 border border-[var(--border-color)] max-h-[80vh] flex flex-col">
+      <div
+        className="bg-[var(--bg-base)] rounded-lg shadow-xl max-w-lg w-full mx-4 border border-[var(--border-color)] max-h-[85vh] flex flex-col"
+        data-testid="profile-modal-container"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)] shrink-0">
           <h3 className="text-lg font-semibold text-[var(--text-primary)]">
@@ -70,7 +73,10 @@ export default function ProfileManager({
         </div>
 
         {/* Body */}
-        <div className="p-4 overflow-y-auto">
+        <div
+          className="p-4 flex-1 overflow-y-auto min-h-0"
+          data-testid="profile-modal-body"
+        >
           {loading ? (
             <div className="text-[var(--text-muted)] text-center py-8 text-sm">
               Loading...
@@ -83,8 +89,11 @@ export default function ProfileManager({
         </div>
 
         {/* Footer */}
-        {viewMode === 'list' && (
-          <div className="flex justify-end p-4 border-t border-[var(--border-color)] shrink-0">
+        {viewMode === 'list' ? (
+          <div
+            className="flex justify-end p-4 border-t border-[var(--border-color)] shrink-0"
+            data-testid="profile-modal-footer"
+          >
             <button
               type="button"
               onClick={onClose}
@@ -93,6 +102,40 @@ export default function ProfileManager({
               {t('settings.profiles.close')}
             </button>
           </div>
+        ) : (
+          !loading && (
+            <div
+              className="flex items-center justify-end gap-2 p-4 border-t border-[var(--border-color)] shrink-0"
+              data-testid="profile-modal-footer"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  pm.resetForm();
+                  if (pm.initialMode && pm.initialMode !== 'list') {
+                    onClose();
+                  } else {
+                    pm.setViewMode('list');
+                  }
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                {t('settings.profiles.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={pm.handleFormSubmit}
+                disabled={pm.formSubmitting || !pm.formName.trim() || pm.formKind === 'workbuddy'}
+                className="btn btn-primary btn-sm disabled:opacity-50"
+              >
+                {pm.formSubmitting
+                  ? viewMode === 'add'
+                    ? t('settings.profiles.creating')
+                    : t('settings.profiles.updating')
+                  : t('settings.profiles.save')}
+              </button>
+            </div>
+          )
         )}
       </div>
     </div>,
