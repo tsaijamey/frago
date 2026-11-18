@@ -6,6 +6,7 @@ import MermaidDiagram, {
   MIN_EXPORT_SCALE,
   MIN_EXPORT_WIDTH,
   computeExportDimensions,
+  computeViewerStageDimensions,
   naturalSize,
 } from '../MermaidDiagram';
 
@@ -145,5 +146,57 @@ describe('MermaidDiagram 导出尺寸与复制/下载按钮', () => {
 
     fireEvent.click(toggleBtn);
     expect(screen.getByTestId('mermaid-diagram')).toBeTruthy();
+  });
+
+  it('点击放大打开 90vw × 90vh 全画布弹窗，内部图表自适应缩放并支持缩放控制与关闭', async () => {
+    // 1. 验证自适应尺寸计算：小宽图放大撑满画布、窄高图受高度约束不溢出、手动缩放因子生效
+    const smallWide = computeViewerStageDimensions(400, 160, 1000, 600, 1);
+    expect(smallWide.fitScale).toBe(2.5);
+    expect(smallWide.width).toBe(1000);
+    expect(smallWide.height).toBe(400);
+
+    const tallNarrow = computeViewerStageDimensions(240, 400, 1000, 600, 1);
+    expect(tallNarrow.fitScale).toBe(1.5);
+    expect(tallNarrow.width).toBe(360);
+    expect(tallNarrow.height).toBe(600);
+
+    const zoomedIn = computeViewerStageDimensions(600, 240, 1200, 600, 1.25);
+    expect(zoomedIn.fitScale).toBe(2);
+    expect(zoomedIn.effectiveScale).toBe(2.5);
+    expect(zoomedIn.width).toBe(1500);
+    expect(zoomedIn.height).toBe(600);
+
+    // 2. 验证 DOM 弹窗容器 90vw × 90vh 尺寸契约与缩放交互
+    render(<MermaidDiagram source="flowchart LR\n  A-->B" />);
+    const zoomBtn = await screen.findByTestId('mermaid-zoom');
+    fireEvent.click(zoomBtn);
+
+    const viewer = await screen.findByTestId('mermaid-viewer');
+    expect(viewer.className).toContain('mmd-viewer-backdrop');
+
+    const frame = screen.getByTestId('mermaid-viewer-frame');
+    expect(frame.className).toContain('mmd-viewer-frame');
+    expect(frame.style.width).toBe('90vw');
+    expect(frame.style.height).toBe('90vh');
+    expect(frame.style.maxWidth).toBe('90vw');
+    expect(frame.style.maxHeight).toBe('90vh');
+    expect(frame.style.boxSizing).toBe('border-box');
+
+    const stage = screen.getByTestId('mermaid-viewer-stage');
+    const initialWidth = parseInt(stage.style.width, 10);
+    expect(initialWidth).toBeGreaterThan(600);
+
+    const zoomInBtn = screen.getByTestId('mermaid-viewer-zoom-in');
+    fireEvent.click(zoomInBtn);
+    const zoomedWidth = parseInt(stage.style.width, 10);
+    expect(zoomedWidth).toBeGreaterThan(initialWidth);
+
+    const resetBtn = screen.getByTestId('mermaid-viewer-zoom-reset');
+    fireEvent.click(resetBtn);
+    expect(parseInt(stage.style.width, 10)).toBe(initialWidth);
+
+    const closeBtn = screen.getByTestId('mermaid-viewer-close');
+    fireEvent.click(closeBtn);
+    expect(screen.queryByTestId('mermaid-viewer')).toBeNull();
   });
 });
