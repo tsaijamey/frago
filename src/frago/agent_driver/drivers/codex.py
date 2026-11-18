@@ -138,9 +138,65 @@ class _CodexReady:
 
 _READY = _CodexReady()
 
-# 忙碌：codex 干活时在页脚给中断提示。判完成走 rollout 权威探针，这里只服务于
-# 探针不可用时的读屏退路。
-_BUSY = re.compile(r"(?i)esc\s+to\s+interrupt|Esc\s+again\s+to\s+interrupt")
+# 忙碌：codex 干活时在页脚给中断提示。判完成走 rollout 权威探针，这里服务于
+# 探针不可用时的读屏退路以及驱动级 busy_probe / awaiting_input_probe。
+_BUSY = re.compile(r"(?i)esc\s+to\s+(?:interrupt|cancel)|Esc\s+again\s+to\s+interrupt")
+_SPINNER_RE = re.compile(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…")
+_ANSI_RE = re.compile(
+    r"\x1b\[([0-9;:?]*)([A-Za-z])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]"
+)
+_PROMPT_LINE_RE = re.compile(r"(?m)^\s*›(?:\s+Ask\s+Codex\s+to\s+do\s+anything\s*|\s*)$")
+
+
+def strip_ansi(ansi: str) -> str:
+    """剥离带颜色屏面的 ANSI 转义序列，还原纯文本。"""
+    return _ANSI_RE.sub("", ansi or "")
+
+
+def _codex_control_tail(plain: str) -> str:
+    """截取 Codex 窗格底部活跃控制区（最后 10 行非空行），规避历史输出残留字样误判。"""
+    lines = [ln for ln in (plain or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    return "\n".join(lines[-10:])
+
+
+def is_terminal_busy(pane: str) -> bool:
+    """Codex 专属终端忙碌探针契约：仅检查底部活跃控制区是否含中断提示或工作转轮。"""
+    if not pane:
+        return False
+    plain = strip_ansi(pane)
+    tail = _codex_control_tail(plain)
+    if not tail:
+        return False
+    if _BUSY.search(tail) is not None:
+        return True
+    return _SPINNER_RE.search(tail) is not None
+
+
+def awaiting_input(pane_ansi: str) -> bool:
+    """这场 Codex CLI 会话是否停在待输入态、等人说下一句。
+
+    判据：
+    1. 底部控制区无忙碌标记（``esc to interrupt`` / 转轮）；
+    2. 屏面无单写者锁等致命启动错误（``_FATAL_STARTUP``）与认证墙（``_NEEDS_INPUT``）；
+    3. 非启动命令回显，且命中就绪结构信号（横幅 / 状态页脚 / 空闲提示符 ``›``）。
+    """
+    if not pane_ansi:
+        return False
+    plain = strip_ansi(pane_ansi)
+    if not plain.strip():
+        return False
+    if is_terminal_busy(plain):
+        return False
+    if _FATAL_STARTUP.search(plain) is not None:
+        return False
+    if _NEEDS_INPUT.matches(plain):
+        return False
+    if re.search(r"codex\s+-c\s+check_for_update_on_startup", plain):
+        return False
+    return _READY.matches(plain) or (_PROMPT_LINE_RE.search(plain) is not None)
+
 
 # 完成（读屏退路）：状态页脚在 AND 屏上没有中断提示。
 # 这条判据 MUST 偏严——探针失灵时宁可让本轮以超时收场（超时带着末屏、看得出发生了
@@ -956,6 +1012,11 @@ register_driver(
         profile_apply=_profile_apply,
         profile_revert=_profile_revert,
         profile_protocol="responses",
+        awaiting_input=awaiting_input,
+        is_busy=is_terminal_busy,
         profile_mode="file_and_env",
+        inline_context_budget_tokens=8000,
+        merges_tool_context_into_result=True,
+        patch_tool_names=("apply_patch",),
     )
 )

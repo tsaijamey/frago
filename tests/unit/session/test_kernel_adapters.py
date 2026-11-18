@@ -277,3 +277,67 @@ def test_75d51ed1_long_transcript_shape_delivers_via_submit_when_idle(tmp_path, 
     assert outcome == "landed"
     assert len(submitted) == 1
 
+
+def test_codex_session_adapter_probe_idle_and_waiting(tmp_path, monkeypatch):
+    """验证 CodexSessionAdapter 结合 rollout 的 task_started / task_complete 即时裁决，无需盲等 3 秒。"""
+    import json
+
+    from frago.session import codex_store
+
+    home = tmp_path / "codexhome"
+    (home / "sessions").mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(home))
+
+    sid = "01a0codex-tier1-probe"
+    rollout_dir = home / "sessions" / "2026" / "11" / "18"
+    rollout_dir.mkdir(parents=True)
+    rollout_file = rollout_dir / f"rollout-2026-11-18T12-00-00-{sid}.jsonl"
+
+    meta = {
+        "timestamp": "2026-11-18T04:00:00.000Z",
+        "type": "session_meta",
+        "payload": {"session_id": sid, "cwd": str(tmp_path), "timestamp": "2026-11-18T04:00:00.000Z"},
+    }
+    started = {
+        "timestamp": "2026-11-18T04:00:01.000Z",
+        "type": "event_msg",
+        "payload": {"type": "task_started", "turn_id": "turn-1"},
+    }
+    rollout_file.write_text(
+        json.dumps(meta) + "\n" + json.dumps(started) + "\n",
+        encoding="utf-8",
+    )
+
+    adapter = get_kernel_session_adapter("codex")
+    # 1. task_started 未闭合：即便窗格静态无转轮，也裁决为忙碌（done=False, is_busy=True）
+    v_running = adapter.probe_turn_completion(sid)
+    assert v_running.done is False
+    assert v_running.unknown is False
+    idle_running = adapter.probe_harness_idle(sid, pane_text="› \n  gpt-5 high · /tmp\n")
+    assert idle_running.is_busy is True
+    assert idle_running.awaiting_input is False
+
+    # 2. task_complete 刚落盘（文件无需静默满 3 秒）：立即裁决为 done=True, awaiting_input=True
+    completed = {
+        "timestamp": "2026-11-18T04:00:05.000Z",
+        "type": "event_msg",
+        "payload": {
+            "type": "task_complete",
+            "turn_id": "turn-1",
+            "last_agent_message": "补丁已应用并通过验证。",
+        },
+    }
+    rollout_file.write_text(
+        json.dumps(meta) + "\n" + json.dumps(started) + "\n" + json.dumps(completed) + "\n",
+        encoding="utf-8",
+    )
+    v_done = adapter.probe_turn_completion(sid)
+    assert v_done.done is True
+    assert v_done.stop_reason == "end_turn"
+    assert v_done.final_text == "补丁已应用并通过验证。"
+    idle_done = adapter.probe_harness_idle(sid, pane_text="› \n  gpt-5 high · /tmp\n")
+    assert idle_done.is_busy is False
+    assert idle_done.is_terminal_idle is True
+    assert idle_done.awaiting_input is True
+
+

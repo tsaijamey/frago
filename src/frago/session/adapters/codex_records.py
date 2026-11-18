@@ -500,12 +500,14 @@ def _usage_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     # :func:`frago.session.usage_tick.breakdown_from_codex_usage`，与用量月历同一套。
     breakdown = breakdown_from_codex_usage(last)
     window = info.get("model_context_window")
+    model = info.get("model") or payload.get("model")
     return build_tick(
         breakdown,
         turn_tokens=n(last, "total_tokens"),
         total_tokens=n(total, "total_tokens"),
         context_tokens=n(last, "input_tokens"),
         context_window=int(window) if isinstance(window, int | float) and window else None,
+        model=str(model) if isinstance(model, str) and model.strip() else None,
     )
 
 

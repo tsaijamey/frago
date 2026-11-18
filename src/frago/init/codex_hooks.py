@@ -129,6 +129,65 @@ def get_hooks_path() -> Path:
     return get_codex_home() / HOOKS_FILENAME
 
 
+def is_codex_hooks_disabled() -> bool:
+    """Check whether automatic codex global hook registration is disabled via env or config.json."""
+    env_flag = os.environ.get("FRAGO_DISABLE_CODEX_HOOKS", "").strip().lower()
+    if env_flag in {"1", "true", "yes", "on"}:
+        return True
+    config_path = Path.home() / ".frago" / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(cfg, dict):
+                ch = cfg.get("codex_hooks")
+                if isinstance(ch, dict) and ch.get("enabled") is False:
+                    return True
+        except (OSError, json.JSONDecodeError):
+            pass
+    return False
+
+
+def remove_codex_hooks() -> Path | None:
+    """Idempotently remove all frago hook handlers from ``$CODEX_HOME/hooks.json`` while preserving user hooks."""
+    path = get_hooks_path()
+    if not path.exists():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            return None
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Cannot read %s (%s); leaving it alone", path, exc)
+        return None
+
+    raw_hooks = loaded.get("hooks")
+    if not isinstance(raw_hooks, dict):
+        return path
+
+    hooks: dict[str, Any] = dict(raw_hooks)
+    changed = False
+    for event in list(hooks):
+        survivors, removed = _strip_frago_from_event(hooks[event])
+        if not removed:
+            continue
+        changed = True
+        if survivors:
+            hooks[event] = survivors
+        else:
+            del hooks[event]
+
+    if not changed:
+        return path
+
+    loaded["hooks"] = hooks
+    path.write_text(
+        json.dumps(loaded, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    logger.info("Removed frago handlers from codex hooks file %s", path)
+    return path
+
+
 def _is_frago_hook(entry: Any) -> bool:
     """Is this handler frago's?
 
@@ -207,6 +266,10 @@ def sync_codex_hook_events(hook_path: str) -> Path | None:
         no events (in which case nothing is written — an empty event list means
         the query failed, not that frago wants zero hooks).
     """
+    if is_codex_hooks_disabled():
+        logger.debug("codex hooks disabled via FRAGO_DISABLE_CODEX_HOOKS or config.json, skipping registration")
+        return None
+
     if not is_codex_present():
         logger.debug("codex not detected, skipping hook registration")
         return None

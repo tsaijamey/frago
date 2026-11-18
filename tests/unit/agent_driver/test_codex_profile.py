@@ -188,3 +188,42 @@ def test_apply_on_a_machine_without_a_codex_config(tmp_path) -> None:
     codex._profile_revert()
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     assert "model_provider" not in data and "model" not in data
+
+
+def test_check_codex_profile_readiness_and_auxiliary_role_linkage() -> None:
+    from frago.init.profile_targets import check_codex_profile_readiness
+
+    # 1. 双通道齐全（既有 Anthropic 又有 Responses）
+    dual = _ark()
+    res_dual = check_codex_profile_readiness(dual)
+    assert res_dual["can_apply_to_codex"] is True
+    assert res_dual["has_responses_channel"] is True
+    assert res_dual["has_anthropic_channel"] is True
+    assert res_dual["missing_channel_reason"] is None
+    assert res_dual["auxiliary_role_note"] is None
+
+    # 2. 仅有 Anthropic 通道、缺 Responses 通道
+    only_anth = APIProfile(
+        name="OnlyAnthropic",
+        endpoint_type="custom",
+        api_key="k",
+        url="https://api.anthropic.example.com",
+    )
+    res_no_resp = check_codex_profile_readiness(only_anth)
+    assert res_no_resp["can_apply_to_codex"] is False
+    assert res_no_resp["has_responses_channel"] is False
+    assert "OpenAI Responses" in str(res_no_resp["missing_channel_reason"])
+
+    # 3. 仅有 Responses 通道、缺 Anthropic 通道 -> 产出 LightAgent/Observer 联动提示
+    only_resp = APIProfile(
+        name="OnlyResponses",
+        endpoint_type="custom",
+        api_key="k",
+        url="",
+        channels=[ProfileChannel(protocol="responses", url="https://api.openai.example.com/v1")],
+    )
+    res_only_resp = check_codex_profile_readiness(only_resp)
+    assert res_only_resp["can_apply_to_codex"] is True
+    assert res_only_resp["has_anthropic_channel"] is False
+    assert "LightAgent" in str(res_only_resp["auxiliary_role_note"])
+

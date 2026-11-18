@@ -59,10 +59,17 @@ from frago.ontology.metamodel import (
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
 from frago.ontology.relations import OntologyGraph
 from frago.ontology.runtime import (
+    GOVERNANCE_PROFILE_MINIMAL_GUARDRAIL,
+    GOVERNANCE_PROFILE_WORKBENCH_ORCHESTRATED,
+    SESSION_VALID_DELIVERY_SURFACES,
     SESSION_VALID_KERNELS,
     AgentFivePartDecomposition,
+    DeliverySurfaceState,
+    GovernanceProfile,
     compute_desktop_content_id,
     decompose_agent_session,
+    derive_delivery_surface_state,
+    derive_governance_profile_id,
     normalize_session_lifecycle_state,
     normalize_session_origin,
 )
@@ -132,8 +139,8 @@ AGENT_CAPABILITY_MATRIX: dict[str, dict[str, str]] = {
         "identity_probe": CAPABILITY_ADAPTED,
         "lifecycle_action": CAPABILITY_NATIVE,
         "transcript_sync": CAPABILITY_ADAPTED,
-        "awaiting_input_probe": CAPABILITY_FALLBACK,
-        "busy_probe": CAPABILITY_FALLBACK,
+        "awaiting_input_probe": CAPABILITY_ADAPTED,
+        "busy_probe": CAPABILITY_ADAPTED,
         "context_watermark": CAPABILITY_ADAPTED,
         "hook_injection": CAPABILITY_ADAPTED,
     },
@@ -193,7 +200,7 @@ AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
         "supports_resume": True,
         "supports_branch": True,
         "supports_for_you": True,
-        "capability_tier": "tier2",
+        "capability_tier": "tier1",
         "profile_mode": "file_and_env",
         "capabilities": AGENT_CAPABILITY_MATRIX["codex"],
     },
@@ -503,6 +510,14 @@ class SessionRecordProjection:
         return self.decomposition.origin_state
 
     @property
+    def delivery_surface_state(self) -> QualityState | None:
+        return self.decomposition.delivery_surface_state
+
+    @property
+    def governance_policy(self) -> RulePolicy | None:
+        return self.decomposition.governance_policy
+
+    @property
     def role(self) -> Role:
         return self.decomposition.role
 
@@ -531,7 +546,12 @@ def project_session_dict(
     g = graph if graph is not None else OntologyGraph()
 
     session_id = str(raw_session.get("session_id", "")).strip()
-    raw_agent_type = raw_session.get("agent_type") or raw_session.get("agent_family") or ""
+    raw_agent_type = (
+        raw_session.get("agent_type")
+        or raw_session.get("agent_family")
+        or raw_session.get("agent_kernel")
+        or ""
+    )
     agent_type = str(raw_agent_type).strip().lower()
     if not session_id or not agent_type:
         raise ProjectionValidationError(
@@ -544,10 +564,27 @@ def project_session_dict(
 
     raw_status = raw_session.get("status")
     status = normalize_session_lifecycle_state(str(raw_status) if raw_status is not None else "running")
-    raw_source = raw_session.get("source")
+    raw_source = raw_session.get("source") or raw_session.get("origin")
     source = normalize_session_origin(
         str(raw_source) if raw_source is not None else "terminal",
         is_worker=is_worker,
+    )
+    has_conv_key = bool(
+        raw_session.get("has_conv_key")
+        or str(
+            raw_session.get("conv_key")
+            or raw_session.get("FRAGO_CONV_KEY")
+            or ""
+        ).strip()
+    )
+    surface_override = (
+        str(raw_session["delivery_surface"]).strip()
+        if raw_session.get("delivery_surface")
+        else (
+            str(raw_session["FRAGO_SURFACE"]).strip()
+            if raw_session.get("FRAGO_SURFACE")
+            else None
+        )
     )
     role_cls = "SubtaskWorkerRole" if is_worker else "PrimarySchedulerRole"
     transcript_uri = str(
@@ -564,6 +601,8 @@ def project_session_dict(
         origin=source,
         profile_id=profile_id,
         transcript_uri=transcript_uri,
+        has_conv_key=has_conv_key,
+        surface_override=surface_override,
         registry=registry,
         graph=g,
     )

@@ -527,3 +527,37 @@ def test_tui_is_gone_treats_an_unreadable_pane_as_still_alive(monkeypatch):
             raise RuntimeError("tmux 这一拍不答")
 
     assert codex_driver._tui_is_gone(_Unreadable("")) is False
+
+
+def test_codex_awaiting_input_and_busy_probes():
+    """验证 codex.awaiting_input 与 codex.is_terminal_busy 精准识别就绪、忙碌、锁屏与认证墙。"""
+    from frago.agent_driver.driver import load_driver
+
+    # 1. 横幅、页脚与空闲提示符就绪态
+    assert codex_driver.awaiting_input(BANNER_PANE) is True
+    assert codex_driver.awaiting_input(FOOTER_PANE) is True
+    assert codex_driver.awaiting_input("› Ask Codex to do anything\n" + FOOTER_PANE) is True
+    assert codex_driver.is_terminal_busy(BANNER_PANE) is False
+    assert codex_driver.is_terminal_busy(FOOTER_PANE) is False
+
+    # 2. esc to interrupt 与转轮忙态
+    busy_pane = FOOTER_PANE + "  ⠋ Working on files…  esc to interrupt\n"
+    assert codex_driver.is_terminal_busy(busy_pane) is True
+    assert codex_driver.awaiting_input(busy_pane) is False
+
+    # 3. 单写者锁错误与认证墙态
+    assert codex_driver.awaiting_input(RESUME_WRITER_LOCK_PANE) is False
+    assert codex_driver.awaiting_input(RESUME_OPEN_IN_ANOTHER_APP_PANE) is False
+    assert codex_driver.awaiting_input("Error: invalid API key\n" + FOOTER_PANE) is False
+    assert codex_driver.awaiting_input(SHELL_ECHO_PANE) is False
+
+    # 4. 驱动注册表七切面挂载校验
+    drv = load_driver("codex")
+    assert drv.awaiting_input is codex_driver.awaiting_input
+    assert drv.is_busy is codex_driver.is_terminal_busy
+    assert drv.facets.awaiting_input_probe.capability_level == "adapted"
+    assert drv.facets.busy_probe.capability_level == "adapted"
+    assert drv.facets.hook_injection.inline_context_budget_tokens == 8000
+    assert drv.facets.hook_injection.merges_tool_context_into_result is True
+    assert drv.facets.hook_injection.patch_tool_names == ("apply_patch",)
+

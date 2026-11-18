@@ -55,6 +55,7 @@ from frago.ontology.metamodel import (
     QualityState,
     Resource,
     Role,
+    RulePolicy,
     Specification,
 )
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
@@ -94,6 +95,21 @@ class SessionOriginState(StrEnum):
     CHANNEL = "channel"
 
 
+class DeliverySurfaceState(StrEnum):
+    WEBUI_WORKBENCH = "webui_workbench"
+    NATIVE_TERMINAL = "native_terminal"
+    HEADLESS_WORKER = "headless_worker"
+    DESKTOP_STAGE = "desktop_stage"
+
+
+class GovernanceProfile(StrEnum):
+    MINIMAL_GUARDRAIL = "norm:governance:minimal_guardrail"
+    WORKBENCH_ORCHESTRATED = "norm:governance:workbench_orchestrated"
+
+
+GOVERNANCE_PROFILE_MINIMAL_GUARDRAIL: str = GovernanceProfile.MINIMAL_GUARDRAIL.value
+GOVERNANCE_PROFILE_WORKBENCH_ORCHESTRATED: str = GovernanceProfile.WORKBENCH_ORCHESTRATED.value
+
 SESSION_VALID_KERNELS: tuple[str, ...] = (
     "claude",
     "codex",
@@ -104,6 +120,8 @@ SESSION_VALID_KERNELS: tuple[str, ...] = (
 
 SESSION_VALID_LIFECYCLE_STATES: tuple[str, ...] = tuple(s.value for s in SessionLifecycleState)
 SESSION_VALID_ORIGINS: tuple[str, ...] = tuple(s.value for s in SessionOriginState)
+SESSION_VALID_DELIVERY_SURFACES: tuple[str, ...] = tuple(s.value for s in DeliverySurfaceState)
+GOVERNANCE_PROFILE_INSTANCES: tuple[str, ...] = tuple(g.value for g in GovernanceProfile)
 
 #: ``AgentSessionProcess`` 在代码里的落点。``frago.json`` 把它登记为 ``Occurrent.Process``
 #: 下的独立领域类，但**类实体只有 ``Process`` 一个**：注册表按 ``class_id`` 建档、按
@@ -188,6 +206,42 @@ def normalize_session_origin(raw_origin: str | None, *, is_worker: bool = False)
     return fallback
 
 
+def derive_delivery_surface_state(
+    origin: str | None,
+    *,
+    has_conv_key: bool = False,
+    is_worker: bool = False,
+    surface_override: str | None = None,
+) -> str:
+    """Derive canonical DeliverySurfaceState value from session origin and environment signals."""
+    if surface_override:
+        raw_surf = str(surface_override).strip().lower()
+        if raw_surf in SESSION_VALID_DELIVERY_SURFACES:
+            return raw_surf
+        if raw_surf in {"webui", "web", "workbench"}:
+            return DeliverySurfaceState.WEBUI_WORKBENCH.value
+        if raw_surf in {"terminal", "native", "cli"}:
+            return DeliverySurfaceState.NATIVE_TERMINAL.value
+        if raw_surf in {"worker", "headless"}:
+            return DeliverySurfaceState.HEADLESS_WORKER.value
+        if raw_surf in {"desktop", "stage", "agent_os"}:
+            return DeliverySurfaceState.DESKTOP_STAGE.value
+
+    norm_origin = normalize_session_origin(origin, is_worker=is_worker)
+    if is_worker or norm_origin == "worker":
+        return DeliverySurfaceState.HEADLESS_WORKER.value
+    if has_conv_key or norm_origin in {"web", "schedule", "channel"}:
+        return DeliverySurfaceState.WEBUI_WORKBENCH.value
+    return DeliverySurfaceState.NATIVE_TERMINAL.value
+
+
+def derive_governance_profile_id(delivery_surface: str | None) -> str:
+    """Map DeliverySurfaceState to the canonical GovernanceProfilePolicy instance ID."""
+    if delivery_surface == DeliverySurfaceState.NATIVE_TERMINAL.value:
+        return GOVERNANCE_PROFILE_MINIMAL_GUARDRAIL
+    return GOVERNANCE_PROFILE_WORKBENCH_ORCHESTRATED
+
+
 # ============================================================================
 # Mainline 1: Agent Five-Part Orthogonal Decomposition & Turn Contract Runtime
 # ============================================================================
@@ -207,6 +261,8 @@ class AgentFivePartDecomposition:
     probe_capabilities: tuple[Capability, ...]
     graph: OntologyGraph
     lifecycle_state: QualityState | None = None
+    delivery_surface_state: QualityState | None = None
+    governance_policy: RulePolicy | None = None
 
 
 def decompose_agent_session(
@@ -220,6 +276,8 @@ def decompose_agent_session(
     profile_id: str | None = None,
     transcript_uri: str | None = None,
     probes: tuple[str, ...] = ("ready_signal", "done_signal"),
+    has_conv_key: bool = False,
+    surface_override: str | None = None,
     registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
     graph: OntologyGraph | None = None,
 ) -> AgentFivePartDecomposition:
@@ -253,10 +311,11 @@ def decompose_agent_session(
     )
     assert isinstance(session_process, Process)
 
+    is_worker_role = role_class_id == "SubtaskWorkerRole"
     origin_value = (
         "worker"
-        if role_class_id == "SubtaskWorkerRole"
-        else normalize_session_origin(origin, is_worker=(role_class_id == "SubtaskWorkerRole"))
+        if is_worker_role
+        else normalize_session_origin(origin, is_worker=is_worker_role)
     )
     origin_state = registry.create(
         "SessionOriginState",
@@ -276,6 +335,38 @@ def decompose_agent_session(
         )
         assert isinstance(lifecycle_state, QualityState)
         g.link(session_process, "exhibits_state", lifecycle_state, replace_functional=True)
+
+    delivery_surface_state: QualityState | None = None
+    governance_policy: RulePolicy | None = None
+    surface_value = derive_delivery_surface_state(
+        origin_value,
+        has_conv_key=has_conv_key,
+        is_worker=is_worker_role,
+        surface_override=surface_override,
+    )
+    if "DeliverySurfaceState" in registry.classes:
+        delivery_surface_state = registry.create(
+            "DeliverySurfaceState",
+            bearer_id=session_process.ontological_id(),
+            context_id=f"session:{session_id}",
+            value=surface_value,
+        )
+        assert isinstance(delivery_surface_state, QualityState)
+        g.link(
+            session_process,
+            "exhibits_state",
+            delivery_surface_state,
+            replace_functional=True,
+        )
+
+    if "GovernanceProfilePolicy" in registry.classes:
+        gov_norm_id = derive_governance_profile_id(surface_value)
+        governance_policy = registry.create(
+            "GovernanceProfilePolicy",
+            norm_id=gov_norm_id,
+        )
+        assert isinstance(governance_policy, RulePolicy)
+        g.link(session_process, "governed_by", governance_policy)
 
     resolved_uri = transcript_uri or f"~/.frago/sessions/{agent_family}/{session_id}/raw.jsonl"
     transcript_artifact = registry.create(
@@ -320,6 +411,8 @@ def decompose_agent_session(
         probe_capabilities=tuple(probe_caps),
         graph=g,
         lifecycle_state=lifecycle_state,
+        delivery_surface_state=delivery_surface_state,
+        governance_policy=governance_policy,
     )
 
 

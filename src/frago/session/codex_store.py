@@ -362,7 +362,7 @@ class CodexTurn:
     """本轮的 ``turn_id``；同时充当去重锚点（每轮唯一）。"""
 
     done: bool
-    """本轮是否已终结（末尾最后出现的是 ``task_complete`` 而不是 ``task_started``）。"""
+    """本轮是否已终结（末尾最后出现的是 ``task_complete`` / ``turn_aborted`` / ``request_user_input`` 而不是 ``task_started``）。"""
 
     text: str
     """本轮终答。``task_complete.last_agent_message`` 优先，缺失时回落到本轮最后
@@ -370,6 +370,102 @@ class CodexTurn:
 
     error: str | None
     """codex 给这一轮标的错误（如 provider 拒绝）；正常收尾时为 None。"""
+
+    stop_reason: str | None = None
+    """本轮终结原因（``end_turn`` / ``turn_aborted`` / ``request_user_input``）；未终结时为 None。"""
+
+    last_stop_at: str | None = None
+    """本轮终结记录的 ISO8601 时间戳；未终结时为 None。"""
+
+
+def latest_turn_from_path(path: Path) -> CodexTurn | None:
+    """从指定 rollout JSONL 文件读取最新一轮的完成状态、停止时刻与终答。"""
+    records = _iter_records(path, tail_bytes=_TAIL_BYTES)
+    if not records:
+        return None
+
+    started_turn: str | None = None
+    complete: dict[str, Any] | None = None
+    last_is_complete = False
+    assistant_text: str | None = None
+    stop_reason: str | None = None
+    last_stop_at: str | None = None
+
+    for record in records:
+        payload = _payload(record)
+        kind = payload.get("type")
+        rec_ts = _parse_timestamp(payload.get("timestamp") or record.get("timestamp"))
+        iso_ts = rec_ts.isoformat() if rec_ts is not None else None
+        if record.get("type") == "event_msg":
+            if kind == "task_started":
+                started_turn = payload.get("turn_id") or started_turn
+                last_is_complete = False
+                stop_reason = None
+                last_stop_at = None
+            elif kind == "task_complete":
+                complete = payload
+                last_is_complete = True
+                stop_reason = "end_turn"
+                last_stop_at = iso_ts
+            elif kind == "turn_aborted":
+                complete = payload
+                last_is_complete = True
+                stop_reason = str(payload.get("reason") or "turn_aborted")
+                last_stop_at = iso_ts
+            elif kind == "request_user_input":
+                complete = payload
+                last_is_complete = True
+                stop_reason = "request_user_input"
+                last_stop_at = iso_ts
+            elif kind == "agent_message":
+                msg = payload.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    assistant_text = msg.strip()
+        elif (
+            record.get("type") == "response_item"
+            and kind == "message"
+            and payload.get("role") == "assistant"
+        ):
+            text = _message_text(payload)
+            if text:
+                assistant_text = text
+
+    if complete is None and not last_is_complete:
+        # 窗口里只有开始、没有结束：本轮还在跑。
+        return CodexTurn(
+            turn_id=started_turn,
+            done=False,
+            text="",
+            error=None,
+            stop_reason=None,
+            last_stop_at=None,
+        )
+    if not last_is_complete:
+        return CodexTurn(
+            turn_id=started_turn,
+            done=False,
+            text="",
+            error=None,
+            stop_reason=None,
+            last_stop_at=None,
+        )
+
+    payload = complete or {}
+    final = payload.get("last_agent_message") or payload.get("message")
+    text = final if isinstance(final, str) and final.strip() else (assistant_text or "")
+    error = payload.get("error")
+    if isinstance(error, dict):
+        error = error.get("message") or json.dumps(error, ensure_ascii=False)
+    elif error is not None and not isinstance(error, str):
+        error = str(error)
+    return CodexTurn(
+        turn_id=payload.get("turn_id") or started_turn,
+        done=True,
+        text=text,
+        error=error or None,
+        stop_reason=stop_reason or "end_turn",
+        last_stop_at=last_stop_at,
+    )
 
 
 def latest_turn(session_id: str) -> CodexTurn | None:
@@ -383,54 +479,7 @@ def latest_turn(session_id: str) -> CodexTurn | None:
     path = find_rollout(session_id)
     if path is None:
         return None
-    records = _iter_records(path, tail_bytes=_TAIL_BYTES)
-    if not records:
-        return None
-
-    started_turn: str | None = None
-    complete: dict[str, Any] | None = None
-    last_is_complete = False
-    assistant_text: str | None = None
-
-    for record in records:
-        payload = _payload(record)
-        kind = payload.get("type")
-        if record.get("type") == "event_msg":
-            if kind == "task_started":
-                started_turn = payload.get("turn_id") or started_turn
-                last_is_complete = False
-            elif kind == "task_complete":
-                complete = payload
-                last_is_complete = True
-        elif (
-            record.get("type") == "response_item"
-            and kind == "message"
-            and payload.get("role") == "assistant"
-        ):
-            text = _message_text(payload)
-            if text:
-                assistant_text = text
-
-    if complete is None and not last_is_complete:
-        # 窗口里只有开始、没有结束：本轮还在跑。
-        return CodexTurn(turn_id=started_turn, done=False, text="", error=None)
-    if not last_is_complete:
-        return CodexTurn(turn_id=started_turn, done=False, text="", error=None)
-
-    payload = complete or {}
-    final = payload.get("last_agent_message")
-    text = final if isinstance(final, str) and final.strip() else (assistant_text or "")
-    error = payload.get("error")
-    if isinstance(error, dict):
-        error = error.get("message") or json.dumps(error, ensure_ascii=False)
-    elif error is not None and not isinstance(error, str):
-        error = str(error)
-    return CodexTurn(
-        turn_id=payload.get("turn_id") or started_turn,
-        done=True,
-        text=text,
-        error=error or None,
-    )
+    return latest_turn_from_path(path)
 
 
 def _message_text(payload: dict[str, Any]) -> str:
@@ -555,9 +604,36 @@ def record_payloads(
             )
         ]
 
-    if inner == "function_call_output":
+    if inner == "custom_tool_call":
+        call_id = payload.get("call_id") or payload.get("id") or ""
+        patch = payload.get("input")
+        return [
+            (
+                RECORD_TOOL_CALL,
+                {
+                    **base,
+                    "uuid": str(payload.get("id") or call_id),
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "name": payload.get("name") or "",
+                            "input": {"input": patch} if isinstance(patch, str) else {},
+                        }
+                    ],
+                },
+            )
+        ]
+
+    if inner in ("function_call_output", "custom_tool_call_output"):
         call_id = payload.get("call_id") or ""
         output = payload.get("output")
+        output_str = output if isinstance(output, str) else ""
+        if inner == "custom_tool_call_output":
+            first_line = output_str.strip().split("\n", 1)[0].strip()
+            is_error = not first_line.startswith("Exit code: 0")
+        else:
+            is_error = bool(payload.get("success") is False)
         return [
             (
                 RECORD_TOOL_RESULT,
@@ -568,8 +644,8 @@ def record_payloads(
                     "tool_results": [
                         {
                             "tool_use_id": call_id,
-                            "content": output if isinstance(output, str) else "",
-                            "is_error": bool(payload.get("success") is False),
+                            "content": output_str,
+                            "is_error": is_error,
                         }
                     ],
                 },

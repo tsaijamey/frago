@@ -267,11 +267,18 @@ class OntologyGraph:
             )
 
         if AlgebraicProperty.FUNCTIONAL in props:
-            existing = [
-                f
-                for f in self._facts
-                if f.source_id == source_id and f.predicate == predicate
-            ]
+            target_dep_type = getattr(target, "dependent_type", None)
+
+            def _same_functional_slot(fact_item: RelationFact) -> bool:
+                if fact_item.source_id != source_id or fact_item.predicate != predicate:
+                    return False
+                if not target_dep_type:
+                    return True
+                existing_target = self._entities.get(fact_item.target_id)
+                existing_dep_type = getattr(existing_target, "dependent_type", None)
+                return existing_dep_type is None or existing_dep_type == target_dep_type
+
+            existing = [f for f in self._facts if _same_functional_slot(f)]
             if existing:
                 if existing[0].target_id == target_id:
                     return existing[0]
@@ -281,9 +288,7 @@ class OntologyGraph:
                         f"links to '{existing[0].target_id}' (cannot also link to '{target_id}')."
                     )
                 self._facts = [
-                    f
-                    for f in self._facts
-                    if not (f.source_id == source_id and f.predicate == predicate)
+                    f for f in self._facts if not _same_functional_slot(f)
                 ]
 
         for f in self._facts:

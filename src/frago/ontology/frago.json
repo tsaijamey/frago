@@ -599,6 +599,18 @@
           "src/frago/agent_driver/tmux_session.py"
         ],
         "description": "物理承载实例在全域生命周期调度中的即时态（active 活跃忙碌、cooling 冷却宽限期、evictable 可安全回收、protected 命中守卫保护豁免、terminated 已关闭销毁）。"
+      },
+      {
+        "class_id": "DeliverySurfaceState",
+        "pillar": "1. 会话伴侣 / 5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "AgentHarness | AgentSessionProcess",
+        "allowed_values": ["webui_workbench", "native_terminal", "headless_worker", "desktop_stage"],
+        "current_code_locations": [
+          "src/frago/ontology/runtime.py#DeliverySurfaceState",
+          "src/frago/ontology/projectors.py#derive_delivery_surface_state"
+        ],
+        "description": "会话实例的交互载体面状态（webui_workbench 受管网页工作台、native_terminal 纯终端原生、headless_worker 后台子任务工作者、desktop_stage 虚拟桌面舞台），通过 exhibits_state 函数性边挂载，驱动治理轨道与网页专属组件分流。"
       }
     ],
     "Occurrent.Process": [
@@ -887,6 +899,21 @@
           ".claude/docs/architecture-north-star.md"
         ],
         "description": "架构分层依赖契约：规范 cli / server / ontology / domains / adapters / core 之间的合法引用方向。"
+      },
+      {
+        "class_id": "GovernanceProfilePolicy",
+        "pillar": "1. 会话伴侣 / 5. 边界",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "standard_instances": [
+          "norm:governance:minimal_guardrail",
+          "norm:governance:workbench_orchestrated"
+        ],
+        "current_code_locations": [
+          "src/frago/ontology/runtime.py#GovernanceProfile",
+          "src/frago/ontology/projectors.py#derive_governance_profile_id"
+        ],
+        "description": "双轨治理等级规范：区分最小安全护栏轨（norm:governance:minimal_guardrail，适用于纯终端原生会话，免除网页专属卡片与失声兜底训诫）与工作台全能编排轨（norm:governance:workbench_orchestrated，适用于受管工作台与派发会话），通过 governed_by 边约束 AgentSessionProcess。"
       }
     ],
     "NormativeEntity.Contract": [

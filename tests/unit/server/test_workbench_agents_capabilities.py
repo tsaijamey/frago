@@ -35,12 +35,14 @@ def test_list_agents_contains_capabilities_and_ui_features() -> None:
     assert agy.supports_for_you is True
     assert agy.capability_tier == "tier2"
 
-    # 3. Codex
+    # 3. Codex (promoted to tier1 with adapted probes)
     codex = agents_by_type.get("codex")
     assert codex is not None
     assert codex.capabilities.get("identity_probe") == "adapted"
-    assert codex.capabilities.get("awaiting_input_probe") == "fallback"
+    assert codex.capabilities.get("awaiting_input_probe") == "adapted"
+    assert codex.capabilities.get("busy_probe") == "adapted"
     assert codex.capabilities.get("hook_injection") == "adapted"
+    assert codex.capability_tier == "tier1"
     assert codex.supports_branch is True
 
     # 4. OpenCode
@@ -82,3 +84,12 @@ def test_list_agents_contains_capabilities_and_ui_features() -> None:
         assert "supports_for_you" in item
         assert "capability_tier" in item
         assert "profile_mode" in item
+
+
+def test_workbench_agents_exposes_codex_as_tier1() -> None:
+    agents_by_type = {a.agent_type: a for a in list_agents()}
+    codex = agents_by_type["codex"]
+    assert codex.capability_tier == "tier1"
+    for facet, level in codex.capabilities.items():
+        assert level in ("native", "adapted"), f"codex {facet} should not be {level}"
+

@@ -147,3 +147,41 @@ def test_skips_machines_without_codex(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "absent"))
     monkeypatch.setattr(codex_hooks.shutil, "which", lambda _n: None)
     assert codex_hooks.sync_codex_hook_events(HOOK_CMD) is None
+
+
+def test_disable_codex_hooks_env_skips_registration(codex_home, monkeypatch):
+    monkeypatch.setenv("FRAGO_DISABLE_CODEX_HOOKS", "1")
+    assert codex_hooks.is_codex_hooks_disabled() is True
+    assert codex_hooks.sync_codex_hook_events(HOOK_CMD) is None
+    assert not (codex_home / "hooks.json").exists()
+
+
+def test_remove_codex_hooks_drops_only_frago_entries(codex_home):
+    foreign = {
+        "description": "team policy",
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": "python3 team.py"}]}
+            ],
+        },
+    }
+    (codex_home / "hooks.json").write_text(json.dumps(foreign), encoding="utf-8")
+    codex_hooks.sync_codex_hook_events(HOOK_CMD)
+    assert "PreToolUse" in _read(codex_home)["hooks"]
+
+    removed = codex_hooks.remove_codex_hooks()
+    assert removed == codex_home / "hooks.json"
+    doc = _read(codex_home)
+    assert doc["description"] == "team policy"
+    assert set(doc["hooks"]) == {"SessionStart"}
+    commands = [
+        h["command"]
+        for group in doc["hooks"]["SessionStart"]
+        for h in group["hooks"]
+    ]
+    assert commands == ["python3 team.py"]
+    # 再次移除保持幂等，文件一字未改
+    snapshot = (codex_home / "hooks.json").read_text(encoding="utf-8")
+    assert codex_hooks.remove_codex_hooks() == codex_home / "hooks.json"
+    assert (codex_home / "hooks.json").read_text(encoding="utf-8") == snapshot
+

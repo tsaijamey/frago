@@ -166,7 +166,7 @@ def _resolve_session_id(label: str, pane: str) -> str | None:
         pass
 
     for sid in candidates:
-        if _transcript_path(sid) is not None:
+        if _transcript_path(sid) is not None or _resolve_record_file(sid) is not None:
             return sid
     return candidates[0] if candidates else None
 
@@ -556,6 +556,67 @@ def _fallback_tail(record_file: Path, session_id: str) -> tuple[str | None, str 
         return None, None, ""
 
 
+def _effective_awaiting_cap_level(kernel: str) -> str:
+    """获取指定内核的 awaiting_input_probe 有效能力等级（支持 FRAGO_CODEX_PROBE_MODE=fallback 逃生阀）。"""
+    if (
+        kernel == "codex"
+        and os.environ.get("FRAGO_CODEX_PROBE_MODE", "").strip().lower() == "fallback"
+    ):
+        return CAPABILITY_FALLBACK
+    return get_agent_capability_level(kernel, "awaiting_input_probe")
+
+
+def _codex_adapted_verdict(
+    session_id: str, pane_ansi: str, alive: bool | None
+) -> tuple[bool | None, str | None, str | None, str] | None:
+    """Codex 权威适配探针：结合 rollout 的 task_started/task_complete/turn_aborted/request_user_input
+    与底部控制区结构信号即时判定，无需等待 3 秒文件静默。
+    找不到记录文件时返回 None。
+    """
+    rec_file = _resolve_record_file(session_id)
+    if rec_file is None:
+        return None
+
+    from frago.session import codex_store
+    from frago.session.adapters.kernel_adapters import get_kernel_session_adapter
+
+    turn = codex_store.latest_turn(session_id)
+    if turn is None:
+        turn = codex_store.latest_turn_from_path(rec_file)
+
+    if turn is not None and (turn.turn_id is not None or turn.done):
+        stop_reason = (turn.stop_reason or "end_turn") if turn.done else None
+        last_stop_at = turn.last_stop_at if turn.done else None
+        if turn.done and last_stop_at is None:
+            with contextlib.suppress(OSError):
+                last_stop_at = datetime.fromtimestamp(rec_file.stat().st_mtime).isoformat()
+        text = (turn.text or "").strip()
+        if not text:
+            text = _last_assistant_text(rec_file)
+        if alive is not True:
+            awaiting: bool | None = None if alive is None else False
+        elif not turn.done:
+            awaiting = False
+        else:
+            if pane_ansi and pane_ansi.strip():
+                idle_v = get_kernel_session_adapter("codex").probe_harness_idle(
+                    session_id, pane_ansi=pane_ansi
+                )
+                awaiting = bool(idle_v.awaiting_input)
+            else:
+                awaiting = True
+        return awaiting, stop_reason, last_stop_at, text
+
+    stop_reason, last_stop_at, text = _fallback_tail(rec_file, session_id)
+    if alive is not True:
+        awaiting = None if alive is None else False
+    elif _is_busy(_plain(pane_ansi), kernel="codex", session_id=session_id):
+        awaiting = False
+    else:
+        awaiting = _check_last_record_is_assistant(rec_file, session_id)
+    return awaiting, stop_reason, last_stop_at, text
+
+
 def _iso_to_epoch_sec(raw: str | None) -> float | None:
     if not raw or not isinstance(raw, str):
         return None
@@ -724,10 +785,30 @@ def list_waiting() -> list[TmuxWaitingInfo]:
             continue
 
         kernel = _detect_session_kernel(session_id)
-        cap_level = get_agent_capability_level(kernel, "awaiting_input_probe")
+        cap_level = _effective_awaiting_cap_level(kernel)
 
         if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED):
-            # 第一级：Claude 专属探针（100% 保持存量行为）
+            if kernel == "codex":
+                verdict_tuple = _codex_adapted_verdict(session_id, pane_ansi, alive)
+                if verdict_tuple is None:
+                    rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
+                    continue
+                raw_awaiting, stop_reason, last_stop_at, text = verdict_tuple
+                awaiting = False if session_id in pending_callers else raw_awaiting
+                rows.append(
+                    TmuxWaitingInfo(
+                        name=name,
+                        session_id=session_id,
+                        client_alive=alive,
+                        awaiting_input=awaiting,
+                        stop_reason=stop_reason,
+                        last_stop_at=last_stop_at,
+                        closing_text=_closing_text(text),
+                    )
+                )
+                continue
+
+            # 第一级：Claude / CoreAgent 专属探针（100% 保持存量行为）
             path = _transcript_path(session_id)
             if path is None:
                 rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
@@ -1030,30 +1111,42 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
         kernel = "unknown"
         if session_id:
             kernel = _detect_session_kernel(session_id)
-            cap_level = get_agent_capability_level(kernel, "awaiting_input_probe")
+            cap_level = _effective_awaiting_cap_level(kernel)
 
             if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED):
-                path = _transcript_path(session_id)
-                if path is not None:
-                    # 认得出记录才是 Claude Code 会话，才套它的就绪判据
-                    awaiting = (
-                        False
-                        if session_id in pending_callers
-                        else _awaiting_input(pane_ansi, alive)
-                    )
-                    try:
-                        verdict = tc.evaluate_file(path)
-                        stop_reason = verdict.stop_reason
-                        if verdict.done and verdict.last_terminal_ts is not None:
-                            last_stop_at = verdict.last_terminal_ts.isoformat()
-                            idle_secs = max(0.0, now - verdict.last_terminal_ts.timestamp())
-                        text = verdict.final_text or ""
-                        if not text.strip():
-                            text = _last_assistant_text(path)
+                if kernel == "codex":
+                    verdict_tuple = _codex_adapted_verdict(session_id, pane_ansi, alive)
+                    if verdict_tuple is not None:
+                        raw_awaiting, stop_reason, last_stop_at, text = verdict_tuple
+                        awaiting = False if session_id in pending_callers else raw_awaiting
+                        if last_stop_at:
+                            with contextlib.suppress(ValueError):
+                                dt = datetime.fromisoformat(last_stop_at.replace("Z", "+00:00"))
+                                idle_secs = max(0.0, now - dt.timestamp())
                         excerpt = _excerpt(text, excerpt_chars)
                         closing = _closing_text(text)
-                    except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
-                        logger.debug("transcript probe failed for %s: %s", session_id, e)
+                else:
+                    path = _transcript_path(session_id)
+                    if path is not None:
+                        # 认得出记录才是 Claude Code 会话，才套它的就绪判据
+                        awaiting = (
+                            False
+                            if session_id in pending_callers
+                            else _awaiting_input(pane_ansi, alive)
+                        )
+                        try:
+                            verdict = tc.evaluate_file(path)
+                            stop_reason = verdict.stop_reason
+                            if verdict.done and verdict.last_terminal_ts is not None:
+                                last_stop_at = verdict.last_terminal_ts.isoformat()
+                                idle_secs = max(0.0, now - verdict.last_terminal_ts.timestamp())
+                            text = verdict.final_text or ""
+                            if not text.strip():
+                                text = _last_assistant_text(path)
+                            excerpt = _excerpt(text, excerpt_chars)
+                            closing = _closing_text(text)
+                        except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
+                            logger.debug("transcript probe failed for %s: %s", session_id, e)
             elif cap_level == CAPABILITY_FALLBACK:
                 awaiting = (
                     False

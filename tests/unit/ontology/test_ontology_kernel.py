@@ -507,7 +507,7 @@ class TestOntologyIntrospector:
         # Missing user dir does not fail and returns the builtin domain classes
         absent_dir = tmp_path / "nonexistent_ontology_dir"
         base_reg = DomainClassRegistry(user_ontology_dir=absent_dir)
-        assert len(base_reg.classes) == 69
+        assert len(base_reg.classes) == 71
         assert getattr(base_reg.get_class("AgentKernel"), "source", None) == "builtin"
 
         # User overlay in ~/.frago/ontology/user-ontology.json + domains/*.json
@@ -576,7 +576,7 @@ class TestOntologyIntrospector:
         assert introspector.validate_schema_integrity() == []
 
         user_reg = DomainClassRegistry(merged_schema)
-        assert len(user_reg.classes) == 71
+        assert len(user_reg.classes) == len(base_reg.classes) + 2
         contract_res = user_reg.create("SupplierContractResource", uid="contract:2026-001")
         assert isinstance(contract_res, Resource)
         assert getattr(type(contract_res), "source", "").startswith("userdir:")
@@ -720,11 +720,13 @@ class TestDomainClassRegistryAndThreeMainlinesRuntime:
 
     def test_all_63_domain_classes_compile_and_enforce_bearer_types(self) -> None:
         reg = DomainClassRegistry()
-        assert len(reg.classes) == 69
+        assert len(reg.classes) == 71
         assert "EmployeePostResource" in reg.classes
         assert "DomainEmployeeRole" in reg.classes
         assert "SessionLifecycleState" in reg.classes
         assert "HarnessLifecycleState" in reg.classes
+        assert "DeliverySurfaceState" in reg.classes
+        assert "GovernanceProfilePolicy" in reg.classes
 
         # PrimarySchedulerRole requires bearer_type == AgentKernel
         pa_role = reg.create(
@@ -3616,7 +3618,7 @@ class TestAgentKernelOntologyAndProjector:
         assert get_agent_capability_level("opencode", "identity_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("claude", "awaiting_input_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("agy", "awaiting_input_probe") == CAPABILITY_FALLBACK
-        assert get_agent_capability_level("codex", "awaiting_input_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("codex", "awaiting_input_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("opencode", "awaiting_input_probe") == CAPABILITY_FALLBACK
         assert get_agent_capability_level("coreagent", "awaiting_input_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("codex", "hook_injection") == CAPABILITY_ADAPTED
@@ -3625,7 +3627,7 @@ class TestAgentKernelOntologyAndProjector:
         # busy_probe four-level declarations
         assert get_agent_capability_level("claude", "busy_probe") == CAPABILITY_NATIVE
         assert get_agent_capability_level("agy", "busy_probe") == CAPABILITY_ADAPTED
-        assert get_agent_capability_level("codex", "busy_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("codex", "busy_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("opencode", "busy_probe") == CAPABILITY_FALLBACK
         assert get_agent_capability_level("coreagent", "busy_probe") == CAPABILITY_NATIVE
 
@@ -3711,6 +3713,49 @@ class TestAgentKernelOntologyAndProjector:
         assert supports_for_you("codex") is True
         assert supports_for_you("opencode") is True
         assert supports_for_you("coreagent") is True
+
+    def test_codex_promoted_to_tier1_and_zero_fallback_facets(self) -> None:
+        from frago.ontology import (
+            AGENT_CAPABILITY_MATRIX,
+            AGENT_KERNEL_METADATA,
+            AGENT_ORTHOGONAL_FACETS,
+            CAPABILITY_ADAPTED,
+            CAPABILITY_NATIVE,
+            project_session_dict,
+        )
+
+        assert OntologyIntrospector().validate_schema_integrity() == []
+        assert AGENT_KERNEL_METADATA["codex"]["capability_tier"] == "tier1"
+        codex_caps = AGENT_CAPABILITY_MATRIX["codex"]
+        assert set(codex_caps.keys()) == set(AGENT_ORTHOGONAL_FACETS)
+        for facet, level in codex_caps.items():
+            assert level in {CAPABILITY_NATIVE, CAPABILITY_ADAPTED}, (
+                f"codex facet {facet} must be native or adapted, got {level}"
+            )
+
+        # 验证载体分流与双轨治理投影
+        term_proj = project_session_dict(
+            {"session_id": "cx-term-1", "agent_type": "codex", "origin": "terminal"}
+        )
+        assert term_proj.delivery_surface_state is not None
+        assert term_proj.delivery_surface_state.value == "native_terminal"
+        assert term_proj.governance_policy is not None
+        assert term_proj.governance_policy.norm_id == "norm:governance:minimal_guardrail"
+        assert term_proj.governance_policy.ontological_id() == "norm:governance:minimal_guardrail@1.0.0"
+
+        web_proj = project_session_dict(
+            {
+                "session_id": "cx-web-1",
+                "agent_type": "codex",
+                "origin": "web",
+                "has_conv_key": True,
+            }
+        )
+        assert web_proj.delivery_surface_state is not None
+        assert web_proj.delivery_surface_state.value == "webui_workbench"
+        assert web_proj.governance_policy is not None
+        assert web_proj.governance_policy.norm_id == "norm:governance:workbench_orchestrated"
+        assert web_proj.governance_policy.ontological_id() == "norm:governance:workbench_orchestrated@1.0.0"
 
 
 class TestSessionOntologyGate1AndGate2:

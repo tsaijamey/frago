@@ -739,6 +739,23 @@
             "type": "env_ne",
             "name": "FRAGO_STOP_CHECK",
             "value": "off"
+          },
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "env_exists",
+                "name": "FRAGO_CONV_KEY"
+              },
+              {
+                "type": "not",
+                "clause": {
+                  "type": "env_ne",
+                  "name": "FRAGO_SURFACE",
+                  "value": "webui"
+                }
+              }
+            ]
           }
         ]
       },
@@ -767,6 +784,23 @@
             "type": "env_ne",
             "name": "FRAGO_STOP_CHECK",
             "value": "off"
+          },
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "env_exists",
+                "name": "FRAGO_CONV_KEY"
+              },
+              {
+                "type": "not",
+                "clause": {
+                  "type": "env_ne",
+                  "name": "FRAGO_SURFACE",
+                  "value": "webui"
+                }
+              }
+            ]
           }
         ]
       },

@@ -224,6 +224,30 @@ def missing_channel_reason(profile: APIProfile, agent_type: str) -> str | None:
     )
 
 
+def check_codex_profile_readiness(profile: APIProfile) -> dict[str, object]:
+    """检查一条连接档案应用于 Codex 时的 Responses 协议就绪度与 LightAgent/Observer 辅助角色连通性联动状态。"""
+    from frago.init.profile_manager import profile_channel
+
+    resp_ch = profile_channel(profile, "responses")
+    anth_ch = profile_channel(profile, "anthropic")
+    has_responses = resp_ch is not None and bool(resp_ch.url)
+    has_anthropic = anth_ch is not None and bool(anth_ch.url)
+    missing_reason = missing_channel_reason(profile, "codex")
+    auxiliary_note: str | None = None
+    if has_responses and not has_anthropic:
+        auxiliary_note = (
+            f"'{profile.name}' 仅配置了 OpenAI Responses 通道（供 Codex 使用），未配置 Anthropic 通道；"
+            "LightAgent 与 Observer 若未单独绑定含 Anthropic 通道的连接，将在纯终端下自动静默跳过。"
+        )
+    return {
+        "can_apply_to_codex": has_responses,
+        "has_responses_channel": has_responses,
+        "has_anthropic_channel": has_anthropic,
+        "missing_channel_reason": missing_reason,
+        "auxiliary_role_note": auxiliary_note,
+    }
+
+
 def list_targets() -> list[TargetStatus]:
     """Every known agent CLI, offerable or not, in display order."""
     return [target_status(agent_type) for agent_type in AGENT_TARGETS]

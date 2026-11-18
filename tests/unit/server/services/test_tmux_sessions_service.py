@@ -326,3 +326,65 @@ class TestForYouSignals:
         assert link is not None
         assert link.name == tmux_name
         assert link.busy is True
+
+    def test_list_waiting_uses_adapted_probe_for_codex(self, tmp_path, monkeypatch):
+        """验证 list_waiting() 在 codex 升为 adapted 后即时读取 rollout 末条回复与停止时刻，无需等 3 秒静默。"""
+        import json
+
+        from frago.session import codex_store
+
+        home = tmp_path / "codexhome"
+        (home / "sessions").mkdir(parents=True)
+        monkeypatch.setenv("CODEX_HOME", str(home))
+        monkeypatch.setattr(codex_store, "BINDINGS_PATH", tmp_path / "codex-sessions.json")
+
+        codex_sid = "01a0b1c2-1111-2222-3333-444455556666"
+        rollout_dir = home / "sessions" / "2026" / "11" / "18"
+        rollout_dir.mkdir(parents=True)
+        rollout_file = rollout_dir / f"rollout-2026-11-18T12-00-00-{codex_sid}.jsonl"
+        records = [
+            {
+                "timestamp": "2026-11-18T04:00:00.000Z",
+                "type": "session_meta",
+                "payload": {
+                    "session_id": codex_sid,
+                    "cwd": str(tmp_path),
+                    "timestamp": "2026-11-18T04:00:00.000Z",
+                },
+            },
+            {
+                "timestamp": "2026-11-18T04:00:01.000Z",
+                "type": "event_msg",
+                "payload": {"type": "task_started", "turn_id": "t-1"},
+            },
+            {
+                "timestamp": "2026-11-18T04:00:03.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "t-1",
+                    "last_agent_message": "代码修改已完成，请审阅。",
+                },
+            },
+        ]
+        # 文件刚刚写入（mtime 距当前 < 0.05s，远未满 3 秒静默）
+        rollout_file.write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+            encoding="utf-8",
+        )
+
+        tmux_name = f"frago-agent-{codex_sid}"
+        pane = "› Ask Codex to do anything\n  gpt-5 high · /Users/x/Repos/frago\n"
+        with (
+            patch.object(svc, "_session_names", return_value=[tmux_name]),
+            patch.object(svc, "_pane_commands", return_value={tmux_name: "codex"}),
+            patch.object(svc, "_tmux", return_value=pane),
+        ):
+            (row,) = svc.list_waiting()
+
+        assert row.session_id == codex_sid
+        assert row.awaiting_input is True
+        assert row.stop_reason == "end_turn"
+        assert row.last_stop_at == "2026-11-18T04:00:03+00:00"
+        assert row.closing_text == "代码修改已完成，请审阅。"
+

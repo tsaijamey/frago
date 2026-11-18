@@ -172,6 +172,9 @@ class HookInjectionFacet:
     profile_apply: Callable[[APIProfile], None] | None = None
     profile_revert: Callable[[], None] | None = None
     profile_unsupported_reason: str | None = None
+    inline_context_budget_tokens: int | None = None
+    merges_tool_context_into_result: bool = False
+    patch_tool_names: tuple[str, ...] = ()
     capability_level: str = "native"
 
 
@@ -321,6 +324,12 @@ class AgentDriver:
     is_busy: Callable[[str], bool] | None = None
     # 可选：Profile 配置激活模式显式声明（"file_and_env" | "env_only" | "session_env" | "native_flag" | "unsupported"）。
     profile_mode: str | None = None
+    # 可选：单次 Hook 注入的内联上下文 Token 预算上限（codex 为 8000）。
+    inline_context_budget_tokens: int | None = None
+    # 可选：是否将工具调用前后的 Hook 上下文并入工具执行结果返回（codex 为 True）。
+    merges_tool_context_into_result: bool = False
+    # 可选：该内核原生的补丁类工具名元组，供钩子引擎拆解为文件级 Write/Edit 事件（codex 为 ("apply_patch",)）。
+    patch_tool_names: tuple[str, ...] = ()
     # 可选：外部显式注入的完整切面结构覆盖。
     facets_override: AgentDriverFacets | None = None
 
@@ -398,6 +407,9 @@ class AgentDriver:
                 profile_apply=self.profile_apply,
                 profile_revert=self.profile_revert,
                 profile_unsupported_reason=self.profile_unsupported_reason,
+                inline_context_budget_tokens=self.inline_context_budget_tokens,
+                merges_tool_context_into_result=self.merges_tool_context_into_result,
+                patch_tool_names=self.patch_tool_names,
                 capability_level=self.get_capability_level("hook_injection"),
             ),
         )

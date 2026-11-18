@@ -516,12 +516,20 @@ class CodexSessionAdapter:
         from frago.session import codex_store
 
         turn = codex_store.latest_turn(session_id)
-        if turn is not None:
+        if turn is None and path is not None and path.exists():
+            turn = codex_store.latest_turn_from_path(path)
+        if turn is not None and (turn.turn_id is not None or turn.done):
             done = bool(turn.done)
+            stop_reason = (
+                getattr(turn, "stop_reason", None) or "end_turn"
+                if done
+                else None
+            )
             return TurnCompletionVerdict(
                 done=done,
-                stop_reason="end_turn" if done else None,
+                stop_reason=stop_reason,
                 final_text=getattr(turn, "text", "") or "",
+                unknown=False,
             )
 
         target = path or self.locate_transcript(session_id)
@@ -541,30 +549,41 @@ class CodexSessionAdapter:
                 final_text=str(last.payload.get("text") or ""),
                 unknown=False,
             )
+        if last.kind == "session.state":
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         return TurnCompletionVerdict(done=False, stop_reason=None, unknown=False)
 
     def probe_harness_idle(
         self, session_id: str, pane_text: str = "", pane_ansi: str = ""
     ) -> HarnessIdleVerdict:
+        from frago.agent_driver.drivers import codex as codex_driver
+
         target_text = pane_text or pane_ansi
         plain_text = _ANSI_ESCAPE_RE.sub("", target_text) if target_text else ""
-        lines = [ln for ln in plain_text.splitlines() if ln.strip()]
-        tail = "\n".join(lines[-8:]) if lines else ""
+        bare_shell = _looks_like_bare_shell_prompt(plain_text)
         is_busy = False
-        if tail and (
-            bool(re.search(r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)", tail))
-            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", tail))
-        ):
-            is_busy = True
+        if plain_text and not bare_shell:
+            is_busy = codex_driver.is_terminal_busy(plain_text)
 
         completion = self.probe_turn_completion(session_id)
-        if not completion.unknown and completion.done:
-            is_busy = False
+        if not completion.unknown:
+            if completion.done:
+                is_busy = False
+            elif not bare_shell:
+                is_busy = True
 
+        fatal_or_blocked = bool(
+            plain_text
+            and (
+                codex_driver._FATAL_STARTUP.search(plain_text) is not None
+                or codex_driver._NEEDS_INPUT.matches(plain_text)
+            )
+        )
+        awaiting = (not is_busy) and (not fatal_or_blocked)
         return HarnessIdleVerdict(
             is_busy=is_busy,
             is_terminal_idle=not is_busy,
-            awaiting_input=not is_busy,
+            awaiting_input=awaiting,
             detail="Codex busy" if is_busy else "Codex idle",
         )
 

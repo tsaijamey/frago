@@ -29,12 +29,18 @@ describe('useAgentClients 能力矩阵与特性声明', () => {
 
     expect(DEFAULT_AGENT_CAPABILITIES.claude.awaiting_input_probe).toBe('adapted');
     expect(DEFAULT_AGENT_CAPABILITIES.agy.awaiting_input_probe).toBe('fallback');
-    expect(DEFAULT_AGENT_CAPABILITIES.codex.awaiting_input_probe).toBe('fallback');
+    expect(DEFAULT_AGENT_CAPABILITIES.codex.awaiting_input_probe).toBe('adapted');
+    expect(DEFAULT_AGENT_CAPABILITIES.codex.busy_probe).toBe('adapted');
     expect(DEFAULT_AGENT_CAPABILITIES.opencode.awaiting_input_probe).toBe('fallback');
     expect(DEFAULT_AGENT_CAPABILITIES.coreagent.awaiting_input_probe).toBe('adapted');
     expect(DEFAULT_AGENT_CAPABILITIES.codex.hook_injection).toBe('adapted');
     expect(DEFAULT_AGENT_CAPABILITIES.claude.busy_probe).toBe('native');
     expect(DEFAULT_AGENT_CAPABILITIES.coreagent.busy_probe).toBe('native');
+  });
+
+  it('identifies codex as tier1 with adapted probes and zero fallback facets', () => {
+    const codexCaps = DEFAULT_AGENT_CAPABILITIES.codex;
+    expect(Object.values(codexCaps).every((v) => v === 'native' || v === 'adapted')).toBe(true);
   });
 
   it('优先消费服务端下发的能力切面，若缺省则回退到默认矩阵', () => {
