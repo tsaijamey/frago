@@ -685,6 +685,9 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         ):
             employee_record.active_session_ids.append(launch.session_id)
             await asyncio.to_thread(save_post, employee_record)
+        from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+        invalidate_employee_usage_cache(employee_record.member_post_id)
 
     return _launch_payload(launch)
 
@@ -772,6 +775,9 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
         ):
             employee_record.active_session_ids.append(launch.session_id)
             await asyncio.to_thread(save_post, employee_record)
+        from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+        invalidate_employee_usage_cache(employee_record.member_post_id)
 
     old_title, new_title = await asyncio.to_thread(
         workbench_handoff.name_pair, sid, launch, handoff=handoff
@@ -950,6 +956,9 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
         ):
             employee_record.active_session_ids.append(launch.session_id)
             await asyncio.to_thread(save_post, employee_record)
+        from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+        invalidate_employee_usage_cache(employee_record.member_post_id)
 
     recorded: bool | None = None
     mark_saved: bool | None = None
@@ -1464,6 +1473,82 @@ async def unpin_workbench_session(sid: str) -> dict[str, list[str]]:
     哪一家**——不管什么形状，把它从名单里去掉都是对的。
     """
     return {"pinned": await asyncio.to_thread(workbench_pins.unpin, sid)}
+
+
+class FilePinBody(BaseModel):
+    path: str
+    is_dir: bool = False
+
+
+class FilePinMergeBody(BaseModel):
+    pins: list[FilePinBody]
+
+
+class RecipeAppPinBody(BaseModel):
+    id: str
+
+
+class RecipeAppPinMergeBody(BaseModel):
+    pins: list[str]
+
+
+@router.get("/workbench/file-pins")
+async def list_workbench_file_pins() -> dict[str, list[dict[str, Any]]]:
+    """Files 菜单下固定的目录与文件清单（后端 ~/.frago/workbench_pins.json 真源）。"""
+    return {"pins": await asyncio.to_thread(workbench_pins.list_file_pins)}
+
+
+@router.put("/workbench/file-pins")
+async def put_workbench_file_pin(body: FilePinBody) -> dict[str, list[dict[str, Any]]]:
+    """将绝对路径固定到 Files 菜单下（幂等），返回完整清单。"""
+    try:
+        pins = await asyncio.to_thread(workbench_pins.pin_file, body.path, body.is_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"pins": pins}
+
+
+@router.delete("/workbench/file-pins")
+async def delete_workbench_file_pin(path: str = Query(...)) -> dict[str, list[dict[str, Any]]]:
+    """取消 Files 菜单下的某项固定（幂等），返回剩下的完整清单。"""
+    return {"pins": await asyncio.to_thread(workbench_pins.unpin_file, path)}
+
+
+@router.post("/workbench/file-pins/merge")
+async def merge_workbench_file_pins(body: FilePinMergeBody) -> dict[str, list[dict[str, Any]]]:
+    """首次迁移或合并本地缓存中的固定文件/目录，忽略非绝对路径并返回合并后清单。"""
+    items = [{"path": item.path, "is_dir": item.is_dir} for item in body.pins]
+    pins = await asyncio.to_thread(workbench_pins.merge_file_pins, items)
+    return {"pins": pins}
+
+
+@router.get("/workbench/recipe-app-pins")
+async def list_workbench_recipe_app_pins() -> dict[str, list[str]]:
+    """Recipes 菜单下已打开的配方 UI 清单（后端 ~/.frago/workbench_pins.json 真源）。"""
+    return {"pins": await asyncio.to_thread(workbench_pins.list_recipe_app_pins)}
+
+
+@router.put("/workbench/recipe-app-pins")
+async def put_workbench_recipe_app_pin(body: RecipeAppPinBody) -> dict[str, Any]:
+    """固定某个配方 UI：同配方已存在时返回既有条目（kept），不新增或覆写槽位。"""
+    try:
+        kept, pins = await asyncio.to_thread(workbench_pins.pin_recipe_app, body.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"kept": kept, "pins": pins}
+
+
+@router.delete("/workbench/recipe-app-pins")
+async def delete_workbench_recipe_app_pin(id: str = Query(...)) -> dict[str, list[str]]:
+    """摘掉 Recipes 菜单下的已打开配方 UI（幂等），返回剩下的完整清单。"""
+    return {"pins": await asyncio.to_thread(workbench_pins.unpin_recipe_app, id)}
+
+
+@router.post("/workbench/recipe-app-pins/merge")
+async def merge_workbench_recipe_app_pins(body: RecipeAppPinMergeBody) -> dict[str, list[str]]:
+    """首次迁移或合并本地缓存中的已打开配方 UI，返回合并后完整清单。"""
+    pins = await asyncio.to_thread(workbench_pins.merge_recipe_app_pins, body.pins)
+    return {"pins": pins}
 
 
 @router.get("/workbench/views")
@@ -2246,6 +2331,7 @@ class DesktopVoiceTranscribeRequest(BaseModel):
     session_id: str | None = None
     auto_send: bool = True
     cwd: str | None = None
+    agent: str | None = None
 
 
 class DesktopVoiceDispatchRequest(BaseModel):
@@ -2254,6 +2340,7 @@ class DesktopVoiceDispatchRequest(BaseModel):
     text: str
     session_id: str | None = None
     cwd: str | None = None
+    agent: str | None = None
 
 
 class DesktopVoiceSummarizeRequest(BaseModel):
@@ -2319,36 +2406,45 @@ async def transcribe_desktop_voice(request: DesktopVoiceTranscribeRequest) -> di
             resp_payload["reason"] = "hallucination_filtered"
         return resp_payload
 
+    from frago.server.services import workbench_agents
+
     try:
         dispatch_res = await asyncio.to_thread(
             stage_orchestrator.dispatch_desktop_voice_command,
             text,
             session_id=request.session_id,
             cwd=request.cwd,
+            agent=request.agent,
         )
+    except workbench_agents.AgentUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"投喂给 desktop-operator 失败：{e}") from e
 
-    _ensure_watching(dispatch_res["session_id"])
+    if dispatch_res.get("session_id"):
+        _ensure_watching(dispatch_res["session_id"])
     return {
         "text": text,
         "language": asr_res.get("language"),
         "model": asr_res.get("model"),
         "dispatched": True,
-        "session_id": dispatch_res["session_id"],
+        "session_id": dispatch_res.get("session_id"),
+        "handle": dispatch_res.get("handle"),
+        "agent": dispatch_res.get("agent"),
         "employee": dispatch_res["employee"],
         "status": dispatch_res["status"],
     }
 
 
 @router.get("/workbench/desktop-voice/active-session")
-async def get_active_desktop_voice_session() -> dict[str, Any]:
+async def get_active_desktop_voice_session(agent: str | None = None) -> dict[str, Any]:
     """查询 desktop-operator 最近活跃的存量会话 ID，并自动在当前服务进程中预挂载旁路语音提炼器。"""
     from frago.server.services import stage_orchestrator
 
     res = await asyncio.to_thread(
         stage_orchestrator.resolve_active_desktop_operator_session,
         ensure_summarizer=True,
+        preferred_agent=agent,
     )
     active_sid = res.get("session_id")
     if isinstance(active_sid, str) and active_sid.strip():
@@ -2359,7 +2455,7 @@ async def get_active_desktop_voice_session() -> dict[str, Any]:
 @router.post("/workbench/desktop-voice/dispatch")
 async def dispatch_desktop_voice_text(request: DesktopVoiceDispatchRequest) -> dict[str, Any]:
     """将文本请求直接派发给 desktop-operator 员工，并确保旁路语音总结器在线。"""
-    from frago.server.services import stage_orchestrator
+    from frago.server.services import stage_orchestrator, workbench_agents
 
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="发送内容不能为空。")
@@ -2369,11 +2465,15 @@ async def dispatch_desktop_voice_text(request: DesktopVoiceDispatchRequest) -> d
             request.text,
             session_id=request.session_id,
             cwd=request.cwd,
+            agent=request.agent,
         )
+    except workbench_agents.AgentUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"投喂给 desktop-operator 失败：{e}") from e
 
-    _ensure_watching(res["session_id"])
+    if res.get("session_id"):
+        _ensure_watching(res["session_id"])
     return res
 
 

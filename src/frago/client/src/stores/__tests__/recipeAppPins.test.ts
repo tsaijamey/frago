@@ -5,8 +5,15 @@
  * 那张页面上可能有人没保存的输入，换地址就是重新载入。
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
-import { onePerRecipe, recipeAppId, splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  LEGACY_RECIPE_APP_PINS_KEY,
+  onePerRecipe,
+  RECIPE_APP_PINS_MIGRATED_KEY,
+  recipeAppId,
+  splitRecipeAppId,
+  useRecipeAppPins,
+} from '@/stores/recipeAppPins';
 
 describe('onePerRecipe', () => {
   it('同一个配方只留第一次出现的那一项', () => {
@@ -18,7 +25,12 @@ describe('onePerRecipe', () => {
 
 describe('pin', () => {
   beforeEach(() => {
-    useRecipeAppPins.setState({ pins: [] });
+    localStorage.clear();
+    useRecipeAppPins.setState({ pins: [], loaded: false });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('没开着就 pin 上，返回它自己', () => {
@@ -46,6 +58,46 @@ describe('pin', () => {
     pin('kline');
     unpin('kline');
     expect(useRecipeAppPins.getState().pin('kline/r3')).toBe('kline/r3');
+  });
+
+  it('支持 toggle 与 isPinned 对外接口', () => {
+    const { toggle, isPinned } = useRecipeAppPins.getState();
+    expect(toggle('kline/r1')).toBe(true);
+    expect(isPinned('kline')).toBe(true);
+    expect(toggle('kline/r2')).toBe(false);
+    expect(isPinned('kline')).toBe(false);
+  });
+
+  it('首次加载执行一次性迁移并清理旧 localStorage，再加载直接读服务端', async () => {
+    localStorage.setItem(LEGACY_RECIPE_APP_PINS_KEY, JSON.stringify(['colab_compute_console']));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ pins: ['gold_silver_price_board', 'colab_compute_console'] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ pins: ['gold_silver_price_board'] }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await useRecipeAppPins.getState().load();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/workbench/recipe-app-pins/merge',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(localStorage.getItem(RECIPE_APP_PINS_MIGRATED_KEY)).toBe('1');
+    expect(localStorage.getItem(LEGACY_RECIPE_APP_PINS_KEY)).toBeNull();
+    expect(useRecipeAppPins.getState().pins).toEqual([
+      'gold_silver_price_board',
+      'colab_compute_console',
+    ]);
+
+    await useRecipeAppPins.getState().load();
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/workbench/recipe-app-pins', undefined);
+    expect(useRecipeAppPins.getState().pins).toEqual(['gold_silver_price_board']);
   });
 });
 

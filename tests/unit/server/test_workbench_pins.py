@@ -137,3 +137,112 @@ class TestRoutes:
         monkeypatch.setattr(record_reader, "list_sessions", list)
         client.put(f"/api/workbench/pins/{CC_SID}")
         assert client.get("/api/workbench/pins").json() == {"pinned": [CC_SID]}
+
+
+class TestFilePins:
+    def test_文件固定项规范化_去重与绝对路径校验(self):
+        assert workbench_pins.list_file_pins() == []
+        res = workbench_pins.pin_file("/Users/frago/Repos/", is_dir=True)
+        assert res == [{"path": "/Users/frago/Repos", "is_dir": True}]
+        # 重复固定同一路径（不带末尾斜杠）保持幂等不增行
+        assert workbench_pins.pin_file("/Users/frago/Repos", is_dir=True) == res
+        with pytest.raises(ValueError):
+            workbench_pins.pin_file("relative/path.md", is_dir=False)
+        with pytest.raises(ValueError):
+            workbench_pins.pin_file("~/notes.md", is_dir=False)
+
+    def test_文件固定项与会话置顶互不覆盖(self):
+        workbench_pins.pin(CC_SID)
+        workbench_pins.pin_file("/Users/frago/notes.md", is_dir=False)
+        workbench_pins.pin_recipe_app("kline")
+        assert workbench_pins.list_pins() == [CC_SID]
+        assert workbench_pins.list_file_pins() == [{"path": "/Users/frago/notes.md", "is_dir": False}]
+        assert workbench_pins.list_recipe_app_pins() == ["kline"]
+        # 取消其中一类不影响另外两类
+        workbench_pins.unpin_file("/Users/frago/notes.md")
+        assert workbench_pins.list_file_pins() == []
+        assert workbench_pins.list_pins() == [CC_SID]
+        assert workbench_pins.list_recipe_app_pins() == ["kline"]
+
+    def test_合并文件固定项自动过滤非法路径并保序去重(self):
+        workbench_pins.pin_file("/Users/frago/a", is_dir=True)
+        merged = workbench_pins.merge_file_pins(
+            [
+                {"path": "/Users/frago/a/", "is_dir": True},
+                {"path": "relative.md", "is_dir": False},
+                {"path": "/Users/frago/b.md", "is_dir": False},
+            ]
+        )
+        assert merged == [
+            {"path": "/Users/frago/a", "is_dir": True},
+            {"path": "/Users/frago/b.md", "is_dir": False},
+        ]
+
+    def test_文件固定项接口契约_GET_PUT_DELETE_MERGE(self, client):
+        assert client.get("/api/workbench/file-pins").json() == {"pins": []}
+        bad = client.put(
+            "/api/workbench/file-pins",
+            json={"path": "relative.md", "is_dir": False},
+        )
+        assert bad.status_code == 400
+        ok = client.put(
+            "/api/workbench/file-pins",
+            json={"path": "/Users/frago/Repos/", "is_dir": True},
+        )
+        assert ok.status_code == 200
+        assert ok.json() == {"pins": [{"path": "/Users/frago/Repos", "is_dir": True}]}
+        merged = client.post(
+            "/api/workbench/file-pins/merge",
+            json={
+                "pins": [
+                    {"path": "/Users/frago/Repos", "is_dir": True},
+                    {"path": "/Users/frago/doc.md", "is_dir": False},
+                    {"path": "bad/rel.md", "is_dir": False},
+                ]
+            },
+        )
+        assert merged.status_code == 200
+        assert merged.json() == {
+            "pins": [
+                {"path": "/Users/frago/Repos", "is_dir": True},
+                {"path": "/Users/frago/doc.md", "is_dir": False},
+            ]
+        }
+        deleted = client.delete(
+            "/api/workbench/file-pins",
+            params={"path": "/Users/frago/Repos"},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json() == {"pins": [{"path": "/Users/frago/doc.md", "is_dir": False}]}
+
+
+class TestRecipeAppPins:
+    def test_配方界面固定项_同配方保持已有槽位与默认槽位归一(self):
+        assert workbench_pins.list_recipe_app_pins() == []
+        kept, pins = workbench_pins.pin_recipe_app("kline/default")
+        assert kept == "kline"
+        assert pins == ["kline"]
+        # 同名配方再来不同槽位时返回已开的那一项
+        kept2, pins2 = workbench_pins.pin_recipe_app("kline/r2")
+        assert kept2 == "kline"
+        assert pins2 == ["kline"]
+        assert workbench_pins.unpin_recipe_app("kline") == []
+        assert workbench_pins.unpin_recipe_app("kline") == []
+
+    def test_配方界面接口契约_GET_PUT_DELETE_MERGE(self, client):
+        assert client.get("/api/workbench/recipe-app-pins").json() == {"pins": []}
+        put1 = client.put("/api/workbench/recipe-app-pins", json={"id": "kline/r1"})
+        assert put1.status_code == 200
+        assert put1.json() == {"kept": "kline/r1", "pins": ["kline/r1"]}
+        put2 = client.put("/api/workbench/recipe-app-pins", json={"id": "kline/r2"})
+        assert put2.status_code == 200
+        assert put2.json() == {"kept": "kline/r1", "pins": ["kline/r1"]}
+        merged = client.post(
+            "/api/workbench/recipe-app-pins/merge",
+            json={"pins": ["kline/r3", "ledger", "board/s1"]},
+        )
+        assert merged.status_code == 200
+        assert merged.json() == {"pins": ["kline/r1", "ledger", "board/s1"]}
+        deleted = client.delete("/api/workbench/recipe-app-pins", params={"id": "kline/r1"})
+        assert deleted.status_code == 200
+        assert deleted.json() == {"pins": ["ledger", "board/s1"]}

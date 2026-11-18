@@ -6,7 +6,7 @@
  * 左边那一列点一下就翻、染色回来之后确实换成了染过的 HTML。
  */
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const getSessionFileContent = vi.fn();
@@ -14,6 +14,7 @@ const getSessionFileDiff = vi.fn();
 const putSessionFileContent = vi.fn();
 const getSessionFileAnnotations = vi.fn();
 const putSessionFileAnnotations = vi.fn();
+const probeSessionPath = vi.fn();
 vi.mock('@/api', () => ({
   getSessionFileContent: (sid: string, path: string) => getSessionFileContent(sid, path),
   getSessionFileDiff: (sid: string, path: string) => getSessionFileDiff(sid, path),
@@ -21,6 +22,7 @@ vi.mock('@/api', () => ({
     putSessionFileContent(sid, path, text),
   getSessionFileAnnotations: (sid: string) => getSessionFileAnnotations(sid),
   putSessionFileAnnotations: (sid: string, body: unknown) => putSessionFileAnnotations(sid, body),
+  probeSessionPath: (sid: string, path: string) => probeSessionPath(sid, path),
 }));
 
 const loadHighlighter = vi.fn();
@@ -32,6 +34,7 @@ vi.mock('@/utils/codeHighlight', () => ({
 
 import FileViewer, { resolvePreviewSelectionLines } from '../FileViewer';
 import type { SessionFileRow } from '@/types/api';
+import { useFilePins } from '@/stores/filePins';
 import i18n from '@/i18n';
 
 beforeAll(async () => {
@@ -49,13 +52,23 @@ function neverHighlight() {
 }
 
 beforeEach(() => {
+  localStorage.removeItem('file-browser-pins');
+  useFilePins.setState({ pins: [], activePath: null, pendingTarget: null });
   getSessionFileContent.mockReset();
   getSessionFileDiff.mockReset();
   putSessionFileContent.mockReset();
   getSessionFileAnnotations.mockReset();
   putSessionFileAnnotations.mockReset();
+  probeSessionPath.mockReset();
   loadHighlighter.mockReset();
   neverHighlight();
+  probeSessionPath.mockResolvedValue({
+    path: '/w/src/a.py',
+    resolved: '/w/src/a.py',
+    exists: true,
+    is_file: true,
+    size: 12,
+  });
   getSessionFileAnnotations.mockResolvedValue({
     version: 1,
     trace_path: '~/.frago/sessions/claude-code/sid-1/file-annotations.json',
@@ -780,6 +793,10 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('传入 initialMode="changes" 时直接以改动对照模式打开（供 DeliveryTriad diff pill 跳转使用）', async () => {
     getSessionFileDiff.mockResolvedValue({
       path: '/w/src/a.py',
@@ -798,5 +815,118 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     const diff = await screen.findByTestId('file-diff');
     expect(diff.textContent).toContain('x = 2');
     expect(getSessionFileDiff).toHaveBeenCalledWith('sid-1', '/w/src/a.py');
+  });
+
+  it('绝对路径文件打开时 Pin 按钮正常写入 useFilePins 并可切换取消 Pin', async () => {
+    open();
+    const pinBtn = await screen.findByTestId('file-viewer-pin');
+    expect((pinBtn as HTMLButtonElement).disabled).toBe(false);
+    expect(pinBtn.getAttribute('aria-pressed')).toBe('false');
+    expect(pinBtn.getAttribute('aria-label')).toBe(i18n.t('files.pin'));
+
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([{ path: '/w/src/a.py', is_dir: false }]);
+    expect(pinBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(pinBtn.getAttribute('aria-label')).toBe(i18n.t('files.unpin'));
+
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([]);
+    expect(pinBtn.getAttribute('aria-pressed')).toBe('false');
+    expect(pinBtn.getAttribute('aria-label')).toBe(i18n.t('files.pin'));
+  });
+
+  it('相对路径文件自动解析为绝对路径后再 Pin，并在会话内容 403 时回退读取 /api/file 正常预览', async () => {
+    const relPath = 'upstream-meeting-report.md';
+    const resolvedAbs = '/w/docs/upstream-meeting-report.md';
+    probeSessionPath.mockResolvedValueOnce({
+      path: relPath,
+      resolved: resolvedAbs,
+      exists: true,
+      is_file: true,
+      size: 24,
+    });
+    getSessionFileContent.mockRejectedValueOnce(
+      new Error(`403: Refused: ${relPath} is not a file this session changed`)
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => '# 会议纪要\n\n回退预览成功',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    open({
+      files: [{ path: relPath, action: 'created', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    await waitFor(() => expect(probeSessionPath).toHaveBeenCalledWith('sid-1', relPath));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/file?disposition=inline&path=${encodeURIComponent(resolvedAbs)}`
+      )
+    );
+    const mdPreview = await screen.findByTestId('file-viewer-md-preview');
+    expect(mdPreview.textContent).toContain('回退预览成功');
+
+    const pinBtn = screen.getByTestId('file-viewer-pin') as HTMLButtonElement;
+    await waitFor(() => expect(pinBtn.disabled).toBe(false));
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([{ path: resolvedAbs, is_dir: false }]);
+  });
+
+  it('相对路径无法解析为绝对路径时禁用 Pin 按钮且不写入 useFilePins', async () => {
+    const relPath = 'missing-report.md';
+    probeSessionPath.mockResolvedValueOnce({
+      path: relPath,
+      resolved: null,
+      exists: false,
+      is_file: false,
+      size: null,
+    });
+    getSessionFileContent.mockResolvedValueOnce({
+      path: relPath,
+      size: 10,
+      text: '# missing',
+      reason: null,
+    });
+
+    open({
+      files: [{ path: relPath, action: 'created', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    await waitFor(() => expect(probeSessionPath).toHaveBeenCalledWith('sid-1', relPath));
+    const pinBtn = screen.getByTestId('file-viewer-pin') as HTMLButtonElement;
+    expect(pinBtn.disabled).toBe(true);
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([]);
+  });
+
+  it('相对路径虽计算出 resolved 但磁盘不存在（exists=false）时同样禁用 Pin 按钮', async () => {
+    const relPath = 'ghost-report.md';
+    probeSessionPath.mockResolvedValueOnce({
+      path: relPath,
+      resolved: '/w/docs/ghost-report.md',
+      exists: false,
+      is_file: false,
+      size: null,
+    });
+    getSessionFileContent.mockResolvedValueOnce({
+      path: relPath,
+      size: 10,
+      text: '# ghost',
+      reason: null,
+    });
+
+    open({
+      files: [{ path: relPath, action: 'created', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    await waitFor(() => expect(probeSessionPath).toHaveBeenCalledWith('sid-1', relPath));
+    const pinBtn = screen.getByTestId('file-viewer-pin') as HTMLButtonElement;
+    expect(pinBtn.disabled).toBe(true);
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([]);
   });
 });

@@ -6,6 +6,8 @@ import { RECONNECTED_EVENT } from '@/api/connection';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useHashRoute } from '@/hooks/useHashRoute';
 import { useRecipeAppOpen } from '@/hooks/useRecipeAppOpen';
+import { FILE_PINS_SYNC_TICK_KEY, useFilePins } from '@/stores/filePins';
+import { RECIPE_APP_PINS_SYNC_TICK_KEY, useRecipeAppPins } from '@/stores/recipeAppPins';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
@@ -37,6 +39,8 @@ function App() {
       await waitForApi();
       setApiReady(true);
       await loadConfig();
+      void useFilePins.getState().load();
+      void useRecipeAppPins.getState().load();
 
       // Check init status after API is ready
       try {
@@ -89,6 +93,34 @@ function App() {
     window.addEventListener(RECONNECTED_EVENT, onReconnected);
     return () => window.removeEventListener(RECONNECTED_EVENT, onReconnected);
   }, [bootstrapHttpApp, initCompleted]);
+
+  useEffect(() => {
+    if (getApiMode() !== 'http') return;
+    const syncAll = () => {
+      void useFilePins.getState().load();
+      void useRecipeAppPins.getState().load();
+    };
+    const onVisibility = () => {
+      if (!document.hidden) syncAll();
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === FILE_PINS_SYNC_TICK_KEY) {
+        void useFilePins.getState().load();
+      } else if (e.key === RECIPE_APP_PINS_SYNC_TICK_KEY) {
+        void useRecipeAppPins.getState().load();
+      }
+    };
+    window.addEventListener('focus', syncAll);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(RECONNECTED_EVENT, syncAll);
+    return () => {
+      window.removeEventListener('focus', syncAll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(RECONNECTED_EVENT, syncAll);
+    };
+  }, []);
 
   // Handle init wizard completion
   const handleInitComplete = () => {

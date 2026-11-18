@@ -23,13 +23,21 @@ import {
   Maximize2,
   MessageSquarePlus,
   Minimize2,
+  Pin,
+  PinOff,
   RotateCcw,
   Save,
   Send,
   X,
 } from 'lucide-react';
-import { getSessionFileContent, getSessionFileDiff, putSessionFileContent } from '@/api';
+import {
+  getSessionFileContent,
+  getSessionFileDiff,
+  probeSessionPath,
+  putSessionFileContent,
+} from '@/api';
 import type { SessionFileContent, SessionFileDiff, SessionFileRow } from '@/types/api';
+import { normalizePinPath, useFilePins } from '@/stores/filePins';
 import {
   formatPackedAnnotationsPrompt,
   useFileAnnotations,
@@ -329,6 +337,12 @@ export function resolvePreviewSelectionLines(
   return { lineStart: 1, lineEnd: 1 };
 }
 
+/** 判断是否为明确的系统绝对路径（POSIX `/`、Windows 盘符或 UNC `\\`；`~/` 需走服务端展开）。 */
+function isAbsoluteFilePath(p: string): boolean {
+  const trimmed = p.trim();
+  return trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\');
+}
+
 export default function FileViewer({
   sessionId,
   files,
@@ -346,6 +360,8 @@ export default function FileViewer({
   const internalAnnotations = useFileAnnotations(externalAnnotations ? null : sessionId);
   const annState = externalAnnotations ?? internalAnnotations;
   const { annotations, tracePath, addAnnotation, removeAnnotation } = annState;
+  const filePins = useFilePins((s) => s.pins);
+  const toggleFilePin = useFilePins((s) => s.togglePin);
 
   const file = files[index];
   const [content, setContent] = useState<SessionFileContent | null>(null);
@@ -355,6 +371,22 @@ export default function FileViewer({
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const path = file?.path ?? '';
+  const pathKey = `${sessionId}\0${path}`;
+  const directAbsolutePath = useMemo(
+    () => (path && isAbsoluteFilePath(path) ? normalizePinPath(path) : null),
+    [path]
+  );
+  const [probedState, setProbedState] = useState<{
+    key: string;
+    resolved: string | null;
+    done: boolean;
+  } | null>(null);
+  const currentProbed = probedState?.key === pathKey ? probedState : null;
+  const effectivePath = directAbsolutePath ?? currentProbed?.resolved ?? null;
+  const pinTargetPath = effectivePath;
+  const isPinned = Boolean(
+    pinTargetPath && filePins.some((item) => normalizePinPath(item.path) === pinTargetPath)
+  );
   const lang = useMemo(() => langOf(path), [path]);
   const previewKind = useMemo(() => previewKindOf(path), [path]);
   const mediaKind = useMemo(() => mediaKindOf(path), [path]);
@@ -401,6 +433,25 @@ export default function FileViewer({
   useEffect(() => {
     if (!path) return;
     let alive = true;
+    const effectKey = `${sessionId}\0${path}`;
+    const directAbsolute = isAbsoluteFilePath(path) ? normalizePinPath(path) : null;
+    const shouldProbe =
+      !directAbsolute && Boolean(sessionId) && typeof probeSessionPath === 'function';
+    const probePromise: Promise<string | null> = shouldProbe
+      ? probeSessionPath(sessionId, path)
+          .then((probe) =>
+            probe?.resolved && probe?.exists && isAbsoluteFilePath(probe.resolved)
+              ? normalizePinPath(probe.resolved)
+              : null
+          )
+          .catch(() => null)
+      : Promise.resolve(directAbsolute);
+    void probePromise.then((resolved) => {
+      if (alive && shouldProbe) {
+        setProbedState({ key: effectKey, resolved, done: true });
+      }
+    });
+
     setContent(null);
     setError(null);
     setMode(initialMode ?? (previewKindOf(path) ? 'preview' : 'file'));
@@ -425,16 +476,19 @@ export default function FileViewer({
       .catch(async (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         if (
-          path.startsWith('/') &&
           typeof fetch === 'function' &&
-          (msg.includes('not a file this session changed') || msg.includes('403'))
+          (msg.includes('not a file this session changed') ||
+            msg.includes('403') ||
+            msg.includes('Refused'))
         ) {
-          const res = await fetch(`/api/file?disposition=inline&path=${encodeURIComponent(path)}`);
+          const fallbackPath = directAbsolute ?? (await probePromise);
+          if (!fallbackPath) throw err;
+          const res = await fetch(fileRawUrl(fallbackPath));
           if (!res.ok) throw err;
           const rawText = await res.text();
           const isBinary = rawText.slice(0, 4096).includes('\u0000');
           return {
-            path,
+            path: fallbackPath,
             size: rawText.length,
             text: isBinary ? null : rawText,
             reason: isBinary ? ('not-text' as const) : null,
@@ -457,7 +511,7 @@ export default function FileViewer({
     return () => {
       alive = false;
     };
-  }, [sessionId, path]);
+  }, [sessionId, path, fileRawUrl]);
 
   useEffect(
     () => () => {
@@ -548,14 +602,14 @@ export default function FileViewer({
 
   const copyPath = useCallback(() => {
     void navigator.clipboard
-      ?.writeText(path)
+      ?.writeText(effectivePath ?? path)
       .then(() => {
         setCopied(true);
         if (copyTimer.current) clearTimeout(copyTimer.current);
         copyTimer.current = setTimeout(() => setCopied(false), 1_500);
       })
       .catch(() => {});
-  }, [path]);
+  }, [effectivePath, path]);
 
   const text = content?.text ?? null;
   const html = useHighlightedHtml(text, lang);
@@ -908,6 +962,14 @@ export default function FileViewer({
   const iconBtn =
     'inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] text-text-muted hover:bg-bg-hover hover:text-text-primary';
 
+  const isProbingMediaPath = Boolean(
+    mediaKind &&
+      !directAbsolutePath &&
+      sessionId &&
+      typeof probeSessionPath === 'function' &&
+      !currentProbed?.done
+  );
+
   const noPreview = () => {
     const reason = content?.reason;
     const line =
@@ -923,7 +985,7 @@ export default function FileViewer({
         <span className="max-w-[360px]">{line}</span>
         <button
           type="button"
-          onClick={() => onReveal(file.path)}
+          onClick={() => onReveal(effectivePath ?? file.path)}
           className="mt-1 rounded-[6px] px-2 py-[3px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
         >
           {t('workbench.files.openFolder')}
@@ -1078,6 +1140,23 @@ export default function FileViewer({
             </button>
             <button
               type="button"
+              data-testid="file-viewer-pin"
+              disabled={!pinTargetPath}
+              aria-pressed={isPinned}
+              title={isPinned ? t('files.unpin') : t('files.pin')}
+              aria-label={isPinned ? t('files.unpin') : t('files.pin')}
+              onClick={() => {
+                if (!pinTargetPath) return;
+                toggleFilePin({ path: pinTargetPath, is_dir: false });
+              }}
+              className={`${iconBtn} disabled:cursor-not-allowed disabled:opacity-40 ${
+                isPinned ? 'text-text-primary' : ''
+              }`}
+            >
+              {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+            </button>
+            <button
+              type="button"
               data-testid="file-viewer-copy"
               title={t('workbench.files.copyPath')}
               onClick={copyPath}
@@ -1089,7 +1168,7 @@ export default function FileViewer({
               type="button"
               data-testid="file-viewer-reveal"
               title={t('workbench.files.openFolderHint')}
-              onClick={() => onReveal(file.path)}
+              onClick={() => onReveal(effectivePath ?? file.path)}
               className={iconBtn}
             >
               <FolderOpen size={14} />
@@ -1171,37 +1250,44 @@ export default function FileViewer({
           >
             {mode === 'changes' ? (
               <FileDiff diff={diff} loading={diffLoading} error={diffError} />
-            ) : mediaKind === 'image' ? (
+            ) : mediaKind && isProbingMediaPath ? (
+              <p className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
+                <Loader2 size={14} className="animate-spin" />
+                {t('workbench.files.loadingContent')}
+              </p>
+            ) : mediaKind && !effectivePath ? (
+              noPreview()
+            ) : mediaKind === 'image' && effectivePath ? (
               <div
                 data-testid="file-viewer-media-preview"
                 className="flex h-full items-center justify-center overflow-auto bg-bg-base p-4"
               >
                 <img
                   data-testid="file-viewer-image-preview"
-                  src={fileRawUrl(path)}
+                  src={fileRawUrl(effectivePath)}
                   alt={baseOf(path)}
                   className="max-h-full max-w-full rounded-[6px] object-contain"
                 />
               </div>
-            ) : mediaKind === 'video' ? (
+            ) : mediaKind === 'video' && effectivePath ? (
               <div
                 data-testid="file-viewer-media-preview"
                 className="flex h-full items-center justify-center bg-bg-base p-4"
               >
-                <video src={fileRawUrl(path)} controls className="max-h-full max-w-full" />
+                <video src={fileRawUrl(effectivePath)} controls className="max-h-full max-w-full" />
               </div>
-            ) : mediaKind === 'audio' ? (
+            ) : mediaKind === 'audio' && effectivePath ? (
               <div
                 data-testid="file-viewer-media-preview"
                 className="flex h-full items-center justify-center bg-bg-base p-4"
               >
-                <audio src={fileRawUrl(path)} controls className="w-[min(520px,100%)]" />
+                <audio src={fileRawUrl(effectivePath)} controls className="w-[min(520px,100%)]" />
               </div>
-            ) : mediaKind === 'pdf' ? (
+            ) : mediaKind === 'pdf' && effectivePath ? (
               <iframe
                 data-testid="file-viewer-pdf-preview"
                 title={baseOf(path)}
-                src={fileRawUrl(path)}
+                src={fileRawUrl(effectivePath)}
                 className="h-full w-full border-0 bg-bg-base"
               />
             ) : loading ? (
@@ -1360,7 +1446,7 @@ export default function FileViewer({
                       </span>
                       <span>{t('workbench.files.annotateShortcutHint')}</span>
                     </div>
-                    <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                    <div className="mb-2 max-h-[64px] min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] leading-[1.45] text-text-muted">
                       {draftRange.quote}
                     </div>
                     <textarea
@@ -1448,8 +1534,8 @@ export default function FileViewer({
                   ) : null}
                 </div>
 
-                <pre className="m-0 flex-1 py-2.5 font-mono text-[12px] leading-[1.65] text-text-secondary">
-                  <code className="hljs block">
+                <pre className="m-0 min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] py-2.5 font-mono text-[12px] leading-[1.65] text-text-secondary">
+                  <code className="hljs block min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                     {lines.map((lineText, idx) => {
                       const lineNo = idx + 1;
                       const isAnnotated = currentFileAnnotations.some(
@@ -1541,7 +1627,7 @@ export default function FileViewer({
                                 </span>
                                 <span>{t('workbench.files.annotateShortcutHint')}</span>
                               </div>
-                              <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                              <div className="mb-2 max-h-[64px] min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] leading-[1.45] text-text-muted">
                                 {draftRange.quote}
                               </div>
                               <textarea
@@ -1677,7 +1763,7 @@ export default function FileViewer({
                             <X size={11} />
                           </button>
                         </div>
-                        <div className="mb-1.5 truncate rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-1 font-mono text-[11px] text-text-muted">
+                        <div className="mb-1.5 max-h-[72px] min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-1 font-mono text-[11px] leading-[1.45] text-text-muted">
                           {ann.quote}
                         </div>
                         <div className="whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-text-primary">
