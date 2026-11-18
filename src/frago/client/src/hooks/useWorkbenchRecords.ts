@@ -154,6 +154,22 @@ export interface SendTrail {
   expired?: boolean;
 }
 
+/** 判断记录是否属于外部生命周期协调器/人工叫停写入的中止通知。 */
+export function isLifecycleStopRecord(r: WorkbenchRecord): boolean {
+  if (r.kind === 'context.inject' && r.payload.channel === 'lifecycle-stop') {
+    return true;
+  }
+  if (
+    r.kind === 'error' &&
+    r.payload.code === 'informational' &&
+    typeof r.payload.message === 'string' &&
+    r.payload.message.includes('停下')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** 这份进度走完了没有：答完或没发出去都算。 */
 export function trailSettled(trail: SendTrail): boolean {
   return trail.steps.answered !== undefined || trail.steps.failed !== undefined;
@@ -205,16 +221,30 @@ export function advanceTrails(trails: SendTrail[], records: WorkbenchRecord[]): 
       }
       landedAt ??= r.ts;
     }
+    const floor =
+      (landedAt ?? steps.in_the_session ?? steps.queued ?? (trail.steps.on_its_way ?? 0)) - 1_000;
     if (!midTurn && steps.in_the_session !== undefined && steps.picked_up === undefined) {
-      const floor = (landedAt ?? steps.in_the_session) - 1_000;
       for (const r of records) {
         if (r.ts < floor) continue;
-        if (AGENT_ACTIVITY.has(r.kind)) {
+        if (AGENT_ACTIVITY.has(r.kind) && !isLifecycleStopRecord(r)) {
           steps.picked_up = r.ts || Date.now();
           break;
         }
         // 斜杠命令跑在本机，不惊动模型：命令自己打印的那段就是回执
         if (r.kind === 'context.inject' && r.payload.channel === 'local-command-output') {
+          steps.answered = r.ts || Date.now();
+          break;
+        }
+      }
+    }
+    if (
+      steps.answered === undefined &&
+      steps.failed === undefined &&
+      (steps.in_the_session !== undefined || steps.queued !== undefined)
+    ) {
+      for (const r of records) {
+        if (r.ts < floor) continue;
+        if (isLifecycleStopRecord(r) || r.kind === 'interrupt') {
           steps.answered = r.ts || Date.now();
           break;
         }
@@ -985,7 +1015,12 @@ export function useWorkbenchRecords(
         r.kind === 'context.inject' &&
         r.payload.channel === 'local-command-output'
     );
-    if (spoke || printed) {
+    const stopped = records.some(
+      (r) =>
+        r.ts >= awaitingSince - 1_000 &&
+        (isLifecycleStopRecord(r) || r.kind === 'interrupt')
+    );
+    if (spoke || printed || stopped) {
       setAwaitingSince(null);
       return;
     }

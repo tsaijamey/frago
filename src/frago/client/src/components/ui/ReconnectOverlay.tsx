@@ -8,10 +8,40 @@
  *    同时允许点击「暂时收起」退化为顶部紧凑警示条，查看页面已有内容且保留草稿不丢失，服务恢复即自动收起。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, RefreshCw, Terminal, ChevronUp, ChevronDown } from 'lucide-react';
-import { useConnectionStore, WAKE_COMMAND } from '@/api/connection';
+import { Check, Copy, RefreshCw, Terminal, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { RECONNECTED_EVENT, useConnectionStore, WAKE_COMMAND } from '@/api/connection';
+
+const ENTRY_SCRIPT_RE = /assets\/(index-[A-Za-z0-9_-]+\.js)/;
+
+export function extractEntryScriptName(html: string): string | null {
+  const m = ENTRY_SCRIPT_RE.exec(html);
+  return m ? m[1] : null;
+}
+
+export function getLoadedEntryScriptName(): string | null {
+  if (typeof document === 'undefined') return null;
+  const scripts = document.querySelectorAll('script[src]');
+  for (let i = 0; i < scripts.length; i += 1) {
+    const src = scripts[i].getAttribute('src') ?? '';
+    const m = ENTRY_SCRIPT_RE.exec(src);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+export function hasUnsentPageDraft(): boolean {
+  if (typeof document === 'undefined') return false;
+  const boxes = document.querySelectorAll('textarea');
+  for (let i = 0; i < boxes.length; i += 1) {
+    const el = boxes[i];
+    if (!el.readOnly && !el.disabled && el.value.trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
@@ -40,7 +70,12 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export default function ReconnectOverlay() {
+export default function ReconnectOverlay({
+  onReload,
+}: {
+  /** 测试注入用：替换默认的 window.location.reload() */
+  onReload?: () => void;
+} = {}) {
   const reachable = useConnectionStore((state) => state.reachable);
   const prolonged = useConnectionStore((state) => state.prolonged);
   const collapsed = useConnectionStore((state) => state.collapsed);
@@ -50,7 +85,50 @@ export default function ReconnectOverlay() {
   const { t } = useTranslation();
 
   const [copied, setCopied] = useState(false);
+  const [staleBuild, setStaleBuild] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const reloadPage = useCallback(() => {
+    if (onReload) {
+      onReload();
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  }, [onReload]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    const onReconnected = () => {
+      const loaded = getLoadedEntryScriptName();
+      if (!loaded || typeof globalThis.fetch !== 'function') return;
+      void (async () => {
+        try {
+          const res = await globalThis.fetch('/index.html', { cache: 'no-store' });
+          if (!res.ok || cancelled) return;
+          const html = await res.text();
+          if (cancelled) return;
+          const latest = extractEntryScriptName(html);
+          if (latest && latest !== loaded) {
+            if (!hasUnsentPageDraft()) {
+              reloadPage();
+            } else {
+              setStaleBuild(true);
+            }
+          }
+        } catch {
+          // 网络瞬时抖动或测试环境未拦截 /index.html 时静默忽略
+        }
+      })();
+    };
+    window.addEventListener(RECONNECTED_EVENT, onReconnected);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(RECONNECTED_EVENT, onReconnected);
+    };
+  }, [reloadPage]);
 
   useEffect(() => {
     if (reachable) {
@@ -70,7 +148,45 @@ export default function ReconnectOverlay() {
     };
   }, []);
 
-  if (reachable) return null;
+  if (reachable) {
+    if (!staleBuild) return null;
+    return (
+      <div
+        className="reconnect-compact-wrap"
+        data-testid="reconnect-stale-build-banner"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="reconnect-compact-bar">
+          <div className="reconnect-compact-main">
+            <span className="reconnect-status-dot" aria-hidden="true" />
+            <span className="reconnect-compact-text">{t('reconnect.staleBuildBanner')}</span>
+          </div>
+          <div className="reconnect-compact-actions">
+            <button
+              type="button"
+              onClick={reloadPage}
+              data-testid="reconnect-reload-btn"
+              className="reconnect-btn-primary reconnect-btn-xs"
+            >
+              <RefreshCw size={12} />
+              <span>{t('reconnect.reloadNow')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStaleBuild(false)}
+              data-testid="reconnect-stale-dismiss-btn"
+              aria-label={t('reconnect.dismissUpdate')}
+              title={t('reconnect.dismissUpdate')}
+              className="reconnect-btn-secondary reconnect-btn-xs"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(WAKE_COMMAND);

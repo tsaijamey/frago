@@ -206,3 +206,50 @@ def test_locate_transcript_falls_back_to_scan(tmp_path):
 
 def test_locate_transcript_missing_returns_none(tmp_path):
     assert locate_transcript("ghost", cwd=None, projects_root=tmp_path) is None
+
+
+# ── trailing new turn detection (anti-premature-idle-kill) ─────────────────
+
+
+def test_trailing_substantive_user_prompt_marks_not_done():
+    recs = [
+        _assistant("req1", "end_turn", _text("上一轮完结")),
+        {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "继续检查"}]}, "uuid": "u2"},
+    ]
+    r = evaluate_records(recs)
+    assert r.done is False
+    assert r.stop_reason is None
+    assert r.final_text == ""
+    assert r.pending_tool_use is False
+
+
+def test_trailing_user_prompt_submit_hook_marks_not_done():
+    recs = [
+        _assistant("req1", "end_turn", _text("上一轮完结")),
+        {
+            "type": "attachment",
+            "attachment": {"type": "hook_additional_context", "hookName": "UserPromptSubmit:frago", "content": ["rule"]},
+        },
+    ]
+    r = evaluate_records(recs)
+    assert r.done is False
+    assert r.stop_reason is None
+
+
+def test_trailing_tool_result_or_system_informational_does_not_flip_done():
+    recs = [
+        _assistant("req1", "end_turn", _text("上一轮完结")),
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+            },
+        },
+        {"type": "system", "subtype": "informational", "level": "warning", "content": "通知"},
+        {"type": "user", "isMeta": True, "message": {"role": "user", "content": "meta"}},
+    ]
+    r = evaluate_records(recs)
+    assert r.done is True
+    assert r.stop_reason == "end_turn"
+    assert r.final_text == "上一轮完结"

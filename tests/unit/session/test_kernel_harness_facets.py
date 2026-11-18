@@ -246,6 +246,48 @@ def test_coreagent_adapter_idle_on_closed_end_turn_transcript_with_tool_history(
         assert verdict.awaiting_input is True
 
 
+def test_coreagent_adapter_busy_when_new_user_prompt_trails_end_turn(tmp_path) -> None:
+    """CoreAgent: 上一轮 end_turn 后尾部出现新 user 提问或 UserPromptSubmit 钩子时，probe_harness_idle 必须判忙防误杀。"""
+    import json
+
+    adapter = get_kernel_session_adapter("coreagent")
+    sid = "core_awaiting_first_token"
+    transcript = tmp_path / f"{sid}.jsonl"
+    records = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T14:27:22Z",
+            "message": {
+                "role": "assistant",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "上一轮回答完成。"}],
+            },
+        },
+        {
+            "type": "attachment",
+            "timestamp": "2026-11-18T14:27:30Z",
+            "attachment": {
+                "type": "hook_additional_context",
+                "hookName": "UserPromptSubmit:frago",
+                "content": ["注入规则"],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": "2026-11-18T14:27:30Z",
+            "message": {"role": "user", "content": [{"type": "text", "text": "继续分析"}]},
+        },
+    ]
+    transcript.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+        encoding="utf-8",
+    )
+    with patch.object(adapter, "locate_transcript", return_value=transcript):
+        verdict = adapter.probe_harness_idle(sid, pane_text="")
+        assert verdict.is_busy is True
+        assert verdict.is_terminal_idle is False
+
+
 def test_coreagent_adapter_virtual_check_busy_never_false_positives() -> None:
     """CoreAgent (P2 防坑): 传入虚拟 '__check_busy__' 无转录文件时，静态空闲窗格绝不误判为忙。"""
     adapter = get_kernel_session_adapter("coreagent")

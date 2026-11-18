@@ -226,6 +226,25 @@ def test_rule04_informational_without_warning_is_not_an_error() -> None:
     assert _kinds(records) == ["context.inject"]
 
 
+def test_rule04_lifecycle_stop_informational_becomes_system_notice_not_error() -> None:
+    """生命周期协调器或人工叫停补写的中止通知应归为系统提示而非红色引擎报错。"""
+    rows = [
+        _row(
+            "u_stop",
+            "system",
+            subtype="informational",
+            level="warning",
+            isMeta=True,
+            content="这一场由全域生命周期协调器在 2026-11-18T14:28:10Z 停下：当时没有在跑的一轮。",
+        )
+    ]
+    records = translate_records(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["channel"] == "lifecycle-stop"
+    assert records[0].payload["source"] == "system"
+    assert "全域生命周期协调器" in records[0].payload["body"]
+
+
 # ── 序 5：其余引擎事件 ──────────────────────────────────────────────
 def test_rule05_quiet_stop_hook_summary_still_says_who_ran() -> None:
     """收尾 hook 既没加话也没拦住，照常出卡——卡上写着叫起了谁、各跑了多久。

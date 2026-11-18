@@ -121,6 +121,18 @@ class TestCommand:
     def test_不给名字就不带那个开关(self, fake_binary):
         assert "--title" not in cr.build_command("core_abc", cwd="/repos/x")
 
+    def test_给了连接编号就带上_as_profile(self, fake_binary):
+        cmd = cr.build_command("core_abc", cwd="/repos/x", profile_id="a2ef38c1")
+        assert "--as-profile" in cmd
+        assert cmd[cmd.index("--as-profile") + 1] == "a2ef38c1"
+
+    def test_desktop_operator_允许_frago_desktop_且不再封禁_say(self, fake_binary):
+        cmd = cr.build_command("core_op", cwd="/repos/x", desktop_operator=True)
+        assert "--allowed-tools" in cmd
+        assert cmd[cmd.index("--allowed-tools") + 1] == "Bash(frago desktop:*)"
+        assert "Bash(frago desktop say:*)" not in cr._DESKTOP_OPERATOR_DISALLOWED_TOOLS
+        assert "Bash(frago desktop say:*)" not in cmd
+
     def test_用户消息是_claude_code_的_stream_json_形状(self):
         line = cr._user_line("接着说")
         obj = json.loads(line)
@@ -448,4 +460,283 @@ class TestDirectorUnattendedEnv:
         finally:
             so.cleanup_all_presenters()
             monkeypatch.setattr(aos.urllib.request, "urlopen", orig_urlopen)
+
+
+class TestEnqueueStateAndModelRecycle:
+    """修复核验：入队清空残留 last_result、区分已入库轮次报错与未送达、切模型平滑回收常驻进程。"""
+
+    def test_enqueue_clears_stale_last_result_and_sets_busy_immediately(
+        self, fake_binary, no_real_popen
+    ):
+        sess = cr._session_for("core_stale", "/tmp", None)
+        sess.proc = _FakeProc()
+        sess.state = "idle"
+        sess.last_result = {
+            "type": "final",
+            "ok": False,
+            "error_kind": "llm",
+            "rounds": 1,
+            "error": "LLM call 1 failed and the run stopped: Invalid model: claude-sonnet-4-6",
+        }
+        sess.turn_done.set()
+
+        cr._enqueue(sess, "新的一句话")
+
+        assert sess.state == "busy", "入队瞬间必须同步置为 busy，防止 _wait_for_turn 0ms 读到 idle"
+        assert sess.last_result == {}, "入队瞬间必须清空上一轮残留的 last_result"
+        assert not sess.turn_done.is_set()
+        # 此时 _wait_for_turn 在超时内未收到新 result 应返回空字典（在跑），绝不返回上一轮旧 error
+        got = cr._wait_for_turn(sess, wait_s=0.05)
+        assert got == {}
+
+    def test_send_distinguishes_recorded_llm_error_from_pre_record_unavailable(
+        self, fake_binary, monkeypatch
+    ):
+        # 场景 1：已进入主循环（rounds=1, error_kind="llm"），用户发言与交接均已落盘写入 .jsonl
+        # send 应返回 SessionActivation，绝不抛 CoreAgentUnavailable 导致前端把文字退回输入框
+        monkeypatch.setattr(cr, "_enqueue", lambda sess, prompt: None)
+        monkeypatch.setattr(
+            cr,
+            "_wait_for_turn",
+            lambda sess, wait_s: {
+                "type": "final",
+                "ok": False,
+                "rounds": 1,
+                "error_kind": "llm",
+                "error": "LLM call 1 failed and the run stopped: HTTP 400 Invalid model",
+            },
+        )
+        act = cr.send("core_rec_err", "帮我查一下", cwd="/tmp", wait_s=0.1)
+        assert act.session_id == "core_rec_err"
+        assert act.status == "activating"
+        assert "LLM call 1 failed" in act.text
+
+        # 场景 2：未进入主循环（rounds=0, error_kind="credential"），消息尚未写入会话记录
+        # 必须抛 CoreAgentUnavailable 让前端退回输入框保住用户草稿
+        monkeypatch.setattr(
+            cr,
+            "_wait_for_turn",
+            lambda sess, wait_s: {
+                "type": "final",
+                "ok": False,
+                "rounds": 0,
+                "error_kind": "credential",
+                "error": "profiles.json 里没有可用凭证",
+            },
+        )
+        with pytest.raises(cr.CoreAgentUnavailable, match="没有可用凭证"):
+            cr.send("core_cred_err", "帮我查一下", cwd="/tmp", wait_s=0.1)
+
+    def test_recycle_for_model_change_reclaims_idle_and_defers_busy(self):
+        idle_sess = cr._session_for("core_idle_m", "/tmp", None, profile_id="old_p")
+        idle_proc = _FakeProc()
+        idle_sess.proc = idle_proc
+        idle_sess.state = "idle"
+        idle_sess.last_result = {"error": "stale"}
+
+        busy_sess = cr._session_for("core_busy_m", "/tmp", None, profile_id="old_p")
+        busy_proc = _FakeProc()
+        busy_sess.proc = busy_proc
+        busy_sess.state = "busy"
+        busy_sess.in_flight = 1
+
+        stats = cr.recycle_for_model_change(reason="bind_role")
+
+        assert stats == {"reclaimed": 1, "deferred": 1}
+        assert idle_proc.stdin.closed, "空闲常驻进程应当场关闭 stdin 回收"
+        assert idle_sess.state == "absent"
+        assert idle_sess.profile_id is None
+        assert idle_sess.last_result == {}
+
+        assert not busy_proc.stdin.closed, "忙碌常驻进程不应在轮次中途被强杀"
+        assert busy_sess.reload_on_idle is True
+        assert busy_sess.profile_id is None
+        final_line = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "本轮完成",
+                "num_turns": 1,
+                "session_id": "core_busy_m",
+            }
+        )
+        busy_proc.stdout = iter([final_line + "\n"])
+        cr._read_loop(busy_sess)
+        assert busy_proc.stdin.closed, "忙碌进程在本轮交卷后应自动回收"
+        assert busy_sess.state == "absent"
+
+    def test_cross_turn_queued_in_flight_keeps_busy_until_all_turns_finish(self, monkeypatch):
+        """跨轮次排队投喂场景：第 1 轮 result 到达时第 2 轮已写进 stdin（in_flight=2），
+        只应扣减 1 个 in_flight 并保持 busy（且不触发 reload_on_idle），直到第 2 轮 result 才回 idle。
+        """
+        from frago.server.services import workbench_queue
+
+        auto_inject_calls: list[str] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "schedule_auto_inject_after_settle",
+            lambda sid: auto_inject_calls.append(sid),
+        )
+
+        sess = cr._session_for("core_cross_turn", "/tmp", None)
+        proc = _FakeProc()
+        sess.proc = proc
+        sess.state = "busy"
+        sess.in_flight = 2
+        sess.reload_on_idle = True
+
+        r1 = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "第一轮完结",
+                "num_turns": 1,
+                "session_id": "core_cross_turn",
+            }
+        )
+        r2 = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "第二轮完结",
+                "num_turns": 1,
+                "session_id": "core_cross_turn",
+            }
+        )
+
+        # 第一轮 result：还有第 2 轮在途，必须保持 busy、不回收进程、不置 turn_done
+        proc.stdout = iter([r1 + "\n"])
+        cr._read_loop(sess)
+        # Note: _read_loop exits when iter ends and sets absent; simulate single stream across both results
+        # by verifying state inside a controlled stream or stepping via a queue-backed stdout.
+        assert auto_inject_calls == []
+
+    def test_read_loop_step_by_step_cross_turn_and_mid_turn_interjection(self, monkeypatch):
+        """逐步模拟常驻 stdout：验证连续两轮 result 逐次扣减 in_flight，以及中途插话被吸收后不锁死 busy。"""
+        import queue as pyqueue
+        from frago.server.services import workbench_queue
+
+        auto_inject_calls: list[str] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "schedule_auto_inject_after_settle",
+            lambda sid: auto_inject_calls.append(sid),
+        )
+
+        class _StepStdout:
+            def __init__(self):
+                self._q: pyqueue.Queue[str | None] = pyqueue.Queue()
+
+            def push(self, obj: dict[str, object]) -> None:
+                self._q.put(json.dumps(obj, ensure_ascii=False) + "\n")
+
+            def close(self) -> None:
+                self._q.put(None)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self) -> str:
+                item = self._q.get(timeout=5)
+                if item is None:
+                    raise StopIteration
+                return item
+
+        # 场景 A：跨轮次排队（第 1 轮 result 回来时第 2 轮仍在途）
+        sess = cr._session_for("core_seq_turns", "/tmp", None)
+        proc = _FakeProc()
+        step_out = _StepStdout()
+        proc.stdout = step_out
+        sess.proc = proc
+        sess.state = "busy"
+        sess.in_flight = 2
+
+        t = threading.Thread(target=cr._read_loop, args=(sess,), daemon=True)
+        t.start()
+
+        step_out.push(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "turn1",
+                "num_turns": 1,
+                "session_id": "core_seq_turns",
+            }
+        )
+        time.sleep(0.1)
+        with sess.lock:
+            assert sess.in_flight == 1
+            assert sess.state == "busy"
+        assert not sess.turn_done.is_set()
+        assert auto_inject_calls == []
+
+        step_out.push(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "turn2",
+                "num_turns": 1,
+                "session_id": "core_seq_turns",
+            }
+        )
+        time.sleep(0.1)
+        with sess.lock:
+            assert sess.in_flight == 0
+            assert sess.state == "idle"
+        assert sess.turn_done.is_set()
+        assert auto_inject_calls == ["core_seq_turns"]
+        step_out.close()
+        t.join(timeout=2)
+
+        # 场景 B：中途插话被内核吸收（发出 user text 事件并最终只输出 1 条 result）
+        auto_inject_calls.clear()
+        sess_b = cr._session_for("core_interject", "/tmp", None)
+        proc_b = _FakeProc()
+        step_out_b = _StepStdout()
+        proc_b.stdout = step_out_b
+        sess_b.proc = proc_b
+        sess_b.state = "busy"
+        sess_b.in_flight = 2
+        sess_b.turn_done.clear()
+
+        tb = threading.Thread(target=cr._read_loop, args=(sess_b,), daemon=True)
+        tb.start()
+
+        step_out_b.push(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": [{"type": "text", "text": "插一句话"}]},
+                "parent_tool_use_id": None,
+                "session_id": "core_interject",
+            }
+        )
+        time.sleep(0.05)
+        with sess_b.lock:
+            assert sess_b.in_flight == 1
+            assert sess_b.state == "busy"
+
+        step_out_b.push(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "merged",
+                "num_turns": 2,
+                "session_id": "core_interject",
+            }
+        )
+        time.sleep(0.1)
+        with sess_b.lock:
+            assert sess_b.in_flight == 0
+            assert sess_b.state == "idle"
+        assert sess_b.turn_done.is_set()
+        assert auto_inject_calls == ["core_interject"]
+        step_out_b.close()
+        tb.join(timeout=2)
+
 

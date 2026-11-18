@@ -186,3 +186,86 @@ def test_scan_and_reclaim_cleans_observed_tracker(
         assert harness_victim.name not in coordinator._observed_tracker
         # already_gone 已自然消亡，被修剪清理
         assert "frago-agent-already_gone" not in coordinator._observed_tracker
+
+
+def test_completed_dispatch_resumed_by_human_uses_latest_activity_and_workbench_threshold(
+    coordinator: AgentHarnessLifecycleCoordinator,
+) -> None:
+    """历史已完成派发单被人工续接唤醒后，必须取最新活动锚点并套用工作台 1800s 阈值，严防按旧派发完成时刻误杀。"""
+    now = 10000.0
+    dispatch_completed_ts = now - 1620.0  # 27 分钟前历史派发单完成
+    resumed_activity_ts = now - 43.0  # 43 秒前刚刚由人工在工作台写入并活动
+
+    harness = TmuxHarnessMeta(
+        name="frago-agent-core_resumed_worker",
+        session_id="core_resumed_worker",
+        kernel="coreagent",
+        created_epoch_secs=now - 150.0,
+        attached_clients=0,
+        pane_command="frago-core",
+        pane_text="━━━ CoreAgent (resident) · core_resumed_worker ━━━",
+    )
+
+    with patch.object(coordinator, "_find_pooled_session", return_value=None), patch.object(
+        coordinator, "_get_coreagent_runner_touched_at", return_value=resumed_activity_ts
+    ), patch.object(
+        coordinator, "_get_latest_dispatch_completion_ts", return_value=dispatch_completed_ts
+    ), patch.object(
+        coordinator, "_get_transcript_mtime", return_value=resumed_activity_ts
+    ), patch(
+        "frago.server.services.harness_lifecycle_coordinator.get_kernel_session_adapter"
+    ) as mock_get_adapter:
+        mock_adapter = MagicMock()
+        mock_adapter.probe_turn_completion.return_value = TurnCompletionVerdict(
+            done=True, stop_reason="end_turn"
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        idle_age = coordinator.compute_harness_idle_age(harness, now=now, grace_secs=120.0)
+        assert idle_age is not None
+        assert idle_age == pytest.approx(43.0, abs=1.0), "闲置时长必须以最新活动时刻(43s)为锚点，而非历史派发完成时刻(1620s)"
+
+    job_mock = MagicMock()
+    job_mock.kind = "worker"
+    job_mock.mode = "new"
+    job_mock.delivery_state = "delivered"
+    job_mock.completed_at = "2026-11-18T14:01:02Z"
+    job_mock.updated_at = "2026-11-18T14:01:02Z"
+
+    # 若在 coreagent_runner 中已被工作台拉起或转录有新写入，阈值必须升为 1800s
+    with patch("frago.session.async_dispatch.list_dispatch_jobs", return_value=[job_mock]), patch.object(
+        coordinator, "_find_pooled_session", return_value=None
+    ), patch.object(
+        coordinator, "_get_coreagent_runner_touched_at", return_value=resumed_activity_ts
+    ):
+        th = coordinator._resolve_timeout_threshold(
+            "core_resumed_worker",
+            default_timeout=1800.0,
+            worker_timeout=300.0,
+            harness=harness,
+        )
+        assert th == 1800.0
+
+
+def test_guard5_protects_busy_coreagent_runner(
+    coordinator: AgentHarnessLifecycleCoordinator,
+) -> None:
+    """Guard 5 必须识别 coreagent_runner 忙碌/排队状态并予以豁免。"""
+    harness = TmuxHarnessMeta(
+        name="frago-agent-core_busy_guard",
+        session_id="core_busy_guard",
+        kernel="coreagent",
+        created_epoch_secs=9000.0,
+        attached_clients=0,
+        pane_command="frago-core",
+    )
+    with patch.object(coordinator, "_is_async_dispatch_active", return_value=False), patch.object(
+        coordinator, "_has_pending_workbench_queue", return_value=False
+    ), patch.object(
+        coordinator, "_find_pooled_session", return_value=None
+    ), patch.object(
+        coordinator, "_is_coreagent_runner_busy", return_value=True
+    ):
+        verdict = coordinator.evaluate_guards(harness)
+        assert verdict.is_protected is True
+        assert "CoreAgent Runner Busy" in verdict.guard_name

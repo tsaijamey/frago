@@ -41,6 +41,26 @@ def result_from_line(line: str) -> dict[str, Any] | None:
     return None
 
 
+def is_interjection_line(line: str) -> bool:
+    """判断单行 stdout 是否为内核在当前轮次中途消费插话（``KernelEvent::Interjection``）发出的 user 文本事件。"""
+    line = line.strip()
+    if not line.startswith("{"):
+        return False
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(obj, dict) or obj.get("type") != "user":
+        return False
+    message = obj.get("message")
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "text" for b in content)
+
+
 def final_from(stdout: str) -> dict[str, Any] | None:
     """内核结束时交的那一行结论，按老形状（``type == "final"``）交出。
 

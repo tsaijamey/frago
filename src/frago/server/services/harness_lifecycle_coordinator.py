@@ -181,6 +181,7 @@ class AgentHarnessLifecycleCoordinator:
                 harness.session_id,
                 default_timeout=idle_timeout_secs,
                 worker_timeout=worker_timeout_secs,
+                harness=harness,
             )
 
             if idle_age >= threshold:
@@ -305,13 +306,20 @@ class AgentHarnessLifecycleCoordinator:
             )
 
         # Guard 5: 物理忙碌与后台运行子外壳保护
-        # 先查内存热池状态
+        # 先查内存热池状态与 coreagent 常驻运行器状态
         pooled = self._find_pooled_session(harness.session_id)
         if pooled is not None and getattr(pooled, "status", None) == "busy":
             return GuardVerdict(
                 is_protected=True,
                 guard_name="Guard 5 (Pool Busy)",
                 reason="In-memory pooled session is currently busy",
+            )
+
+        if self._is_coreagent_runner_busy(harness.session_id):
+            return GuardVerdict(
+                is_protected=True,
+                guard_name="Guard 5 (CoreAgent Runner Busy)",
+                reason="Resident coreagent_runner reports busy or queued turns",
             )
 
         # 调内核适配器探针
@@ -372,42 +380,60 @@ class AgentHarnessLifecycleCoordinator:
             if not is_dead_shell:
                 return None
 
-        # 1. 第一优先级：内存热池本池最后活动时刻
+        # 汇总所有可用活动时间锚点（暖池、coreagent 常驻运行器、历史派发完成时刻、窗格创建、转录修改）
+        # 取最大值作为最新活动基准，防止历史已完成派发单的时间戳覆盖工作台后续人工唤醒与写入。
         pooled = self._find_pooled_session(session_id)
+        pooled_ts: float | None = None
         if pooled is not None:
             last_active = getattr(pooled, "last_active_at", None)
             if last_active is None:
                 return None
-            return max(0.0, now - last_active.timestamp())
+            pooled_ts = last_active.timestamp()
 
-        # 2. 第二优先级：异步派发任务账本完成时刻（若来自 async_dispatch）
+        runner_ts = self._get_coreagent_runner_touched_at(session_id)
         completed_dispatch_ts = self._get_latest_dispatch_completion_ts(session_id)
-        if completed_dispatch_ts is not None:
-            return max(0.0, now - completed_dispatch_ts)
-
-        # 3. 第三优先级：池外遗留实例与跨重启会话 —— 首次观测安全计时基线
-        first_observed = self._observed_tracker.setdefault(harness.name, now)
-        cooling_duration = now - first_observed
-
-        # 刚重启安全冷却宽限期：任何首次被观测到的池外实例，必须至少在本机稳定被连续观测满 grace_secs
-        if cooling_duration < grace_secs:
-            logger.debug(
-                "Harness %s in cooling grace period (%.1fs < %.1fs), deferred",
-                harness.name,
-                cooling_duration,
-                grace_secs,
-            )
-            return None
-
-        # 结合创建时间戳与转录文件修改时间戳
         created_at_ts = harness.created_epoch_secs
         transcript_ts = self._get_transcript_mtime(session_id, harness.kernel)
 
-        activity_anchor = max(created_at_ts, transcript_ts or created_at_ts)
-        measured_idle = now - activity_anchor
+        activity_candidates = [
+            ts
+            for ts in (
+                pooled_ts,
+                runner_ts,
+                completed_dispatch_ts,
+                created_at_ts,
+                transcript_ts,
+            )
+            if ts is not None
+        ]
+        last_active_ts = max(activity_candidates) if activity_candidates else created_at_ts
 
-        # 安全下界约束：空闲时长不得大于自首次被观测以来的时间，除非有确凿元数据
-        return max(0.0, min(measured_idle, cooling_duration + (now - created_at_ts)))
+        # 若为纯池外遗留实例，或虽有历史已完成派发记录但此后又出现了更新的活动，
+        # 必须走首次观测安全冷却宽限期，避免重启或刚唤醒就被误杀。
+        has_newer_activity_after_dispatch = (
+            completed_dispatch_ts is not None and last_active_ts > completed_dispatch_ts
+        )
+        if pooled_ts is None and runner_ts is None and (
+            completed_dispatch_ts is None or has_newer_activity_after_dispatch
+        ):
+            first_observed = self._observed_tracker.setdefault(harness.name, now)
+            cooling_duration = now - first_observed
+
+            # 刚重启安全冷却宽限期：任何首次被观测到的池外实例，必须至少在本机稳定被连续观测满 grace_secs
+            if cooling_duration < grace_secs:
+                logger.debug(
+                    "Harness %s in cooling grace period (%.1fs < %.1fs), deferred",
+                    harness.name,
+                    cooling_duration,
+                    grace_secs,
+                )
+                return None
+
+            measured_idle = now - last_active_ts
+            # 安全下界约束：空闲时长不得大于自首次被观测以来的时间，除非有确凿元数据
+            return max(0.0, min(measured_idle, cooling_duration + (now - created_at_ts)))
+
+        return max(0.0, now - last_active_ts)
 
     def reclaim_harness(self, harness: TmuxHarnessMeta) -> dict[str, Any]:
         """Guard 6 逐条点名安全关闭铁律：池内走 pool.evict，池外逐条点名。"""
@@ -465,6 +491,33 @@ class AgentHarnessLifecycleCoordinator:
         }
 
     # ── 内部辅助判据方法 ──────────────────────────────────────────────
+
+    def _is_coreagent_runner_busy(self, session_id: str) -> bool:
+        """检查常驻 coreagent_runner 是否正忙或仍有排队待跑轮次。"""
+        if not session_id or not session_id.startswith("core_"):
+            return False
+        try:
+            from frago.server.services import coreagent_runner
+
+            return bool(
+                coreagent_runner.busy(session_id)
+                or coreagent_runner.queued_count(session_id) > 0
+            )
+        except Exception as exc:
+            logger.debug("检查 coreagent_runner 忙碌状态失败 session_id=%s: %s", session_id, exc)
+            return False
+
+    def _get_coreagent_runner_touched_at(self, session_id: str) -> float | None:
+        """从常驻 coreagent_runner 提取最近一次投喂或完结时刻戳。"""
+        if not session_id or not session_id.startswith("core_"):
+            return None
+        try:
+            from frago.server.services import coreagent_runner
+
+            return coreagent_runner.last_touched_at(session_id)
+        except Exception as exc:
+            logger.debug("读取 coreagent_runner touched_at 失败 session_id=%s: %s", session_id, exc)
+            return None
 
     def _find_pooled_session(self, session_id: str) -> Any | None:
         try:
@@ -540,7 +593,12 @@ class AgentHarnessLifecycleCoordinator:
         return None
 
     def _resolve_timeout_threshold(
-        self, session_id: str, *, default_timeout: float, worker_timeout: float
+        self,
+        session_id: str,
+        *,
+        default_timeout: float,
+        worker_timeout: float,
+        harness: TmuxHarnessMeta | None = None,
     ) -> float:
         """判定会话应套用一次性后台 Worker 冷却门槛还是默认长闲置门槛。"""
         try:
@@ -549,12 +607,39 @@ class AgentHarnessLifecycleCoordinator:
             jobs = list_dispatch_jobs(target_session_id=session_id)
             if jobs:
                 latest = max(jobs, key=lambda j: j.updated_at)
-                # 仅对单轮一次性 worker 且已成功送达的会话应用更快的 worker_timeout
+                # 仅对单轮一次性 worker 且已成功送达的会话应用更快的 worker_timeout；
+                # 若该会话后来已被人工在工作台唤醒（热池/coreagent_runner 在跑，或有派发完结后的新写入/新进程），
+                # 应升级为普通工作台长闲置门槛（default_timeout）。
                 if (
                     latest.kind == "worker"
                     and latest.mode in ("new", "worker")
                     and latest.delivery_state == "delivered"
                 ):
+                    if self._find_pooled_session(session_id) is not None:
+                        return default_timeout
+                    if self._get_coreagent_runner_touched_at(session_id) is not None:
+                        return default_timeout
+
+                    dispatch_ts: float | None = None
+                    raw_ts = getattr(latest, "completed_at", None) or getattr(latest, "updated_at", None)
+                    if isinstance(raw_ts, str) and raw_ts:
+                        with contextlib.suppress(ValueError):
+                            dispatch_ts = datetime.fromisoformat(
+                                raw_ts.replace("Z", "+00:00")
+                            ).timestamp()
+
+                    if dispatch_ts is not None:
+                        if harness is not None and harness.created_epoch_secs > dispatch_ts + 5.0:
+                            return default_timeout
+                        kernel = (
+                            harness.kernel
+                            if harness is not None
+                            else ("coreagent" if session_id.startswith("core_") else "claude")
+                        )
+                        transcript_ts = self._get_transcript_mtime(session_id, kernel)
+                        if transcript_ts is not None and transcript_ts > dispatch_ts + 5.0:
+                            return default_timeout
+
                     return worker_timeout
         except Exception:
             pass

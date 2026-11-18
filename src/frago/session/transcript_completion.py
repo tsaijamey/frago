@@ -93,6 +93,69 @@ def _empty(session_id: str | None = None, source_path: str | None = None) -> Tur
     )
 
 
+def _is_trailing_new_turn_signal(record: dict[str, Any]) -> bool:
+    """Return True if a record after the last assistant turn starts a new pending turn.
+
+    Recognizes:
+    - A substantive non-meta, non-sidechain ``user`` message (excluding pure
+      ``tool_result`` responses, which continue a tool round rather than opening a
+      new user prompt).
+    - A ``UserPromptSubmit`` hook injection (either ``attachment`` or
+      ``system/hook_response``), which fires as a new turn begins before the first
+      assistant streaming token arrives.
+
+    Explicitly ignores trailing meta/lifecycle records (``stop_hook_summary``,
+    ``turn_duration``, ``informational`` stop notices, ``last-prompt``, ``ai-title``).
+    """
+    if record.get("isSidechain", False):
+        return False
+
+    rec_type = record.get("type")
+    if rec_type == "user":
+        if record.get("isMeta", False):
+            return False
+        msg = record.get("message") or {}
+        if msg.get("role") not in (None, "user"):
+            return False
+        content = msg.get("content")
+        if isinstance(content, str):
+            stripped = content.strip()
+            if not stripped:
+                return False
+            if stripped.startswith("<local-command-"):
+                return False
+            return True
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "tool_result":
+                        continue
+                    if block.get("type") == "text":
+                        if str(block.get("text") or "").strip():
+                            return True
+                    else:
+                        return True
+                elif isinstance(block, str) and block.strip():
+                    return True
+            return False
+        return False
+
+    if rec_type == "attachment":
+        att = record.get("attachment")
+        if isinstance(att, dict):
+            hook_event = str(att.get("hookEvent") or "")
+            hook_name = str(att.get("hookName") or "")
+            if hook_event == "UserPromptSubmit" or hook_name.startswith("UserPromptSubmit"):
+                return True
+        return False
+
+    if rec_type == "system" and record.get("subtype") == "hook_response":
+        if str(record.get("hook_event") or "") == "UserPromptSubmit":
+            return True
+
+    return False
+
+
 def evaluate_records(
     records: list[dict[str, Any]],
     *,
@@ -104,25 +167,45 @@ def evaluate_records(
     Algorithm (validated against real transcripts):
       1. Keep ``type == "assistant"`` records in order, dropping sidechain
          (sub-agent) records — only the main conversation is judged.
-      2. The last assistant record's ``message.stop_reason`` decides ``done``;
-         ``pending_tool_use`` is True when it equals ``tool_use``.
-      3. Group by that record's ``requestId`` and concatenate the ``text`` blocks
+      2. If any trailing record after that last assistant record opens a new
+         turn (a substantive ``user`` prompt or ``UserPromptSubmit`` hook
+         injection), report ``done=False, stop_reason=None`` so idle probes do
+         not mistake an awaiting-first-token turn for finished.
+      3. Otherwise, the last assistant record's ``message.stop_reason`` decides
+         ``done``; ``pending_tool_use`` is True when it equals ``tool_use``.
+      4. Group by that record's ``requestId`` and concatenate the ``text`` blocks
          across the group — a turn's thinking/text/tool_use are split across
          records sharing one requestId.
 
-    Trailing ``system`` meta records (stop_hook_summary / turn_duration) and
-    last-prompt / ai-title / mode / permission-mode records are not turns and do
-    not affect the verdict — they are simply not of ``type == "assistant"``.
+    Trailing ``system`` meta records (stop_hook_summary / turn_duration /
+    informational notices) and last-prompt / ai-title / mode / permission-mode
+    records are not new turns and do not flip a finished turn back to running.
     """
-    assistants = [
-        r
-        for r in records
-        if r.get("type") == "assistant" and not r.get("isSidechain", False)
-    ]
+    last_assistant_idx = -1
+    assistants: list[dict[str, Any]] = []
+    for idx, r in enumerate(records):
+        if r.get("type") == "assistant" and not r.get("isSidechain", False):
+            last_assistant_idx = idx
+            assistants.append(r)
+
     if not assistants:
         return _empty(session_id=session_id, source_path=source_path)
 
     terminal = assistants[-1]
+
+    trailing = records[last_assistant_idx + 1 :]
+    if any(_is_trailing_new_turn_signal(r) for r in trailing):
+        return TurnCompletion(
+            done=False,
+            stop_reason=None,
+            final_text="",
+            request_id=None,
+            last_uuid=terminal.get("uuid"),
+            pending_tool_use=False,
+            session_id=session_id or terminal.get("sessionId"),
+            source_path=source_path,
+            last_terminal_ts=None,
+        )
     msg = terminal.get("message") or {}
     stop_reason = msg.get("stop_reason")
     request_id = terminal.get("requestId")

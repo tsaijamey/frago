@@ -115,6 +115,7 @@ class _Session:
     session_id: str
     cwd: str
     title: str | None = None
+    profile_id: str | None = None
     state: str = "absent"
     proc: subprocess.Popen | None = None
     pending: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=QUEUE_MAX))
@@ -139,6 +140,8 @@ class _Session:
     unattended: bool = False
     #: 虚拟桌面专职主操作员会话：仅允许调用 agent_os 提供的操作工具（Bash(frago desktop:*)）。
     desktop_operator: bool = False
+    #: 模型或角色绑定已切换：若当前正忙，在本轮交卷回到 idle 时立即回收旧进程，让下一轮按新模型重起。
+    reload_on_idle: bool = False
 
 
 _sessions: dict[str, _Session] = {}
@@ -146,6 +149,8 @@ _sessions_lock = threading.Lock()
 
 _DIRECTOR_SKILL_MARKER = 'name="how-frago-agent-runs-an-agent-os"'
 _DESKTOP_OPERATOR_TAG_MARKER = '<frago-employee id="desktop-operator"'
+_DESKTOP_OPERATOR_ALLOWED_TOOLS: tuple[str, ...] = ("Bash(frago desktop:*)",)
+_DESKTOP_OPERATOR_DISALLOWED_TOOLS: tuple[str, ...] = ()
 
 
 def _is_director_prompt(prompt: str) -> bool:
@@ -174,6 +179,7 @@ def _session_for(
     cwd: str,
     title: str | None,
     *,
+    profile_id: str | None = None,
     unattended: bool = False,
     desktop_operator: bool = False,
 ) -> _Session:
@@ -185,6 +191,7 @@ def _session_for(
                 session_id=session_id,
                 cwd=cwd,
                 title=title,
+                profile_id=profile_id,
                 unattended=unattended or desktop_operator,
                 desktop_operator=desktop_operator,
             )
@@ -193,6 +200,8 @@ def _session_for(
             got.cwd = cwd
             if title:
                 got.title = title
+            if profile_id:
+                got.profile_id = profile_id
             if unattended or desktop_operator:
                 got.unattended = True
             if desktop_operator:
@@ -229,6 +238,15 @@ def live_cwd(session_id: str) -> str | None:
     if got is None or got.state == "absent":
         return None
     return got.cwd or None
+
+
+def last_touched_at(session_id: str) -> float | None:
+    """此刻还开着的这一场最近一次活动时间戳；无活跃条目时返回 None。"""
+    with _sessions_lock:
+        got = _sessions.get(session_id)
+        if got is None or got.state == "absent":
+            return None
+        return got.touched_at
 
 
 def live_states() -> dict[str, bool]:
@@ -359,6 +377,7 @@ def build_command(
     *,
     cwd: str,
     title: str | None = None,
+    profile_id: str | None = None,
     desktop_operator: bool = False,
 ) -> list[str]:
     """起这一场的常驻进程时交给内核的那条命令。
@@ -372,7 +391,8 @@ def build_command(
     在不在。
 
     普通会话工具不加限制；``desktop_operator=True`` 时通过 ``--allowed-tools`` 严格限定
-    只允许调用 ``agent_os`` 操作工具（``Bash(frago desktop:*)``），并禁用直接语音播报。
+    只允许调用 ``agent_os`` 操作工具（``Bash(frago desktop:*)``），不再封禁 ``frago desktop say``，
+    使主操作员在录制视频或执行演示剧本时可主动发出显式解说旁白（``narration``）。
     """
     cmd = [
         str(binary()),
@@ -382,15 +402,15 @@ def build_command(
         "--session-id", session_id,
         "--cwd", cwd,
     ]
+    if profile_id and profile_id.strip():
+        cmd += ["--as-profile", profile_id.strip()]
     if title:
         cmd += ["--title", title]
     if desktop_operator:
-        cmd += [
-            "--allowed-tools",
-            "Bash(frago desktop:*)",
-            "--disallowed-tools",
-            "Bash(frago desktop say:*)",
-        ]
+        for allowed in _DESKTOP_OPERATOR_ALLOWED_TOOLS:
+            cmd += ["--allowed-tools", allowed]
+        for disallowed in _DESKTOP_OPERATOR_DISALLOWED_TOOLS:
+            cmd += ["--disallowed-tools", disallowed]
     return cmd
 
 
@@ -428,10 +448,16 @@ def _spawn(sess: _Session) -> None:
             sess.session_id,
             cwd=sess.cwd,
             title=sess.title,
+            profile_id=sess.profile_id,
             desktop_operator=True,
         )
     else:
-        cmd = build_command(sess.session_id, cwd=sess.cwd, title=sess.title)
+        cmd = build_command(
+            sess.session_id,
+            cwd=sess.cwd,
+            title=sess.title,
+            profile_id=sess.profile_id,
+        )
     env = get_utf8_env()
     if sess.unattended:
         env["FRAGO_REVIEW"] = "off"
@@ -557,7 +583,7 @@ def _let_it_go(proc: subprocess.Popen, grace: float, what: str) -> None:
 
 def _read_loop(sess: _Session) -> None:
     """读常驻进程的 stdout：逐行判，每读到一条 ``result`` 就是一轮结论到了。"""
-    from frago.server.services.coreagent_output import result_from_line
+    from frago.server.services.coreagent_output import is_interjection_line, result_from_line
 
     proc = sess.proc
     if proc is None or proc.stdout is None:
@@ -566,25 +592,39 @@ def _read_loop(sess: _Session) -> None:
         for line in proc.stdout:
             found = result_from_line(line)
             if found is None:
+                if is_interjection_line(line):
+                    with sess.lock:
+                        # 中途插话被内核并入当前轮次：消费 1 条已投喂计数，但当前轮次仍在跑，至少保留 1
+                        if sess.in_flight > 1:
+                            sess.in_flight -= 1
+                        sess.touched_at = time.time()
                 continue  # system / assistant / hook 回执那些行：与本轮结论无关
             with sess.lock:
                 sess.last_result.clear()
                 sess.last_result.update(found)
                 sess.touched_at = time.time()
-                sess.in_flight = 0  # 这一轮交卷了，写在它名下的那些话都有了下落
-                if sess.state == "busy":
+                sess.in_flight = max(0, sess.in_flight - 1)
+                still_running = sess.in_flight > 0 or sess.pending.qsize() > 0
+                if still_running:
+                    # 管道或队列里还有后续已投喂/排队轮次：保持 busy，防止协调器误判 idle 强杀
+                    sess.state = "busy"
+                elif sess.reload_on_idle:
+                    sess.reload_on_idle = False
+                    _reclaim(sess)
+                elif sess.state in ("busy", "starting"):
                     sess.state = "idle"
-            sess.turn_done.set()
-            try:
-                from frago.server.services import workbench_queue
+            if not still_running:
+                sess.turn_done.set()
+                try:
+                    from frago.server.services import workbench_queue
 
-                workbench_queue.schedule_auto_inject_after_settle(sess.session_id)
-            except Exception:  # noqa: BLE001
-                logger.debug(
-                    "coreagent 轮次结束触发队列注入失败（session=%s）",
-                    sess.session_id,
-                    exc_info=True,
-                )
+                    workbench_queue.schedule_auto_inject_after_settle(sess.session_id)
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "coreagent 轮次结束触发队列注入失败（session=%s）",
+                        sess.session_id,
+                        exc_info=True,
+                    )
     except Exception:  # noqa: BLE001 — 读线程崩了不该静默
         logger.warning("读 coreagent stdout 时出错（session=%s）", sess.session_id, exc_info=True)
     finally:
@@ -683,6 +723,7 @@ def _feed_one(sess: _Session, prompt: str) -> None:
             # 这一场正闲着：这一句开新一轮，状态与交卷标志都归它。已经忙着的就只是往里
             # 递一句——那一轮的交卷标志照旧归它自己，别被人递话这件事清掉。
             sess.state = "busy"
+            sess.last_result.clear()
             sess.turn_done.clear()
         sess.touched_at = time.time()
         try:
@@ -693,6 +734,58 @@ def _feed_one(sess: _Session, prompt: str) -> None:
             logger.warning("往这一场写话失败，进程多半已经没了（session=%s）", sess.session_id)
             sess.pending.put(prompt)
             _reclaim(sess)
+
+
+_RECORDED_ERROR_KINDS: frozenset[str] = frozenset({
+    "llm",
+    "timeout",
+    "max_rounds",
+    "empty_answer",
+    "context_full",
+    "stdin_closed",
+})
+_PRE_RECORD_ERROR_KINDS: frozenset[str] = frozenset({
+    "usage",
+    "credential",
+})
+
+
+def _turn_recorded_in_transcript(
+    session_id: str, got: dict[str, object], prompt: str = ""
+) -> bool:
+    """判定这一轮失败收场时，用户的发言与收场交接是否已经落盘写入了会话记录（.jsonl）。
+
+    - ``usage`` / ``credential``（以及 ``rounds == 0`` 的 ``hook_stopped``）发生在内核
+      ``loop.rs`` 写入 ``user_prompt`` 之前，盘上没有这一句，必须抛 :class:`CoreAgentUnavailable`
+      让前端把文字退回输入框，避免吞掉用户打的字。
+    - 一旦进入主循环（``rounds >= 1``，或 ``error_kind`` 属于 ``llm / timeout / max_rounds /
+      empty_answer / context_full / stdin_closed``，或错误文本以 ``LLM call `` 开头），
+      ``user_prompt`` 与 ``handover`` 错误详情均已落盘写入 ``.jsonl``，页面会话流直接可见，
+      绝不能再按「未送达」退回输入框导致重复发送。
+    """
+    error_kind = str(got.get("error_kind") or "").strip().lower()
+    if error_kind in _PRE_RECORD_ERROR_KINDS:
+        return False
+    rounds = got.get("rounds")
+    if isinstance(rounds, int) and rounds >= 1:
+        return True
+    if error_kind in _RECORDED_ERROR_KINDS:
+        return True
+    err_text = str(got.get("error") or "")
+    if err_text.startswith("LLM call ") or "reached max rounds" in err_text:
+        return True
+    if error_kind == "hook_stopped" and (rounds is None or rounds == 0):
+        return False
+    if prompt.strip():
+        with contextlib.suppress(Exception):
+            from frago.session import coreagent_store
+
+            path = coreagent_store.find_session_file(session_id)
+            if path is not None and path.is_file():
+                tail = path.read_text(encoding="utf-8", errors="replace")[-16384:]
+                if prompt.strip() in tail:
+                    return True
+    return False
 
 
 def _enqueue(sess: _Session, prompt: str) -> None:
@@ -709,17 +802,24 @@ def _enqueue(sess: _Session, prompt: str) -> None:
         raise CoreAgentBusy(
             f"会话 {sess.session_id} 正由外部宿主进程（frago server）托管运行，禁止从短命子进程抢占重起"
         )
-    try:
-        sess.pending.put_nowait(prompt)
-    except queue.Full:
-        raise CoreAgentBusy(
-            f"这一场排了 {QUEUE_MAX} 句还没轮到，等它答完再说（排满时当场拒绝，"
-            "不丢你已经发出去的话）"
-        ) from None
-    sess.touched_at = time.time()
     with sess.lock:
+        if sess.reload_on_idle and sess.state in ("idle", "absent") and sess.pending.qsize() == 0:
+            sess.reload_on_idle = False
+            if sess.proc is not None:
+                _reclaim(sess)
+        try:
+            sess.pending.put_nowait(prompt)
+        except queue.Full:
+            raise CoreAgentBusy(
+                f"这一场排了 {QUEUE_MAX} 句还没轮到，等它答完再说（排满时当场拒绝，"
+                "不丢你已经发出去的话）"
+            ) from None
+        sess.touched_at = time.time()
+        sess.last_result.clear()
+        sess.turn_done.clear()
         if sess.proc is None:
             _spawn(sess)
+        sess.state = "busy"
 
 
 def _wait_for_turn(sess: _Session, wait_s: float) -> dict[str, object]:
@@ -744,6 +844,7 @@ def send(
     *,
     cwd: str,
     title: str | None = None,
+    profile_id: str | None = None,
     wait_s: float = WAIT_S,
 ) -> SessionActivation:
     """把这句话排给这一场，最多等 ``wait_s``，到点先回「在跑」。
@@ -765,6 +866,7 @@ def send(
         session_id,
         cwd,
         title,
+        profile_id=profile_id,
         unattended=_is_director_prompt(prompt) or is_op,
         desktop_operator=is_op,
     )
@@ -775,7 +877,18 @@ def send(
         return SessionActivation(session_id=session_id, status="activating", text="")
     error = got.get("error")
     if error:
-        raise CoreAgentUnavailable(str(error))
+        if not _turn_recorded_in_transcript(session_id, got, prompt):
+            raise CoreAgentUnavailable(str(error))
+        logger.warning(
+            "coreagent turn ended with error after recording prompt (session=%s error_kind=%s rounds=%s): %s",
+            session_id,
+            got.get("error_kind"),
+            got.get("rounds"),
+            error,
+        )
+        return SessionActivation(
+            session_id=session_id, status="activating", text=str(error)
+        )
     return SessionActivation(
         session_id=session_id, status="activating", text=str(got.get("text") or "")
     )
@@ -787,6 +900,7 @@ def send_queued(
     *,
     cwd: str,
     title: str | None = None,
+    profile_id: str | None = None,
 ) -> str:
     """同 :func:`send`，但一步都不等：排上就返回，投喂在后台做。
 
@@ -805,6 +919,7 @@ def send_queued(
         session_id,
         cwd,
         title,
+        profile_id=profile_id,
         unattended=_is_director_prompt(prompt) or is_op,
         desktop_operator=is_op,
     )
@@ -907,6 +1022,47 @@ def stop(session_id: str, *, by: str = "页面上的人") -> dict[str, object]:
         _note_stopped(session_id, cwd, by, busy, queued)
     logger.info("coreagent 叫停（session=%s busy=%s pid=%s）", session_id, busy, getattr(proc, "pid", None))
     return {"running": proc is not None, "stopped": proc is not None, "busy": busy, "dropped": queued}
+
+
+def recycle_for_model_change(reason: str = "model_switch") -> dict[str, int]:
+    """当全局 Profile、角色绑定或模型配置变更时，平滑回收常驻的 CoreAgent 进程。
+
+    - 对当前处于 ``idle``（或 ``starting`` 且无排队/在途消息）的常驻会话：当场调用 :func:`_reclaim`
+      优雅关闭旧进程，并清空残留 ``last_result`` 与旧 ``profile_id``，让下一条消息按新模型重起；
+    - 对当前处于 ``busy``（或仍有排队/在途消息）的常驻会话：不强杀正在执行的轮次，
+      标记 ``sess.reload_on_idle = True``，在本轮交卷回到 ``idle`` 时立即回收。
+    """
+    with _sessions_lock:
+        all_sessions = list(_sessions.values())
+    reclaimed = 0
+    deferred = 0
+    for sess in all_sessions:
+        with sess.lock:
+            sess.profile_id = None
+            sess.last_result.clear()
+            if sess.proc is None or sess.state == "absent":
+                sess.reload_on_idle = False
+                continue
+            if sess.state == "idle" and sess.pending.qsize() == 0 and sess.in_flight == 0:
+                logger.info(
+                    "模型配置变更（%s），回收空闲 coreagent 进程（session=%s pid=%s）",
+                    reason,
+                    sess.session_id,
+                    sess.proc.pid,
+                )
+                sess.reload_on_idle = False
+                _reclaim(sess)
+                reclaimed += 1
+            else:
+                sess.reload_on_idle = True
+                deferred += 1
+                logger.info(
+                    "模型配置变更（%s），标记忙碌 coreagent 会话在本轮结束后回收（session=%s state=%s）",
+                    reason,
+                    sess.session_id,
+                    sess.state,
+                )
+    return {"reclaimed": reclaimed, "deferred": deferred}
 
 
 def shutdown() -> None:

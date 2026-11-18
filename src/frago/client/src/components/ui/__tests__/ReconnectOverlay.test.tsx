@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import ReconnectOverlay from '../ReconnectOverlay';
 import i18n from '@/i18n';
-import { useConnectionStore, WAKE_COMMAND } from '@/api/connection';
+import { RECONNECTED_EVENT, useConnectionStore, WAKE_COMMAND } from '@/api/connection';
 
 beforeAll(async () => {
   await i18n.changeLanguage('zh');
@@ -126,5 +126,64 @@ describe('ReconnectOverlay', () => {
     expect((screen.getByTestId('page-draft-input') as HTMLTextAreaElement).value).toBe(
       '帮我对比 Metix AI 与海纳 AI'
     );
+  });
+
+  it('重连恢复时若服务端脚本哈希已更新且无草稿，自动触发平滑刷新', async () => {
+    const scriptEl = document.createElement('script');
+    scriptEl.setAttribute('src', '/assets/index-OldHash11.js');
+    document.head.appendChild(scriptEl);
+    const onReload = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => '<script type="module" src="/assets/index-NewHash22.js"></script>',
+      })
+    );
+    try {
+      render(<ReconnectOverlay onReload={onReload} />);
+      act(() => {
+        window.dispatchEvent(new Event(RECONNECTED_EVENT));
+      });
+      await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId('reconnect-stale-build-banner')).toBeNull();
+    } finally {
+      scriptEl.remove();
+    }
+  });
+
+  it('重连恢复时若服务端脚本哈希已更新且输入框有未发送草稿，弹出刷新提示条而不强刷丢稿', async () => {
+    const scriptEl = document.createElement('script');
+    scriptEl.setAttribute('src', '/assets/index-OldHash11.js');
+    document.head.appendChild(scriptEl);
+    const onReload = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => '<script type="module" src="/assets/index-NewHash22.js"></script>',
+      })
+    );
+    try {
+      render(
+        <div>
+          <textarea data-testid="composer-input" defaultValue="未发送草稿" />
+          <ReconnectOverlay onReload={onReload} />
+        </div>
+      );
+      act(() => {
+        window.dispatchEvent(new Event(RECONNECTED_EVENT));
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId('reconnect-stale-build-banner')).toBeTruthy()
+      );
+      expect(onReload).not.toHaveBeenCalled();
+      expect(screen.getByText('前端界面已更新，点击刷新加载最新样式')).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId('reconnect-reload-btn'));
+      expect(onReload).toHaveBeenCalledTimes(1);
+    } finally {
+      scriptEl.remove();
+    }
   });
 });

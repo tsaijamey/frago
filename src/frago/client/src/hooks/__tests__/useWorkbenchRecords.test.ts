@@ -1158,6 +1158,46 @@ describe('advanceTrails：一句话走到哪一步', () => {
     const out = advanceTrails([failed], [r('u', 'user.say', { text: 'ping' })]);
     expect(out[0]).toBe(failed);
   });
+
+  it('尾部出现生命周期停机通知（context.inject 或旧版 informational）时收口进度', () => {
+    const [settledStop] = advanceTrails(
+      [fresh('继续')],
+      [
+        r('u', 'user.say', { text: '继续' }),
+        r(
+          'stop',
+          'context.inject',
+          {
+            channel: 'lifecycle-stop',
+            source: 'system',
+            label: '运行已停下',
+            body: '这一场由全域生命周期协调器在 2026-11-18T14:28:10Z 停下：当时没有在跑的一轮。',
+          },
+          AT + 5_000
+        ),
+      ]
+    );
+    expect(settledStop.steps.answered).toBe(AT + 5_000);
+    expect(settledStop.steps.picked_up).toBeUndefined();
+
+    const [settledLegacy] = advanceTrails(
+      [fresh('继续')],
+      [
+        r('u', 'user.say', { text: '继续' }),
+        r(
+          'stop2',
+          'error',
+          {
+            scope: 'engine',
+            code: 'informational',
+            message: '这一场由全域生命周期协调器在 2026-11-18T14:28:10Z 停下：当时没有在跑的一轮。',
+          },
+          AT + 6_000
+        ),
+      ]
+    );
+    expect(settledLegacy.steps.answered).toBe(AT + 6_000);
+  });
 });
 
 describe('useWorkbenchRecords 的进度', () => {

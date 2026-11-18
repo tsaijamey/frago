@@ -1086,17 +1086,35 @@ class _Translator:
             )
             return
 
-        # 序 4：引擎侧报错
+        # 序 4：引擎侧报错（或生命周期停机通知）
         if subtype in _ENGINE_ERROR_SUBTYPES or (
             subtype == "informational" and row.get("level") == "warning"
         ):
+            content = str(row.get("content") or "")
+            if (
+                subtype == "informational"
+                and "这一场由" in content
+                and "停下：" in content
+            ):
+                self._emit(
+                    row,
+                    "context.inject",
+                    {
+                        "channel": "lifecycle-stop",
+                        "source": "system",
+                        "label": "运行已停下",
+                        "body": content,
+                        "level": row.get("level"),
+                    },
+                )
+                return
             self._emit(
                 row,
                 "error",
                 {
                     "scope": "engine",
                     "code": str(subtype or ""),
-                    "message": str(row.get("content") or ""),
+                    "message": content,
                 },
             )
             return
