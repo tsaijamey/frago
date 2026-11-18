@@ -449,6 +449,7 @@ class TmuxCoreProcess:
         cmd: list[str],
         cwd: str,
         env: Mapping[str, str] | None,
+        unset_env: tuple[str, ...] = (),
         mode: str = "resident",
         prompt_text: str | None = None,
         width: int = 200,
@@ -488,6 +489,7 @@ class TmuxCoreProcess:
             "cmd": effective_cmd,
             "cwd": cwd,
             "env": full_env,
+            "unset_env": list(unset_env),
             "pane_log": str(saved_pane_log_path(session_id)),
         }
         (self.run_dir / "launch.json").write_text(
@@ -784,7 +786,9 @@ def _run_pane_host(run_dir: Path) -> int:
     mode: str = spec["mode"]
     cmd: list[str] = spec["cmd"]
     cwd: str = spec["cwd"]
-    env: dict[str, str] = {**os.environ, **(spec.get("env") or {})}
+    unset_keys = {str(k) for k in (spec.get("unset_env") or []) if k}
+    base_env = {k: v for k, v in os.environ.items() if k not in unset_keys} if unset_keys else dict(os.environ)
+    env: dict[str, str] = {**base_env, **(spec.get("env") or {})}
     pane_log_path = Path(spec["pane_log"]) if spec.get("pane_log") else None
 
     stdin_file = run_dir / "stdin.jsonl"

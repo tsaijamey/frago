@@ -39,6 +39,7 @@ can only call a connection that carries its own key:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -262,6 +263,11 @@ def save_profiles(store: ProfileStore) -> None:
     # Set file permissions on Unix
     if platform.system() != "Windows":
         os.chmod(PROFILES_PATH, 0o600)
+
+    with contextlib.suppress(Exception):
+        from frago.server.services import coreagent_runner
+
+        coreagent_runner.recycle_for_model_change(reason="profiles_saved")
 
 
 def official_connection() -> APIProfile:
@@ -1226,10 +1232,17 @@ def bind_role(
             activate_profile(connection.id, targets)
         return connection
 
+    from frago.init.profile_targets import can_apply_to
+
     store = load_profiles()
     store.worker_profile_id = None if connection.kind == KIND_OFFICIAL else connection.id
     store.worker_harness_profiles["claude"] = (
         "follow" if connection.kind == KIND_OFFICIAL else connection.id
+    )
+    store.worker_harness_profiles["coreagent"] = (
+        connection.id
+        if connection.kind == KIND_ENDPOINT and can_apply_to(connection, "claude")
+        else "follow"
     )
     save_profiles(store)
     return connection

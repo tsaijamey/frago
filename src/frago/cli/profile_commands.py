@@ -82,20 +82,28 @@ def _binding_lines() -> list[str]:
         MAIN_ROLE,
         WORKER_ROLE,
         load_profiles,
+        resolve_worker_profile,
         role_connection,
     )
 
     store = load_profiles()
     main = role_connection(MAIN_ROLE)
     worker = role_connection(WORKER_ROLE)
+    coreagent_worker = resolve_worker_profile("coreagent")
 
     main_where = f"，已写入 {', '.join(store.active_targets)}" if store.active_targets else ""
     worker_core = f"[{worker.agent_type}] " if worker.agent_type else ""
     worker_model = f"  model={worker.default_model}" if worker.default_model else ""
-    return [
+    lines = [
         f"主 agent（写进各 cli-agent 自己的配置）：{main.name}{main_where}",
         f"worker（每次 frago agent 开会话时现读）：{worker_core}{worker.name}{worker_model}",
     ]
+    if coreagent_worker.id != worker.id:
+        ca_model = f"  model={coreagent_worker.default_model}" if coreagent_worker.default_model else ""
+        lines.append(
+            f"worker [coreagent]（CoreAgent 独立槽位）：{coreagent_worker.name}{ca_model}"
+        )
+    return lines
 
 
 @profile_group.command("bind", cls=AgentFriendlyCommand)
@@ -183,12 +191,20 @@ def profile_list(for_hook: bool):
         click.echo("No profiles saved. Create one in the WebUI settings.")
         return
 
+    coreagent_worker_id = store.worker_harness_profiles.get("coreagent")
     for p in profiles:
         roles = []
         if p.id == store.active_profile_id:
             roles.append("main")
         if p.id == store.worker_profile_id:
             roles.append("worker")
+        if (
+            coreagent_worker_id
+            and coreagent_worker_id not in ("follow", "official")
+            and p.id == coreagent_worker_id
+            and p.id != store.worker_profile_id
+        ):
+            roles.append("worker(coreagent)")
         used_by = "  ← " + "/".join(roles) if roles else ""
         click.echo(f"{p.name}{used_by}")
         click.echo(f"  id:        {p.id}")

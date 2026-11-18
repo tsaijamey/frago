@@ -82,6 +82,7 @@ class AsyncDispatchJob:
     task_summary: str
     resume: str | None = None
     model: str | None = None
+    profile_id: str | None = None
     timeout: int | None = None
     env_list: list[str] = dataclasses.field(default_factory=list)
     status: str = "pending"  # "pending" | "running" | "delivering" | "completed" | "failed" | "superseded"
@@ -974,6 +975,7 @@ def dispatch_worker_turn_async(
     task_summary: str,
     resume: str | None = None,
     model: str | None = None,
+    profile_id: str | None = None,
     timeout: int | None = None,
     env_list: list[str] | None = None,
 ) -> AsyncDispatchJob:
@@ -995,6 +997,7 @@ def dispatch_worker_turn_async(
         task_summary=task_summary[:240],
         resume=resume,
         model=model,
+        profile_id=profile_id,
         timeout=timeout,
         env_list=list(env_list or []),
         status="running",
@@ -1130,19 +1133,28 @@ def _execute_employee_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
 
 def _execute_worker_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
     """在后台 watcher 中执行下属 Worker 回合。"""
+    import inspect
+
     import frago.cli.agent_command as agent_cli
     from frago.session.session_origin import record_relation
 
     old_target = job.target_session_id
-    real_sid, turn_status, answer_text = agent_cli._run_worker_turn_sync(
+    fn = agent_cli._run_worker_turn_sync
+    sig = inspect.signature(fn)
+    worker_kwargs: dict[str, Any] = {
+        "agent_type": job.agent,
+        "session_id": job.target_session_id,
+        "native_session_id": bool(job.resume),
+        "cwd": job.cwd,
+        "timeout": int(job.timeout or 0),
+        "model": job.model,
+        "env_list": job.env_list,
+    }
+    if "profile_id" in sig.parameters:
+        worker_kwargs["profile_id"] = job.profile_id
+    real_sid, turn_status, answer_text = fn(
         job.prompt,
-        agent_type=job.agent,
-        session_id=job.target_session_id,
-        native_session_id=bool(job.resume),
-        cwd=job.cwd,
-        timeout=int(job.timeout or 0),
-        model=job.model,
-        env_list=job.env_list,
+        **worker_kwargs,
     )
     resolved_sid = (
         (_resolve_bound_session_id(real_sid)[0] if real_sid else None)

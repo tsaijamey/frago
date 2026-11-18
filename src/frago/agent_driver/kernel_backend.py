@@ -84,6 +84,14 @@ _AUTH_WALL = re.compile(
 _TERM_GRACE_S = 5.0
 _KILL_GRACE_S = 3.0
 
+_KERNEL_CRED_ENVS: tuple[str, ...] = (
+    "FRAGO_KERNEL_MODEL",
+    "FRAGO_KERNEL_ENDPOINT",
+    "FRAGO_KERNEL_API_KEY",
+    "FRAGO_KERNEL_WIRE",
+    "FRAGO_KERNEL_PROTOCOL",
+)
+
 
 @dataclass(frozen=True)
 class KernelTurn:
@@ -243,6 +251,7 @@ def _run_process(
     cwd: str,
     timeout_s: float | None,
     env: Mapping[str, str] | None,
+    unset_env: tuple[str, ...] = (),
     on_spawn: Callable[[int], None] | None = None,
 ) -> KernelTurn | tuple[str, str, int | None, int]:
     """起进程 → 喂任务 → 收 ``(stdout, stderr, 退出码, 耗时)``。
@@ -252,7 +261,8 @@ def _run_process(
     拿到 KernelTurn 就原样往上交，拿到四元组才继续判成败。这样超时收场的时机、SIGTERM
     与 SIGKILL 的先后，两种形状不可能各走各的。
     """
-    run_env = {**os.environ, **(env or {})}
+    base_env = {k: v for k, v in os.environ.items() if k not in unset_env} if unset_env else dict(os.environ)
+    run_env = {**base_env, **(env or {})}
     started = time.monotonic()
 
     try:
@@ -311,6 +321,7 @@ def _run_tmux_process(
     cwd: str,
     timeout_s: float | None,
     env: Mapping[str, str] | None,
+    unset_env: tuple[str, ...] = (),
     on_spawn: Callable[..., None] | None = None,
 ) -> KernelTurn | tuple[str, str, int | None, int, str]:
     """在 ``frago-agent-<session_id>`` tmux 会话内跑一轮 ``frago-core``，回传 ``stdout`` 与退出码。"""
@@ -329,6 +340,7 @@ def _run_tmux_process(
         cmd=cmd,
         cwd=cwd,
         env=env,
+        unset_env=unset_env,
         mode="oneshot",
         prompt_text=prompt_text,
     )
@@ -404,10 +416,14 @@ def run_turn(
         effective_env["FRAGO_KERNEL_ENDPOINT"] = endpoint.strip()
     if api_key and api_key.strip():
         effective_env["FRAGO_KERNEL_API_KEY"] = api_key.strip()
-    if model and model.strip():
+    has_inline_api_key = bool(effective_env.get("FRAGO_KERNEL_API_KEY", "").strip())
+    if model and model.strip() and (profile_id is None or has_inline_api_key):
         effective_env["FRAGO_KERNEL_MODEL"] = model.strip()
     if wire and wire.strip():
         effective_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
+    unset_env: tuple[str, ...] = ()
+    if profile_id is not None and not has_inline_api_key:
+        unset_env = tuple(k for k in _KERNEL_CRED_ENVS if k not in effective_env)
     if session_id:
         effective_env.setdefault("FRAGO_SESSION_ID", session_id)
         effective_env.setdefault(
@@ -422,6 +438,7 @@ def run_turn(
                 cwd=cwd,
                 timeout_s=timeout_s,
                 env=effective_env,
+                unset_env=unset_env,
                 on_spawn=on_spawn,
             )
             if isinstance(tmux_collected, KernelTurn):
@@ -437,6 +454,7 @@ def run_turn(
         cwd=cwd,
         timeout_s=timeout_s,
         env=effective_env,
+        unset_env=unset_env,
         on_spawn=on_spawn,
     )
     if isinstance(collected, KernelTurn):

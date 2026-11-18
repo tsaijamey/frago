@@ -114,8 +114,42 @@ class TestWorkerBinding:
         bind_role(WORKER_ROLE, endpoint_profile.id)
         bind_role(WORKER_ROLE, OFFICIAL_ID)
 
-        assert load_profiles().worker_profile_id is None
+        store = load_profiles()
+        assert store.worker_profile_id is None
+        assert store.worker_harness_profiles.get("coreagent") == "follow"
         assert role_connection(WORKER_ROLE).kind == KIND_OFFICIAL
+
+    def test_binds_endpoint_syncs_coreagent_worker_slot_and_clears_stale_override(
+        self, tmp_profiles_path, endpoint_profile, vendor_profile
+    ):
+        from frago.init.profile_manager import resolve_worker_profile
+
+        other = APIProfile(
+            id="ep000002",
+            name="WorkBuddy Hy4 Pro",
+            endpoint_type="custom",
+            api_key="sk-test-key-2",
+            url="http://127.0.0.1:8787/workbuddy",
+            default_model="hy4std",
+        )
+        add_profile(endpoint_profile)
+        add_profile(other)
+        add_profile(vendor_profile)
+
+        store = load_profiles()
+        store.worker_harness_profiles["coreagent"] = other.id
+        save_profiles(store)
+
+        bind_role(WORKER_ROLE, endpoint_profile.id)
+        updated = load_profiles()
+        assert updated.worker_profile_id == endpoint_profile.id
+        assert updated.worker_harness_profiles.get("coreagent") == endpoint_profile.id
+        assert resolve_worker_profile("coreagent").id == endpoint_profile.id
+
+        # 绑定厂商 CLI 时不得把不支持的 vendor id 留在 coreagent 槽位
+        bind_role(WORKER_ROLE, vendor_profile.id)
+        after_vendor = load_profiles()
+        assert after_vendor.worker_harness_profiles.get("coreagent") == "follow"
 
 
 class TestMainBinding:

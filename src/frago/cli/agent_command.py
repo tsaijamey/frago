@@ -551,6 +551,7 @@ def _run_worker_turn_sync(
     cwd: str,
     timeout: int,
     model: str | None = None,
+    profile_id: str | None = None,
     env_list: list[str] | None = None,
 ) -> tuple[str, str, str]:
     """供后台异步派发 watcher 调用的同步单轮 Worker 执行器，返回 `(real_session_id, status, text)`。"""
@@ -573,6 +574,7 @@ def _run_worker_turn_sync(
             prompt_text,
             session_id=sid,
             cwd=cwd,
+            profile_id=profile_id,
             model=model,
             timeout_s=effective_timeout,
             env=run_env,
@@ -999,6 +1001,26 @@ def agent_run(
             if specific_conn is not None:
                 worker_connection = specific_conn
 
+    from frago.agent_driver.driver import runs_on_kernel
+
+    on_kernel = runs_on_kernel(agent_type)
+    if (
+        on_kernel
+        and existing_native
+        and target_sid
+        and not use_profile
+        and not has_inline_creds
+    ):
+        with contextlib.suppress(Exception):
+            from frago.init.profile_manager import get_profile
+            from frago.session import coreagent_store
+
+            persisted_pid = coreagent_store.read_session_profile_id(target_sid)
+            if persisted_pid:
+                persisted_conn = get_profile(persisted_pid)
+                if persisted_conn is not None and persisted_conn.api_key:
+                    worker_connection = persisted_conn
+
     # 会话 env 的优先级：CCR < profile < CLI(--endpoint/--api-key/--model)。
     # 全部经 new-session -e 注入 tmux 会话。
     tmux_env: dict[str, str] = {}
@@ -1027,9 +1049,6 @@ def agent_run(
     #   内核（kernel 后端）→ ``--as-profile <id>``，它读 profiles.json、不认 ANTHROPIC_*。
     # 判据在后端（runs_on_kernel），两条路二选一，NEVER 两边都塞——塞了内核也读不到，
     # 结果是"点名要某个模型"静默失效。
-    from frago.agent_driver.driver import runs_on_kernel
-
-    on_kernel = runs_on_kernel(agent_type)
     kernel_profile_id: str | None = None
     if on_kernel:
         if use_profile:
@@ -1085,7 +1104,7 @@ def agent_run(
             tmux_env["FRAGO_KERNEL_API_KEY"] = api_key.strip()
     if model:
         tmux_env["ANTHROPIC_MODEL"] = model
-        if on_kernel:
+        if on_kernel and has_inline_creds:
             tmux_env["FRAGO_KERNEL_MODEL"] = model.strip()
     if wire and on_kernel:
         tmux_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
@@ -1148,6 +1167,7 @@ def agent_run(
             task_summary=prompt_text,
             resume=dispatch_sid if (resume_session_id or existing_native) else None,
             model=launch_model,
+            profile_id=kernel_profile_id,
             timeout=timeout if timeout > 0 else None,
             env_list=env_pairs,
         )

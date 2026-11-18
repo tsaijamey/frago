@@ -368,6 +368,88 @@ def test_stop_kills_a_kernel_worker_by_pid(drive_dir):
             proc.kill()
 
 
+def test_resume_preserves_persisted_session_profile_without_use_profile(
+    monkeypatch, tmp_path, fake_kernel
+):
+    """--resume 既有 CoreAgent 会话时若未传 --use-profile，必须优先读取会话记录里的 session-profile，
+    避免静默回落到当前的 worker_harness_profiles.coreagent。"""
+    from frago.init import profile_manager as pm
+
+    argon = pm.APIProfile(
+        id="3558ddb3",
+        name="AGY Gemini 4 Argon",
+        endpoint_type="custom",
+        api_key="sk-argon",
+        url="http://127.0.0.1:8080",
+        default_model="gemini-4-argon-high",
+    )
+    wb_hy4 = pm.APIProfile(
+        id="a2ef38c1",
+        name="WorkBuddy Hy4 Pro",
+        endpoint_type="custom",
+        api_key="sk-wb",
+        url="http://127.0.0.1:8787/workbuddy",
+        default_model="hy4std",
+    )
+    store = pm.ProfileStore(
+        profiles=[argon, wb_hy4],
+        active_profile_id=argon.id,
+        coreagent_profile_id=argon.id,
+        worker_profile_id=argon.id,
+        worker_harness_profiles={"coreagent": argon.id},
+    )
+    monkeypatch.setattr(pm, "load_profiles", lambda: store)
+
+    sess_root = tmp_path / "coreagent" / "sessions"
+    sess_dir = sess_root / "-tmp"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    sid = "core_11112222333344445555666677778888"
+    (sess_dir / f"{sid}.jsonl").write_text(
+        json.dumps({"type": "session-profile", "profileId": wb_hy4.id, "sessionId": sid}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("frago.session.coreagent_store.sessions_root", lambda: sess_root)
+
+    res = CliRunner().invoke(agent, ["--resume", sid, "--quiet", "continue"])
+    assert res.exit_code == 0, res.stderr
+    assert len(fake_kernel) == 1
+    assert fake_kernel[0]["profile_id"] == wb_hy4.id
+
+
+def test_profile_run_does_not_leak_frago_kernel_model_env(monkeypatch, tmp_path):
+    """带 profile_id 调用 kernel_backend.run_turn 时不注入 FRAGO_KERNEL_MODEL，并剥离继承的旧 FRAGO_KERNEL_*，
+    防止子进程里的 LightAgent 钩子或嵌套 worker 被模型环境变量跨网关污染。"""
+    seen_env: dict[str, str] = {}
+
+    class _DummyProc:
+        pid = 9999
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):  # noqa: A002
+            return (json.dumps({"type": "result", "is_error": False, "result": "ok"}), "")
+
+    def _fake_popen(cmd, **kwargs):
+        seen_env.update(kwargs.get("env") or {})
+        return _DummyProc()
+
+    monkeypatch.setenv("FRAGO_KERNEL_MODEL", "stale-inherited-model")
+    monkeypatch.setenv("FRAGO_KERNEL_ENDPOINT", "http://127.0.0.1:8080")
+    monkeypatch.setattr(kernel_backend.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(kernel_backend, "_should_use_tmux", lambda: False)
+
+    turn = kernel_backend.run_turn(
+        "ping",
+        session_id="core_env_check",
+        cwd=str(tmp_path),
+        profile_id="a2ef38c1",
+        model="hy4std",
+    )
+    assert turn.status == "ok"
+    assert "FRAGO_KERNEL_MODEL" not in seen_env
+    assert "FRAGO_KERNEL_ENDPOINT" not in seen_env
+
+
+
 def test_send_refuses_a_kernel_worker_instead_of_crashing(drive_dir):
     drive_command.register_transient_worker(
         name="core_nostdin", agent_type="coreagent", tmux_name=None, cwd=str(drive_dir), pid=os.getpid()

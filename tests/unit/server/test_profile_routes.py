@@ -177,7 +177,7 @@ class TestActivationTargets:
         response = await get_activation_targets()
 
         by_type = {t.agent_type: t for t in response.targets}
-        assert set(by_type) == {"claude", "opencode", "codex", "coreagent"}
+        assert set(by_type) == {"claude", "opencode", "codex", "agy", "coreagent"}
         # codex 接得了，但只吃 profile 的 Responses 通道——页面据此逐条 profile 判能不能勾。
         assert by_type["codex"].supported is True
         assert by_type["codex"].protocol == "responses"

@@ -907,3 +907,151 @@ def test_format_callback_prompt_keeps_short_body_intact_for_employee_kind() -> N
     assert "仅需一句话确认收口，严禁全文复述" in prompt
 
 
+def test_coreagent_async_dispatch_and_resume_preserve_non_default_profile_id(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """回归：非默认 coreagent 连接（如 a2ef38c1 WorkBuddy Hy4 Pro）经异步派发与 resume 时，
+    必须完整透传 profile_id 到 AsyncDispatchJob → _run_worker_turn_sync → kernel_backend.run_turn，
+    不得丢弃 profile_id 导致 frago-core 回落读取 coreagent_profile_id（8080）。
+    """
+    import frago.cli.agent_command as agent_cli
+    from frago.agent_driver import kernel_backend
+    from frago.init.profile_manager import APIProfile, add_profile, bind_harness
+
+    svc = EmployeeOntologyService()
+    svc.hire("lenovo", title="Lenovo专员", agent_kernel="agy")
+    emp_sid = "11111111-2222-4333-8444-555555555555"
+    monkeypatch.setenv("FRAGO_SESSION_ID", emp_sid)
+    monkeypatch.setenv("FRAGO_EMPLOYEE_ID", "lenovo")
+
+    default_agy = APIProfile(
+        id="3558ddb3",
+        name="AGY Gemini 4 Argon",
+        endpoint_type="custom",
+        api_key="sk-agy-test",
+        url="http://127.0.0.1:8080",
+        default_model="gemini-4-argon-high",
+    )
+    wb_hy4 = APIProfile(
+        id="a2ef38c1",
+        name="WorkBuddy Hy4 Pro",
+        endpoint_type="custom",
+        api_key="sk-wb-test",
+        url="http://127.0.0.1:8787/workbuddy",
+        default_model="hy4std",
+    )
+    add_profile(default_agy)
+    add_profile(wb_hy4)
+    bind_harness("coreagent", "main", default_agy.id)
+    bind_harness("coreagent", "worker", default_agy.id)
+
+    spawned_jobs: list[Path] = []
+    monkeypatch.setattr(
+        async_dispatch,
+        "_spawn_detached_watcher",
+        lambda job_path, **_kw: spawned_jobs.append(job_path) or 54321,
+    )
+    monkeypatch.setattr(
+        async_dispatch,
+        "_callback_sender_override",
+        lambda _sid, _prompt, _cwd: True,
+    )
+    monkeypatch.setattr(agent_cli, "should_use_ccr", lambda cfg, force=False: (False, None))
+
+    run_calls: list[dict[str, Any]] = []
+
+    def fake_kernel_run_turn(prompt_text: str, **kwargs: Any):
+        run_calls.append({"prompt": prompt_text, **kwargs})
+        return kernel_backend.KernelTurn(text="OK", status="ok", duration_ms=12)
+
+    monkeypatch.setattr(kernel_backend, "run_turn", fake_kernel_run_turn)
+
+    task_md = isolated_frago_env / "hy4-task.md"
+    task_md.write_text("Reply OK", encoding="utf-8")
+
+    runner = CliRunner()
+    res_new = runner.invoke(
+        agent_cli.agent,
+        [
+            "--agent-type",
+            "coreagent",
+            "--use-profile",
+            "WorkBuddy Hy4 Pro",
+            "--prompt-file",
+            str(task_md),
+        ],
+    )
+    assert res_new.exit_code == 0, res_new.output
+    assert "[dispatched]" in res_new.output
+    assert len(spawned_jobs) == 1
+
+    saved_job = async_dispatch.load_dispatch_job(spawned_jobs[0])
+    assert saved_job is not None
+    assert saved_job.profile_id == "a2ef38c1"
+    assert saved_job.model is None
+
+    finished_new = async_dispatch.execute_dispatch_job(spawned_jobs[0])
+    assert finished_new is not None
+    assert finished_new.status == "completed"
+    assert len(run_calls) == 1
+    assert run_calls[0]["profile_id"] == "a2ef38c1"
+    assert "FRAGO_KERNEL_MODEL" not in (run_calls[0].get("env") or {})
+
+    # 场景 B：worker 槽位绑定为 a2ef38c1（不传 --use-profile），AsyncDispatchJob 必须同时保留 profile_id=a2ef38c1 与 model=hy4std
+    bind_harness("coreagent", "worker", wb_hy4.id)
+    res_bound = runner.invoke(
+        agent_cli.agent,
+        ["--agent-type", "coreagent", "--prompt-file", str(task_md)],
+    )
+    assert res_bound.exit_code == 0, res_bound.output
+    assert len(spawned_jobs) == 2
+
+    bound_job = async_dispatch.load_dispatch_job(spawned_jobs[1])
+    assert bound_job is not None
+    assert bound_job.profile_id == "a2ef38c1"
+    assert bound_job.model == "hy4std"
+
+    finished_bound = async_dispatch.execute_dispatch_job(spawned_jobs[1])
+    assert finished_bound is not None
+    assert finished_bound.status == "completed"
+    assert len(run_calls) == 2
+    assert run_calls[1]["profile_id"] == "a2ef38c1"
+    assert run_calls[1]["model"] == "hy4std"
+
+    # 把 worker 槽位切回 3558ddb3 后再续跑原先跑在 a2ef38c1 上的会话（不传 --use-profile），仍必须保留 a2ef38c1
+    bind_harness("coreagent", "worker", default_agy.id)
+    worker_sid = finished_new.target_session_id
+    sess_dir = isolated_frago_env / "coreagent" / "sessions" / "-tmp"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    (sess_dir / f"{worker_sid}.jsonl").write_text(
+        json.dumps({"type": "session-profile", "profileId": "a2ef38c1", "sessionId": worker_sid})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "frago.session.coreagent_store.sessions_root",
+        lambda: isolated_frago_env / "coreagent" / "sessions",
+    )
+
+    res_resume = runner.invoke(
+        agent_cli.agent,
+        ["--resume", worker_sid, "--prompt-file", str(task_md)],
+    )
+    assert res_resume.exit_code == 0, res_resume.output
+    assert len(spawned_jobs) == 3
+
+    resumed_job = async_dispatch.load_dispatch_job(spawned_jobs[2])
+    assert resumed_job is not None
+    assert resumed_job.profile_id == "a2ef38c1"
+    assert resumed_job.model == "hy4std"
+
+    finished_resume = async_dispatch.execute_dispatch_job(spawned_jobs[2])
+    assert finished_resume is not None
+    assert finished_resume.status == "completed"
+    assert len(run_calls) == 3
+    assert run_calls[2]["profile_id"] == "a2ef38c1"
+    assert run_calls[2]["model"] == "hy4std"
+
+
+

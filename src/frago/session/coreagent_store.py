@@ -53,6 +53,7 @@ __all__ = [
     "find_session_file",
     "inspect_session_file",
     "iter_session_files",
+    "read_session_profile_id",
     "session_exists",
     "sessions_root",
 ]
@@ -314,3 +315,30 @@ def inspect_session_file(
         project_path=project_path,
         name=name,
     )
+
+
+def read_session_profile_id(session_id: str, root: Path | None = None) -> str | None:
+    """读取 CoreAgent 会话记录中持久化的连接编号（``session-profile`` 行），没有返回 None。"""
+    path = find_session_file(session_id, root)
+    if path is None:
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    profile_id: str | None = None
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if record.get("type") == "session-profile":
+            val = record.get("profileId")
+            if isinstance(val, str) and val.strip():
+                profile_id = val.strip()
+    return profile_id
