@@ -23,7 +23,7 @@ interface InlineMarkdownProps {
 
 /** 行内代码的样式自带：宿主页面不在 `.markdown-content` 里，那边的规则够不着。 */
 const CODE_CLASS =
-  'font-mono text-[0.9em] px-[0.4em] py-[0.15em] rounded-[3px] bg-[var(--code-bg)] text-[var(--text-primary)]';
+  'font-mono text-[0.9em] px-[0.4em] py-[0.15em] rounded-[3px] bg-[var(--code-bg)] text-[var(--text-primary)] whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
 
 export default function InlineMarkdown({ content }: InlineMarkdownProps) {
   if (!content) return null;

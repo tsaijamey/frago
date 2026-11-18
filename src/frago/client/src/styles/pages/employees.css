@@ -232,6 +232,9 @@
   border-radius: 4px;
   background: var(--bg-hover);
   color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* 编辑动作：轻量动作胶囊。静置时只有一枚弱色铅笔，没有底也没有边——每张卡右侧

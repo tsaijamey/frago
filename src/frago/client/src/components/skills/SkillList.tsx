@@ -269,7 +269,7 @@ function SkillDetailModal({ skill, onClose }: { skill: SkillItem; onClose: () =>
               <LoadingSpinner size="lg" />
             </div>
           ) : (
-            <pre className="mt-2 bg-[var(--bg-tertiary)] p-3 rounded text-xs font-mono overflow-auto max-h-[50vh] whitespace-pre-wrap break-words">
+            <pre className="mt-2 min-w-0 max-w-full bg-[var(--bg-tertiary)] p-3 rounded text-xs font-mono overflow-auto max-h-[50vh] whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
               {body}
             </pre>
           )}

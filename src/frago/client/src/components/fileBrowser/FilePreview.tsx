@@ -142,11 +142,14 @@ function TextPreview({ path, name }: { path: string; name: string }) {
     );
 
   return (
-    <pre className="h-full overflow-auto bg-bg-base px-5 py-4 font-mono text-[12.5px] leading-[1.65] text-text-secondary">
+    <pre className="h-full min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] bg-bg-base px-5 py-4 font-mono text-[12.5px] leading-[1.65] text-text-secondary">
       {html !== null ? (
-        <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+        <code
+          className="hljs whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       ) : (
-        <code className="hljs">{text}</code>
+        <code className="hljs whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{text}</code>
       )}
     </pre>
   );

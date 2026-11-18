@@ -96,7 +96,10 @@ function Inline({ text }: { text: string }) {
     <>
       {parts.map((part, i) =>
         i % 2 ? (
-          <code key={i} className="rounded-[4px] bg-bg-hover px-1 font-mono text-[11px]">
+          <code
+            key={i}
+            className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[4px] bg-bg-hover px-1 font-mono text-[11px]"
+          >
             {part}
           </code>
         ) : (
@@ -111,7 +114,7 @@ const BTN =
   'inline-flex h-6 shrink-0 items-center rounded-[7px] border border-border-color px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-secondary';
 
 const BOX =
-  'whitespace-pre-wrap break-words rounded-[8px] border px-[9px] py-[7px] text-[12px] leading-[1.55]';
+  'min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[8px] border px-[9px] py-[7px] text-[12px] leading-[1.55]';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (

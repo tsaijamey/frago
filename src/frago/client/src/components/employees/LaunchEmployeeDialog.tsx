@@ -55,6 +55,7 @@ import {
   type PendingLaunch,
 } from '@/hooks/useAgentClients';
 import { addRecentDirectory } from '@/utils/recentDirectories';
+import { touchEmployeeMru } from '@/utils/employeeMru';
 import { withTilde } from '@/components/sessionWorkbench/filePaths';
 import PromptComposerBox, {
   extractClipboardFiles,
@@ -246,6 +247,7 @@ export default function LaunchEmployeeDialog({
         employee: post.member_post_id,
       });
       rememberLastAgent(chosen.agent_type);
+      touchEmployeeMru(post.member_post_id);
       if (cwd.trim()) addRecentDirectory(cwd.trim());
 
       onCreated(
@@ -338,7 +340,7 @@ export default function LaunchEmployeeDialog({
           {ctxOpen ? (
             <div className="border-t border-border-color px-2.5 pb-2.5">
               {ctx ? (
-                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words pt-2 font-mono text-[11px] leading-[1.55] text-text-secondary">
+                <pre className="max-h-64 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] pt-2 font-mono text-[11px] leading-[1.55] text-text-secondary">
                   {ctx}
                 </pre>
               ) : (

@@ -130,4 +130,48 @@ describe('MarkdownContent — 表格单元格内 <br> 换行', () => {
   });
 });
 
+describe('MarkdownContent — quote 与 code 自动按页面宽度换行（防止单行无限向右撑开）', () => {
+  it('blockquote、pre.code-block、代码块内 code 与 inline-code 均具备自动换行与宽度约束类', () => {
+    const longSingleLine =
+      '/Users/frago/.frago/data/frago-dev/20261117-details-quote-code-wrap-fix/very_long_unbroken_identifier_without_spaces_that_used_to_grow_infinitely_horizontally';
+    const md = [
+      `> 引用段落包含超长行内代码 \`${longSingleLine}\``,
+      '>',
+      '> ```bash',
+      `> echo "${longSingleLine}" --flag="${longSingleLine}"`,
+      '> ```',
+    ].join('\n');
+
+    const { container } = render(<MarkdownContent content={md} />);
+    const blockquote = container.querySelector('blockquote');
+    const pre = container.querySelector('pre.code-block');
+    const blockCode = container.querySelector('pre.code-block code');
+    const inlineCode = container.querySelector('code.inline-code');
+
+    expect(blockquote).not.toBeNull();
+    expect(blockquote?.className).toContain('min-w-0');
+    expect(blockquote?.className).toContain('max-w-full');
+    expect(blockquote?.className).toContain('break-words');
+    expect(blockquote?.className).toContain('[overflow-wrap:anywhere]');
+
+    expect(pre).not.toBeNull();
+    expect(pre?.className).toContain('min-w-0');
+    expect(pre?.className).toContain('max-w-full');
+    expect(pre?.className).toContain('whitespace-pre-wrap');
+    expect(pre?.className).toContain('break-words');
+    expect(pre?.className).toContain('[overflow-wrap:anywhere]');
+
+    expect(blockCode).not.toBeNull();
+    expect(blockCode?.className).toContain('whitespace-pre-wrap');
+    expect(blockCode?.className).toContain('break-words');
+    expect(blockCode?.className).toContain('[overflow-wrap:anywhere]');
+
+    expect(inlineCode).not.toBeNull();
+    expect(inlineCode?.className).toContain('whitespace-pre-wrap');
+    expect(inlineCode?.className).toContain('break-words');
+    expect(inlineCode?.className).toContain('[overflow-wrap:anywhere]');
+  });
+});
+
+
 

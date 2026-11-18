@@ -566,8 +566,12 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-xs);
   line-height: 1.6;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .td-composer-message {
@@ -1718,7 +1722,10 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-xs);
   line-height: 1.6;
+  min-width: 0;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -1788,7 +1795,10 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-xs);
   color: var(--accent-warning);
+  min-width: 0;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 

@@ -2749,6 +2749,10 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-secondary);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-content blockquote > :first-child { margin-top: 0; }
@@ -2761,6 +2765,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   background: var(--code-bg);
   border-radius: 3px;
   color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-content .code-block-wrap {
@@ -2771,16 +2778,19 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* 代码块退到凹面（--surface-recessed）：它是过程记录，不是结论。
-   超宽时在自己的框里横向滚，不把整栏撑宽——`max-width: 100%` 加 `overflow-x: auto`
-   两件事必须同时在，少了前者框仍会被内容顶开。 */
+   受父容器宽度约束自动折行，既保留缩进与换行结构，又不让长单行命令/路径横向无限撑开页面。 */
 .markdown-content .code-block {
   margin: 0.5em 0;
   padding: 0.75em 2.5em 0.75em 1em;
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-content .code-block-copy {
@@ -2817,7 +2827,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-family: var(--font-mono);
   font-size: 0.9em;
   color: var(--text-primary);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-content a {

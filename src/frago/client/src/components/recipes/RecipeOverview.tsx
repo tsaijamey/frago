@@ -200,7 +200,7 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
           icon={<Code size={16} className="text-[var(--text-muted)]" />}
           defaultExpanded={false}
         >
-          <pre className="bg-[var(--bg-tertiary)] p-4 rounded text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap break-words">
+          <pre className="min-w-0 max-w-full bg-[var(--bg-tertiary)] p-4 rounded text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
             {recipe.source_code}
           </pre>
         </CollapsibleSection>

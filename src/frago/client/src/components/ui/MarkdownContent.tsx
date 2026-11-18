@@ -194,7 +194,11 @@ function CodeBlockPre({
       >
         {copied ? <Check size={13} /> : <Copy size={13} />}
       </button>
-      <pre ref={preRef} className="code-block" {...props}>
+      <pre
+        ref={preRef}
+        className="code-block min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+        {...props}
+      >
         {children}
       </pre>
     </div>
@@ -238,16 +242,36 @@ function renderCellChildren(children: ReactNode): ReactNode {
 
 const components: Components = {
   pre: CodeBlockPre,
-  code({ children, ...props }) {
-    const isInline = !props.className;
+  blockquote({ children, node: _node, className, ...props }) {
+    return (
+      <blockquote
+        className={`min-w-0 max-w-full break-words [overflow-wrap:anywhere]${className ? ` ${className}` : ''}`}
+        {...props}
+      >
+        {children}
+      </blockquote>
+    );
+  },
+  code({ children, className, ...props }) {
+    const isInline = !className;
     if (isInline) {
       return (
-        <code className="inline-code" {...props}>
+        <code
+          className="inline-code whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+          {...props}
+        >
           {children}
         </code>
       );
     }
-    return <code {...props}>{children}</code>;
+    return (
+      <code
+        className={`${className} whitespace-pre-wrap break-words [overflow-wrap:anywhere]`}
+        {...props}
+      >
+        {children}
+      </code>
+    );
   },
   // 表格外包一层能横向滚的框：窄栏里放不下时在框内滚，不撑宽整栏。
   table({ children, node: _node, ...props }) {
