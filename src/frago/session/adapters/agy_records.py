@@ -28,11 +28,12 @@ agy 每加一个工具，它那一步在界面上都会退化成一条空的「�
 的价值之一就是让人看见 agent 当时到底被喂了什么（与 codex 侧处理 ``<environment_context>``
 同一个做法；那份也不收进用户发言，否则一条提问会被顶上一大段环境说明）。
 
-## 用量与模型：转录只给了一半
+## 用量与模型：优先取转录行内真实 model，缺省时退回会话库兜底
 
 每一次模型回复都带 ``input_tokens`` / ``cache_read_tokens`` / ``output_tokens``，界面上
-那道用量刻度由它们换算（见 :func:`_usage_tick`）。但**是谁答的，转录一个字没写**——模型
-slug 全机只有一处记着，见 :func:`frago.session.agy_store.session_model`。
+那道用量刻度由它们换算（见 :func:`_usage_tick`）。模型名优先取每条 ``PLANNER_RESPONSE``
+行内自带的 ``model`` 字段（如 ``gemini-4-argon-medium``）；仅当早期旧会话或某行缺省该字段
+时，才按需回退调用 :func:`frago.session.agy_store.session_model` 从 ``.db`` 兜底读取。
 
 分层：核心数据层，NEVER import ``server/`` 或 ``cli/``。
 """
@@ -470,6 +471,12 @@ def _drafts_for(
 
     if rtype == agy_store.RECORD_PLANNER:
         drafts = []
+        raw_model = record.get("model")
+        step_model = (
+            raw_model.strip()
+            if isinstance(raw_model, str) and raw_model.strip()
+            else model
+        )
         thinking = record.get("thinking")
         if isinstance(thinking, str) and thinking.strip():
             drafts.append(
@@ -516,13 +523,13 @@ def _drafts_for(
                     ts=ts,
                     kind="agent.say",
                     group_id=turn,
-                    payload={"text": answer, "model": model, "provider": None},
+                    payload={"text": answer, "model": step_model, "provider": None},
                     line=line,
                 )
             )
         # 刻度摆在**这一行所有内容之后**：它说的是"这次调用烧了多少"，读的人先看到这次
         # 说了什么、做了什么，再看到账。摆最前会把答案挤到一行记账后面去。
-        tick = _usage_tick(record, usage, model)
+        tick = _usage_tick(record, usage, step_model)
         if tick is not None:
             drafts.append(
                 _Draft(
@@ -670,9 +677,10 @@ def _walk(session_id: str) -> Iterator[tuple[int, dict[str, Any], list[_Draft]]]
     turn: str | None = None
     pending: dict[str, list[str]] = {}
     usage = _Usage()
-    # 模型名整场一个，先问一次。它是**另一处**记录里的东西（见 ``agy_store.session_model``），
-    # 逐行去问等于把同一个库开几十遍。
-    model = agy_store.session_model(session_id)
+    # 优先用每条 PLANNER_RESPONSE 行内真实的 model 字段；仅当遇到缺省 model 字段的记录时，
+    # 才按需查询一次 agy_store.session_model(session_id) 作为整场兜底。
+    fallback_model: str | None = None
+    fallback_loaded = False
     for line, raw in enumerate(_raw_lines(session_id)):
         raw = raw.strip()
         if not raw:
@@ -683,7 +691,12 @@ def _walk(session_id: str) -> Iterator[tuple[int, dict[str, Any], list[_Draft]]]
             continue
         if not isinstance(record, dict):
             continue
-        produced, turn = _drafts_for(record, line, turn, pending, usage, model)
+        if record.get("type") == agy_store.RECORD_PLANNER:
+            raw_model = record.get("model")
+            if not (isinstance(raw_model, str) and raw_model.strip()) and not fallback_loaded:
+                fallback_model = agy_store.session_model(session_id)
+                fallback_loaded = True
+        produced, turn = _drafts_for(record, line, turn, pending, usage, fallback_model)
         yield line, record, produced
 
 

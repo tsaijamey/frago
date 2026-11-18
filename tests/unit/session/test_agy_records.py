@@ -61,6 +61,7 @@ def _planner(
     thinking=None,
     tool_calls=None,
     content=None,
+    model=None,
     at="2026-10-13T11:42:57Z",
     input_tokens=None,
     cache_read_tokens=None,
@@ -79,6 +80,8 @@ def _planner(
         record["tool_calls"] = tool_calls
     if content is not None:
         record["content"] = content
+    if model is not None:
+        record["model"] = model
     # 用量三个数只在真跑过模型的那一条上有；不给就是"这一条没带用量"。
     for key, value in (
         ("input_tokens", input_tokens),
@@ -762,6 +765,119 @@ def test_没有模型名时不编一个(app_dir):
         ],
     )
     assert next(r for r in records if r.kind == "usage.tick").payload["model"] is None
+
+
+def test_转录行内自带model字段时优先采用行内模型(app_dir):
+    """transcript.jsonl 含行内 model: "gemini-4-argon-medium" 时优先采用行内模型，不被 .db 覆盖。"""
+    _write_conversation_db(app_dir, b"\x00\x9a\x01\x0egemini-4-argon\x00")
+    records = _translate(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>x</USER_REQUEST>"),
+            _planner(
+                1,
+                content="答",
+                model="gemini-4-argon-medium",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+        ],
+    )
+    assert next(r for r in records if r.kind == "agent.say").payload["model"] == (
+        "gemini-4-argon-medium"
+    )
+    assert next(r for r in records if r.kind == "usage.tick").payload["model"] == (
+        "gemini-4-argon-medium"
+    )
+
+
+def test_转录缺省行内model时回退会话库兜底(app_dir):
+    """transcript.jsonl 某行缺省 model 字段时按需回退 .db 兜底提取。"""
+    _write_conversation_db(app_dir, b"\x00\x9a\x01\x0egemini-4-argon\x00")
+    records = _translate(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>一</USER_REQUEST>"),
+            _planner(
+                1,
+                content="答一",
+                model="gemini-4-argon-medium",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            _user(2, "<USER_REQUEST>二</USER_REQUEST>"),
+            _planner(3, content="答二", input_tokens=20, output_tokens=8),
+        ],
+    )
+    says = [r for r in records if r.kind == "agent.say"]
+    ticks = [r for r in records if r.kind == "usage.tick"]
+    assert [r.payload["model"] for r in says] == [
+        "gemini-4-argon-medium",
+        "gemini-4-argon",
+    ]
+    assert [r.payload["model"] for r in ticks] == [
+        "gemini-4-argon-medium",
+        "gemini-4-argon",
+    ]
+
+
+def test_会话库gen_metadata存无后缀argon且后续含子代理档位说明时精准提取argon(app_dir):
+    """.db 的 gen_metadata 存无后缀 gemini-4-argon 且后续块含 flash_lite / flash / pro
+    子代理说明段时，精准提取 gemini-4-argon 而不误抓 gemini-4-hydrogen-tiered-high。
+    """
+    import sqlite3
+
+    path = agy_store.conversation_db_path(CONVERSATION_ID)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE gen_metadata (idx INTEGER, data BLOB, size INTEGER)")
+    conn.execute("CREATE TABLE executor_metadata (idx INTEGER, data BLOB, size INTEGER)")
+    gen_blob = (
+        b"\x12\x14-3750763034362895579\x9a\x01\x0egemini-4-argon"
+        b"\xa2\x01\x1e\n\x15used_non_gemini_model\x12\x05false"
+        b"\xa2\x01$\n\nmodel_enum\x12\x16MODEL_PLACEHOLDER_M418"
+        b"\xaa\x01\x17Gemini 4 Argon (Medium)"
+    )
+    subagent_and_exec_blob = (
+        b"The lightest, fastest model for trivial or high-volume tasks.*%"
+        b"\n\nflash_lite\x12\x17\n\x15gemini-3.5-flash-lite\nU\x1a)"
+        b"A lighter, faster model for simple tasks.*("
+        b"\n\x05flash\x12\x1f\n\x1dgemini-4-hydrogen-tiered-high\nK\x1a "
+        b"A larger model for complex work.*'"
+        b"\n\x03pro\x12 \n\x1egemini-4-hydrogen-tiered-xhigh"
+        b":\rplanning_mode@\x00\xe2\x01\x15gemini-4-argon-medium"
+    )
+    conn.execute("INSERT INTO gen_metadata VALUES (0, ?, ?)", (gen_blob, len(gen_blob)))
+    conn.execute(
+        "INSERT INTO executor_metadata VALUES (0, ?, ?)",
+        (subagent_and_exec_blob, len(subagent_and_exec_blob)),
+    )
+    conn.commit()
+    conn.close()
+
+    assert agy_store.session_model(CONVERSATION_ID) == "gemini-4-argon"
+
+
+def test_会话库单块内先出现子代理档位说明段时同样剔除并提取真实模型(app_dir):
+    """即便同一二进制块内子代理说明段（flash -> gemini-4-hydrogen-tiered-high）排在前面，
+    剥离后也能准确命中后面的 gemini-4-argon-medium；若只有子代理说明段则返回 None。
+    """
+    subagent_only = (
+        b"\n\nflash_lite\x12\x17\n\x15gemini-3.5-flash-lite"
+        b"\n\x05flash\x12\x1f\n\x1dgemini-4-hydrogen-tiered-high"
+        b"\n\x03pro\x12 \n\x1egemini-4-hydrogen-tiered-xhigh"
+    )
+    _write_conversation_db(app_dir, subagent_only, table="executor_metadata")
+    assert agy_store.session_model(CONVERSATION_ID) is None
+
+    with_real_model = subagent_only + b"\x00\xe2\x01\x15gemini-4-argon-medium\x00"
+    _write_conversation_db(
+        app_dir, with_real_model, conversation_id="11111111-2222-3333-4444-555555555555"
+    )
+    assert (
+        agy_store.session_model("11111111-2222-3333-4444-555555555555")
+        == "gemini-4-argon-medium"
+    )
 
 
 # ── 递给引擎复核那一趟的料 ──────────────────────────────────────────

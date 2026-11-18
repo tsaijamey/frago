@@ -823,12 +823,22 @@ def _resolve_session_via_record_reader(
         ToolUsageStats(tool_name=name, count=count)
         for name, count in tool_counter.most_common(5)
     ]
-    model_name = None
+    model_name = next(
+        (
+            str(rec.payload.get("model")).strip()
+            for rec in reversed(unified_records)
+            if isinstance(rec.payload, dict)
+            and isinstance(rec.payload.get("model"), str)
+            and str(rec.payload.get("model")).strip()
+        ),
+        None,
+    )
     source_file = f"record_reader:{family}/{resolved_sid}"
     if mapped_agent == AgentType.AGY:
         from frago.session import agy_store
 
-        model_name = agy_store.session_model(resolved_sid)
+        if not model_name:
+            model_name = agy_store.session_model(resolved_sid)
         source_file = str(agy_store.transcript_path(resolved_sid))
 
     monitored = MonitoredSession(

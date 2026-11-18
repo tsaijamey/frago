@@ -544,31 +544,42 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
 
 
 # ── 模型名 ──────────────────────────────────────────────────────────
-#: 模型 slug 的形状：``claude-sonnet-5-5-medium`` / ``gemini-3.8-flash-medium`` 这类。
+#: 内置子代理档位说明段（``flash_lite`` / ``flash`` / ``pro`` 映射到候选模型名，如将
+#: ``flash`` 映射到 ``gemini-4-hydrogen-tiered-high``）。在扫描会话库二进制块提取整场
+#: 会话模型前先剥离该说明段，防止把子代理候选档位误判为当前会话模型。
+_SUBAGENT_TIER_BLOCK_RE = re.compile(
+    rb"flash_lite[\s\S]{0,400}?pro[\x00-\x40()*'\"\n\r\t:=>\-]{1,32}(?:claude|gemini|gpt|o[0-9])[a-z0-9.\-]*"
+    rb"|(?<![a-z0-9_\-])(?:flash_lite|flash|pro)[\x00-\x20()*'\"\n\r\t:=>\-]{1,16}(?:claude|gemini|gpt|o[0-9])[a-z0-9.\-]*"
+)
+
+#: 模型 slug 的形状：兼容带档位后缀（如 ``claude-sonnet-5-5-medium``、
+#: ``gemini-4-argon-medium``、``gemini-3.5-pro-high``）与 ``gen_metadata`` 主生成记录中
+#: 不带档位后缀的模型名（如 ``gemini-4-argon``、``gemini-4-hydrogen``）。
 #:
-#: 写成一条**收尾必须落在档位词上**的式子，而不是「找出所有像模型名的串」：同一个 blob
-#: 里还躺着 ``used_non_gemini_model``、``disable-teamwork-forced-flash-model``、
-#: ``model_enum``、``gemini-3.8-flash-n`` 这几个近邻，只有「厂商前缀 + 收在 low/medium/
-#: high/xhigh/max」这一条能把它们全挡在外面（2026-10-14 在本机 10 场会话上逐个核过）。
+#: 前后加词边界断言，且要求要么收在档位词（``low|medium|high|xhigh|max``）上，要么具备
+#: 厂商前缀 + 版本号 + 模型家族词尾，从而将 ``used_non_gemini_model``、
+#: ``disable-teamwork-forced-flash-model``、``model_enum``、``gemini-3.8-flash-n`` 等近邻
+#: 全部挡在外面。
 _MODEL_SLUG_RE = re.compile(
-    rb"(?:claude|gemini|gpt|o[0-9])[a-z0-9.\-]*(?:low|medium|high|xhigh|max)"
+    rb"(?<![a-z0-9.\-_])"
+    rb"(?:"
+    rb"(?:claude|gemini|gpt|o[0-9])[a-z0-9.\-]*-(?:low|medium|high|xhigh|max)"
+    rb"|(?:claude|gemini|gpt)-[a-z0-9.\-]*[0-9][a-z0-9.\-]*-(?:argon(?:-d)?|hydrogen|carbon|pro|flash|lite|thinking|sonnet|opus|haiku|mini|nano|turbo|[0-9]+)"
+    rb")"
+    rb"(?![a-z0-9.\-_])"
 )
 
 
 def session_model(conversation_id: str) -> str | None:
-    """这场会话用的是哪匹模型；读不到时 None。
+    """从会话库 ``conversations/<id>.db`` 提取这场会话的模型兜底名；读不到时 None。
 
-    **转录里没有这个事实。** transcript.jsonl 的每一条模型回复都带 token 数，却一个字
-    都没写是谁答的；摘要库、``cache/conversation_metadata.json`` 同样没有。全机只有一处
-    记着它：``conversations/<id>.db`` 里那几块 protobuf，每一次模型调用都会把 slug 原样
-    写进去（本机实测 10 场，场场有、块与块之间一致）。
+    新近版本的 ``transcript.jsonl`` 已在每条 ``PLANNER_RESPONSE`` 上直接记录 ``model``
+    字段（由 :mod:`frago.session.adapters.agy_records` 优先读取）；本函数作为旧会话或
+    缺省行内 ``model`` 字段时的 ``.db`` 兜底读取层。
 
-    所以这里只做一件事——把那几块二进制当字节流扫一遍，抠出那个 slug。**不做 protobuf
-    反序列化**：为了一个字符串去引入一套 schema 依赖不划算，而 slug 是 ASCII 明文、
-    前后都有长度前缀兜着，扫出来就是它。
-
-    读不到（库不在、表是空的、agy 换了格式）一律返回 None。**失效方式是静默降级**：
-    界面上那一格空着，上下文与总量照常，绝不编一个名字顶上。
+    只做一件事——把 ``gen_metadata`` / ``executor_metadata`` 的前几块二进制当字节流扫一遍，
+    先剔除内置子代理档位说明段，再抠出主模型 slug。读不到（库不在、表是空的、agy 换了格式）
+    一律返回 None。
     """
     path = conversation_db_path(conversation_id)
     if not path.exists():
@@ -589,7 +600,8 @@ def session_model(conversation_id: str) -> str | None:
             for (blob,) in rows:
                 if not isinstance(blob, bytes | bytearray):
                     continue
-                found = _MODEL_SLUG_RE.search(bytes(blob))
+                cleaned = _SUBAGENT_TIER_BLOCK_RE.sub(b" ", bytes(blob))
+                found = _MODEL_SLUG_RE.search(cleaned)
                 if found is not None:
                     return found.group(0).decode("ascii", errors="replace")
     finally:
