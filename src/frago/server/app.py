@@ -336,6 +336,21 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     except Exception as e:
         logger.warning("Failed to register codex hooks: %s", e)
 
+    # Ensure CfT wrapper (if installed) and default CfT extension profile
+    # (vertical_tabs, developer_mode, NativeMessagingHosts) are initialized on
+    # every install / upgrade without touching active locked profiles or network.
+    try:
+        from frago.browser.extension.lifecycle import ensure_cft_default_setup
+
+        cft_setup = ensure_cft_default_setup(fetch_if_missing=False, ensure_daemon=False)
+        logger.info(
+            "CfT default environment ready: profile=%s wrapper_updated=%s",
+            cft_setup.get("profile_dir"),
+            cft_setup.get("wrapper_updated"),
+        )
+    except Exception as e:
+        logger.warning("Failed to initialize CfT default environment: %s", e)
+
     # Cleanup old trace files
     from frago.telemetry.trace import cleanup_old_traces, register_broadcast_hook
     cleanup_old_traces()

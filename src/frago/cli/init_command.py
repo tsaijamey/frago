@@ -180,14 +180,55 @@ def init(
         with spinner_context("Saving configuration", "Configuration saved"):
             save_config(config)
 
-        # 5. Offer autostart configuration (unless non-interactive)
+        # 5. Initialize default browser (CfT wrapper + dedicated extension profile)
+        _initialize_browser_environment(skip_download=skip_deps)
+
+        # 6. Offer autostart configuration (unless non-interactive)
         if not non_interactive:
             _offer_autostart_configuration()
 
-        # 6. Display completion summary
+        # 7. Display completion summary
         _print_completion_summary(config)
 
     sys.exit(InitErrorCode.SUCCESS)
+
+
+def _initialize_browser_environment(*, skip_download: bool = False) -> None:
+    """Ensure CfT transparent wrapper and default extension profile are initialized."""
+    from frago.browser.cft_fetch import CftFetchError
+    from frago.browser.extension.lifecycle import ensure_cft_default_setup
+
+    if not skip_download:
+        try:
+            info = ensure_cft_default_setup(
+                fetch_if_missing=True,
+                ensure_daemon=False,
+                progress=lambda msg: click.echo(f"  [cft] {msg}"),
+            )
+            click.secho(
+                f"[OK] Browser environment ready: {info['profile_dir']}",
+                fg="green",
+            )
+            return
+        except CftFetchError as exc:
+            click.secho(
+                f"[!]  Chrome for Testing download skipped: {exc}",
+                fg="yellow",
+            )
+    try:
+        info = ensure_cft_default_setup(
+            fetch_if_missing=False,
+            ensure_daemon=False,
+        )
+        click.secho(
+            f"[OK] Browser profile initialized: {info['profile_dir']}",
+            fg="green",
+        )
+    except Exception as exc:
+        click.secho(
+            f"[!]  Browser initialization skipped: {exc}",
+            fg="yellow",
+        )
 
 
 def _offer_autostart_configuration() -> None:

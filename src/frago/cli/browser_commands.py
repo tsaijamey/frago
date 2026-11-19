@@ -650,16 +650,25 @@ def install_cft(force: bool):
     """
     import json
 
-    from ..browser.cft_fetch import CftFetchError, ensure_cft
+    from ..browser.cft_fetch import CftFetchError, _is_cft_wrapper, ensure_cft
+    from ..browser.extension.lifecycle import initialize_cft_environment
 
     try:
         binary = ensure_cft(force=force,
                             progress=lambda msg: click.echo(f"[cft] {msg}", err=True))
+        env_info = initialize_cft_environment(ensure_daemon=False)
     except CftFetchError as e:
         click.echo(json.dumps({"ok": False, "kind": e.kind, "error": str(e)},
                               ensure_ascii=False), err=True)
         raise click.exceptions.Exit(1) from e
-    click.echo(json.dumps({"ok": True, "binary": str(binary)}, ensure_ascii=False))
+    click.echo(json.dumps({
+        "ok": True,
+        "binary": str(binary),
+        "wrapper_installed": _is_cft_wrapper(binary),
+        "profile_dir": env_info["profile_dir"],
+        "manifest_path": env_info["manifest_path"],
+        "prefs_initialized": env_info["prefs_initialized"],
+    }, ensure_ascii=False))
 
 
 # Tab management
