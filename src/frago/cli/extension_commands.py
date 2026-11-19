@@ -28,6 +28,7 @@ import click
 
 from ..browser.extension import native_host as nh
 from .agent_friendly import AgentFriendlyGroup
+from .commands import ExecJsScriptError, resolve_exec_js_script
 
 _DEPRECATION_SHOWN = False
 
@@ -223,6 +224,12 @@ def navigate_cmd(url, group, timeout):
 @click.argument("script")
 @click.option("--group", "-g", required=True)
 def exec_js_cmd(script, group):
+    try:
+        script = resolve_exec_js_script(script)
+    except ExecJsScriptError as e:
+        click.echo(json.dumps({"ok": False, "code": e.code, "error": e.message},
+                              indent=2, ensure_ascii=False))
+        raise click.exceptions.Exit(1) from e
     click.echo(_dump(_be().exec_js(script, group)))
 
 

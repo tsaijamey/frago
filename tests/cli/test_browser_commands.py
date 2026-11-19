@@ -155,3 +155,243 @@ def test_unknown_subcommand_suggests_alternatives(runner):
     assert result.exit_code != 0
     assert "navigate" in result.output
     assert "Available commands" in result.output
+
+
+# ───────────────────────── exec-js file mode parity & boundaries ─────────────
+
+def _mock_extension_backend(monkeypatch):
+    import frago.cli.browser_commands as bc
+    from frago.browser.backends.base import ExecResult
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeExtensionBackend:
+        def exec_js(self, script: str, group: str) -> ExecResult:
+            calls.append((script, group))
+            return ExecResult(value={"ok": True, "script": script})
+
+    monkeypatch.setattr(bc, "_ext_backend", lambda: FakeExtensionBackend())
+    return calls
+
+
+@pytest.mark.parametrize("filename,content", [
+    ("script.js", "// 中文注释\n1 + 1"),
+    ("module.mjs", "(() => 42)()"),
+])
+def test_exec_js_extension_reads_existing_file(runner, monkeypatch, tmp_path, filename, content):
+    import json
+
+    script_file = tmp_path / filename
+    script_file.write_text(content, encoding="utf-8")
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", str(script_file), "--return-value"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(content, "research")]
+    payload = json.loads(result.output)
+    assert payload["value"]["script"] == content
+
+
+def test_exec_js_extension_reads_relative_dot_slash_file(runner, monkeypatch, tmp_path):
+    script_file = tmp_path / "script.js"
+    script_file.write_text("1 + 1", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", "./script.js", "--return-value"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("1 + 1", "research")]
+
+
+@pytest.mark.parametrize("expr", [
+    "1+1",
+    "document.title",
+    "location.href.endsWith('.js')",
+    "location.pathname.endsWith('.mjs')",
+    "const f = 'a.js'; f",
+    "a + b.js",
+])
+def test_exec_js_extension_preserves_inline_expressions(runner, monkeypatch, expr):
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", expr, "--return-value"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(expr, "research")]
+
+
+@pytest.mark.parametrize("missing_path", [
+    "./missing.js",
+    "../missing.js",
+    "/tmp/nonexistent_exec_js_1010.js",
+    "missing.js",
+    "sub/missing.mjs",
+    "./sub/missing.mjs",
+])
+def test_exec_js_extension_missing_js_file_fails_clearly(runner, monkeypatch, tmp_path, missing_path):
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", missing_path, "--return-value"],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["code"] == "script-file-not-found"
+    assert missing_path in payload["error"]
+    assert "frago browser start" not in result.output
+
+
+def test_exec_js_extension_directory_named_js_fails_clearly(runner, monkeypatch, tmp_path):
+    import json
+
+    dir_path = tmp_path / "folder.js"
+    dir_path.mkdir()
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", str(dir_path)],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["code"] == "script-path-is-directory"
+
+
+def test_exec_js_extension_permission_error_not_misclassified(runner, monkeypatch, tmp_path):
+    import builtins
+    import json
+
+    script_file = tmp_path / "locked.js"
+    script_file.write_text("1 + 1", encoding="utf-8")
+    calls = _mock_extension_backend(monkeypatch)
+
+    real_open = builtins.open
+
+    def deny_open(file, *args, **kwargs):
+        if str(file) == str(script_file):
+            raise PermissionError("operation not permitted")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", deny_open)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", str(script_file)],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["code"] == "script-file-permission-denied"
+
+
+def test_exec_js_extension_invalid_utf8_reports_encoding_error(runner, monkeypatch, tmp_path):
+    import json
+
+    script_file = tmp_path / "binary.js"
+    script_file.write_bytes(b"\xff\xfe\x00\x01")
+    calls = _mock_extension_backend(monkeypatch)
+
+    result = runner.invoke(
+        browser_group,
+        ["exec-js", "--group", "research", str(script_file)],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["code"] == "script-file-encoding-error"
+
+
+def test_exec_js_cdp_reads_existing_file_and_rejects_missing(runner, monkeypatch, tmp_path):
+    script_file = tmp_path / "cdp_script.js"
+    script_file.write_text("1 + 2", encoding="utf-8")
+
+    session = MagicMock()
+    session.evaluate.return_value = 3
+    _patch_session(monkeypatch, session)
+    monkeypatch.setattr(commands, "_touch_active_tab", lambda *_a, **_k: None)
+    monkeypatch.setattr(commands, "_do_perception", lambda *_a, **_k: None)
+
+    obj = {"HOST": "127.0.0.1", "PORT": 9222, "DEBUG": False}
+
+    ok_res = runner.invoke(
+        browser_group,
+        ["-b", "cdp", "exec-js", "--group", "research", str(script_file), "--return-value"],
+        obj=obj,
+    )
+    assert ok_res.exit_code == 0, ok_res.output
+    session.evaluate.assert_called_once_with("1 + 2", return_by_value=True)
+
+    session.evaluate.reset_mock()
+    inline_res = runner.invoke(
+        browser_group,
+        ["-b", "cdp", "exec-js", "--group", "research", "location.href.endsWith('.js')", "--return-value"],
+        obj=obj,
+    )
+    assert inline_res.exit_code == 0, inline_res.output
+    session.evaluate.assert_called_once_with("location.href.endsWith('.js')", return_by_value=True)
+
+    session.evaluate.reset_mock()
+    monkeypatch.chdir(tmp_path)
+    missing_res = runner.invoke(
+        browser_group,
+        ["-b", "cdp", "exec-js", "--group", "research", "./missing.mjs", "--return-value"],
+        obj=obj,
+    )
+    assert missing_res.exit_code != 0
+    session.evaluate.assert_not_called()
+    assert "JavaScript file not found: ./missing.mjs" in missing_res.output
+
+
+def test_extension_subcommand_exec_js_shares_file_resolution(runner, monkeypatch, tmp_path):
+    import json
+
+    import frago.cli.extension_commands as ec
+    from frago.browser.backends.base import ExecResult
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeBackend:
+        def exec_js(self, script: str, group: str) -> ExecResult:
+            calls.append((script, group))
+            return ExecResult(value=2)
+
+    monkeypatch.setattr(ec, "_be", lambda: FakeBackend())
+
+    script_file = tmp_path / "ext_script.js"
+    script_file.write_text("1 + 1", encoding="utf-8")
+
+    ok_res = runner.invoke(ec.extension_group, ["exec-js", "--group", "g", str(script_file)])
+    assert ok_res.exit_code == 0, ok_res.output
+    assert calls == [("1 + 1", "g")]
+
+    calls.clear()
+    missing_res = runner.invoke(ec.extension_group, ["exec-js", "--group", "g", "./missing.js"])
+    assert missing_res.exit_code != 0
+    assert calls == []
+    payload = json.loads(missing_res.output)
+    assert payload["code"] == "script-file-not-found"

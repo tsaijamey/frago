@@ -1356,6 +1356,87 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: str 
         _print_msg("error", f"Screenshot failed: {e}", "screenshot", {"file": output_file, "error": str(e)})
 
 
+_JS_FILE_SUFFIXES = (".js", ".mjs")
+_INLINE_JS_MARKERS = ("\n", "\r", ";", "(", ")", "{", "}", "[", "]", "'", '"', "`")
+_JS_PATH_PREFIXES = ("./", "../", "/", "~/", ".\\", "..\\")
+_JS_OPERATOR_CHARS = ("=", "+", "*", "%", "<", ">", "&", "|", "!", "?", ":", ",")
+
+
+class ExecJsScriptError(Exception):
+    """Raised when an exec-js script file cannot be found or read."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _looks_like_js_file_path(script: str) -> bool:
+    """Return True when ``script`` looks like a .js/.mjs file path rather than inline JS."""
+    if not script:
+        return False
+    if any(ch in script for ch in _INLINE_JS_MARKERS):
+        return False
+    if not script.lower().endswith(_JS_FILE_SUFFIXES):
+        return False
+    has_drive_prefix = len(script) >= 3 and script[0].isalpha() and script[1:3] in (":\\", ":/")
+    if script.startswith(_JS_PATH_PREFIXES) or has_drive_prefix:
+        return True
+    if any(ch.isspace() for ch in script):
+        return False
+    return not any(op in script for op in _JS_OPERATOR_CHARS)
+
+
+def resolve_exec_js_script(script: str) -> str:
+    """Resolve ``script`` for ``exec-js``: read UTF-8 content if it is a file path.
+
+    Shared by both extension and CDP backends so file-mode behavior and
+    missing-file error boundaries stay identical across backends.
+    """
+    try:
+        is_existing_file = os.path.exists(script) and os.path.isfile(script)
+    except (OSError, ValueError):
+        is_existing_file = False
+
+    if is_existing_file:
+        try:
+            with open(script, encoding="utf-8") as f:
+                return f.read()
+        except PermissionError as e:
+            raise ExecJsScriptError(
+                "script-file-permission-denied",
+                f"Permission denied reading JavaScript file '{script}': {e}",
+            ) from e
+        except UnicodeDecodeError as e:
+            raise ExecJsScriptError(
+                "script-file-encoding-error",
+                f"JavaScript file '{script}' is not valid UTF-8 text: {e}",
+            ) from e
+        except OSError as e:
+            raise ExecJsScriptError(
+                "script-file-read-error",
+                f"Failed to read JavaScript file '{script}': {e}",
+            ) from e
+
+    try:
+        is_dir = os.path.isdir(script)
+    except (OSError, ValueError):
+        is_dir = False
+
+    if _looks_like_js_file_path(script):
+        if is_dir:
+            raise ExecJsScriptError(
+                "script-path-is-directory",
+                f"JavaScript script path is a directory, not a file: {script}",
+            )
+        raise ExecJsScriptError(
+            "script-file-not-found",
+            f"JavaScript file not found: {script}",
+        )
+
+    return script
+
+
 @click.command('exec-js', cls=AgentFriendlyCommand)
 @click.argument('script')
 @click.option(
@@ -1373,17 +1454,15 @@ def execute_javascript(ctx, script: str, return_value: bool, group: str | None =
     The SCRIPT argument can be either direct JavaScript code or a file path containing the code.
     """
     try:
-        # Check if it's a file path
-        if os.path.exists(script) and os.path.isfile(script):
-            try:
-                with open(script, encoding='utf-8') as f:
-                    script_content = f.read()
-                if ctx.obj['DEBUG']:
-                    _print_msg("debug", f"Loaded script from file: {script}", "interaction")
-                script = script_content
-            except Exception as e:
-                _print_msg("error", f"Failed to read script file: {e}", "interaction", {"error": str(e)})
-                return
+        try:
+            resolved_script = resolve_exec_js_script(script)
+        except ExecJsScriptError as e:
+            _print_msg("error", e.message, "interaction", {"code": e.code, "error": e.message})
+            sys.exit(1)
+
+        if (ctx.obj or {}).get('DEBUG') and resolved_script != script:
+            _print_msg("debug", f"Loaded script from file: {script}", "interaction")
+        script = resolved_script
 
         with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)

@@ -20,6 +20,7 @@ import click
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from .commands import (
+    ExecJsScriptError,
     annotate,
     browser_reset,
     browser_start,
@@ -34,6 +35,7 @@ from .commands import (
     list_tabs,
     navigate,
     pointer,
+    resolve_exec_js_script,
     screenshot,
     scroll,
     scroll_to,
@@ -268,7 +270,8 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
                                       kwargs.get("timeout") or 15.0),
                         new=bool(kwargs.get("open_new")))
     elif name == "exec-js":
-        r = be.exec_js(kwargs["script"], group)
+        script = resolve_exec_js_script(kwargs["script"])
+        r = be.exec_js(script, group)
     elif name == "get-content":
         r = be.get_content(group, selector=kwargs.get("selector"))
     elif name == "click":
@@ -433,6 +436,12 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
             # the browser because a tab was in the wrong group would tear
             # down every other group's pages to fix nothing.
             err["hint"] = _START_HINT
+    except ExecJsScriptError as e:
+        err = {
+            "ok": False,
+            "code": e.code,
+            "error": e.message,
+        }
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",
