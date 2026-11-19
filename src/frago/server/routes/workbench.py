@@ -1058,6 +1058,22 @@ async def read_workbench_records(
     return [asdict(record) for record in records]
 
 
+@router.get("/workbench/sessions/{sid}/children")
+async def read_workbench_session_children(sid: str) -> dict[str, Any]:
+    """探测这场会话的启动来源、派生子会话与运行中子进程。
+
+    同时汇聚 ``session_origin`` 关系账、``async_dispatch`` 异步派发单，以及本机
+    tmux 窗格 / ``ps`` 进程树（含外部终端 ``claude --resume <sid>``）三路实况，
+    避免详情页看着安静而后台仍有派生任务在运行。
+    """
+    from frago.server.services import session_children
+
+    try:
+        return await asyncio.to_thread(session_children.probe_session_children, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 class RevealPathRequest(BaseModel):
     """要打开的路径。界面一律传绝对路径。"""
 
