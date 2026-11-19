@@ -228,10 +228,10 @@ def test_claude_launch_injects_session_id(tmp_path, monkeypatch):
 
 
 def _project_key(cwd: str) -> str:
-    """产品侧的 projects 登记键：Windows 上 claude 用正斜杠形态（与手点 Yes 一致）。"""
+    """产品侧的 projects 登记键：解析软链后的真实路径，Windows 上用正斜杠形态。"""
     import os
 
-    key = os.path.abspath(cwd)
+    key = os.path.realpath(cwd)
     return key.replace(os.sep, "/") if os.sep == "\\" else key
 
 
@@ -365,6 +365,35 @@ def test_ensure_trusted_keys_by_forward_slash_on_windows(tmp_path, monkeypatch):
     data = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
     assert data["projects"]["C:/work/project"]["hasTrustDialogAccepted"] is True
     assert not any("\\" in key for key in data["projects"])
+
+
+def test_ensure_trusted_resolves_symlink_to_realpath(tmp_path, monkeypatch):
+    """经软链传入 cwd 时，projects 键 MUST 解析到真实路径（macOS /var、/tmp 同源）。"""
+    import json
+    import os
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    real_ws = tmp_path / "real-workspace"
+    real_ws.mkdir()
+    link_ws = tmp_path / "symlink-workspace"
+    link_ws.symlink_to(real_ws)
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    claude_driver._ensure_workspace_trusted(str(link_ws))
+
+    cfg = tmp_path / ".claude.json"
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    expected_key = os.path.realpath(real_ws)
+    if os.sep == "\\":
+        expected_key = expected_key.replace(os.sep, "/")
+    assert data["projects"][expected_key]["hasTrustDialogAccepted"] is True
+    assert str(link_ws) not in data["projects"]
+
+    # 幂等：再次经同一软链调用不再重写入文件
+    before = cfg.stat().st_mtime_ns
+    claude_driver._ensure_workspace_trusted(str(link_ws))
+    assert cfg.stat().st_mtime_ns == before
 
 
 def test_ensure_dangerous_mode_prompt_skipped_adds_only_that_key(tmp_path, monkeypatch):

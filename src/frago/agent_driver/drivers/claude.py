@@ -442,7 +442,7 @@ def _ensure_workspace_trusted(cwd: str) -> None:
 
     用户主动在某目录跑 ``frago agent`` 本就等于信任它，故起会话前把这份信任幂等写进
     claude 自己的登记——``~/.claude.json`` 的
-    ``projects[<abspath>].hasTrustDialogAccepted``，也就是用户手点 "Yes" 会落的同一
+    ``projects[<realpath>].hasTrustDialogAccepted``，也就是用户手点 "Yes" 会落的同一
     个字段，菜单于是不再出现。
 
     写失败绝不阻断启动：读不到/写不了配置时最坏是菜单照常弹（与现状一致），而不是
@@ -450,13 +450,15 @@ def _ensure_workspace_trusted(cwd: str) -> None:
     走临时文件 + 原子替换，把与 claude 自身写盘撞车的窗口收到最小。
     """
     try:
-        abspath = os.path.abspath(cwd)
+        # 解析软链（macOS 上 /var -> /private/var、/tmp -> /private/tmp）：claude 内部
+        # 按 realpath 比对 projects 键，若只写 abspath 键则软链工作目录仍会卡信任菜单。
+        resolved = os.path.realpath(cwd)
         # 登记键的形态 MUST 与 claude 自己手点 "Yes" 时落的键一致：claude 在 Windows
         # 上以**正斜杠**路径登记 projects 键（2026-09-24 实测 2.1.263，手点 Yes 后
-        # 落的是 ``C:/Users/...``），``os.path.abspath`` 给的是反斜杠——键对不上，
-        # 预写的信任等于没写，新目录照样卡信任菜单。Linux/macOS 的 abspath 天然是
+        # 落的是 ``C:/Users/...``），``os.path.realpath`` 给的是反斜杠——键对不上，
+        # 预写的信任等于没写，新目录照样卡信任菜单。Linux/macOS 的 realpath 天然是
         # 正斜杠，不受影响。
-        key = abspath.replace(os.sep, "/") if os.sep == "\\" else abspath
+        key = resolved.replace(os.sep, "/") if os.sep == "\\" else resolved
         path = _claude_config_path()
         data: dict = {}
         if path.exists():

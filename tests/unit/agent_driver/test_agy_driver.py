@@ -17,6 +17,7 @@
 """
 
 import json
+import os
 import sqlite3
 
 import pytest
@@ -129,13 +130,16 @@ def test_trust_preserves_other_keys(app_dir):
     data = _settings(app_dir)
     assert data["colorScheme"] == "dark"
     assert data["model"] == "Gemini 3.8 Flash (Medium)"
-    assert data["trustedWorkspaces"] == ["/tmp/some-project"]
+    assert data["trustedWorkspaces"] == [os.path.realpath("/tmp/some-project")]
 
 
 def test_trust_is_idempotent(app_dir):
     """已经信过就不再写：值没变就一个字节都不动，不与正在跑的 agy 抢盘。"""
     path = app_dir / "settings.json"
-    path.write_text(json.dumps({"trustedWorkspaces": ["/tmp/some-project"]}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"trustedWorkspaces": [os.path.realpath("/tmp/some-project")]}),
+        encoding="utf-8",
+    )
     before = path.read_text(encoding="utf-8")
 
     agy_driver._ensure_workspace_trusted("/tmp/some-project")
@@ -165,7 +169,27 @@ def test_trust_gives_up_on_unparsable_settings(app_dir):
 def test_trust_creates_the_file_when_absent(app_dir):
     agy_driver._ensure_workspace_trusted("/tmp/fresh")
 
-    assert _settings(app_dir)["trustedWorkspaces"] == ["/tmp/fresh"]
+    assert _settings(app_dir)["trustedWorkspaces"] == [os.path.realpath("/tmp/fresh")]
+
+
+def test_trust_resolves_symlink_to_realpath(app_dir, tmp_path):
+    """经软链传入 cwd 时，trustedWorkspaces MUST 记录解析软链后的真实路径。"""
+    real_ws = tmp_path / "real-workspace"
+    real_ws.mkdir()
+    link_ws = tmp_path / "symlink-workspace"
+    link_ws.symlink_to(real_ws)
+
+    agy_driver._ensure_workspace_trusted(str(link_ws))
+
+    expected = os.path.realpath(real_ws)
+    assert _settings(app_dir)["trustedWorkspaces"] == [expected]
+    assert str(link_ws) not in _settings(app_dir)["trustedWorkspaces"]
+
+    # 幂等：再次经软链或真实路径调用不再重写文件
+    path = app_dir / "settings.json"
+    before = path.read_text(encoding="utf-8")
+    agy_driver._ensure_workspace_trusted(str(link_ws))
+    assert path.read_text(encoding="utf-8") == before
 
 
 # ── 完成探针读记录 ──────────────────────────────────────────────────

@@ -240,7 +240,9 @@ def _ensure_workspace_trusted(cwd: str) -> None:
       把 agent 启动整个打死。走临时文件 + ``os.replace`` 原子替换收窄窗口。
     """
     try:
-        abspath = os.path.abspath(cwd)
+        # 解析软链（macOS 上 /var -> /private/var、/tmp -> /private/tmp）：agy 内部按
+        # 真实路径比对 trustedWorkspaces，写未解软链的路径会让信任菜单照常弹出。
+        resolved = os.path.realpath(cwd)
         path = _settings_path()
         data = _load_settings(path)
         if data is None:
@@ -251,14 +253,14 @@ def _ensure_workspace_trusted(cwd: str) -> None:
         trusted = data.get("trustedWorkspaces")
         if not isinstance(trusted, list):
             trusted = []
-        if abspath in trusted:
+        if resolved in trusted:
             return
-        data["trustedWorkspaces"] = [*trusted, abspath]
+        data["trustedWorkspaces"] = [*trusted, resolved]
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(str(tmp), str(path))
-        logger.debug("pre-trusted %s for agy", abspath)
+        logger.debug("pre-trusted %s for agy", resolved)
     except Exception:  # 信任写入尽力而为，NEVER 让它把 launch 打死
         logger.warning("could not pre-trust workspace %r for agy", cwd, exc_info=True)
 
