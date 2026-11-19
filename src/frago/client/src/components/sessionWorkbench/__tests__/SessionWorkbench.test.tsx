@@ -1669,6 +1669,164 @@ describe('RecordStream 中栏', () => {
       expect(scroller.scrollTop).toBe(0);
       expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1条提问 · 1条回复');
     });
+
+    it('事项总控表 · Tasks Overview 长列表默认折叠已完结 Tx、展示渐变预览提示，支持展开/收起且轮询刷新不重置状态', () => {
+      const mkTask = (
+        id: string,
+        status: 'done' | 'doing' | 'waiting' | 'blocked',
+        title: string
+      ) => ({
+        id,
+        proposed_at: 1_753_800_000_000,
+        title,
+        status,
+        actor: status === 'done' ? 'worker-old' : '主会话',
+        conclusion: `${id} 进展结论`,
+      });
+
+      const baseRecords = [
+        record({ id: 'u-task', seq: 0, kind: 'user.say', payload: { text: '推进多阶段任务' } }),
+        record({ id: 'a-task', seq: 1, kind: 'agent.say', payload: { text: '正在执行中' } }),
+      ];
+
+      const makeObserver = (tasks: ReturnType<typeof mkTask>[], updatedAt = 1_753_800_010_000): SessionObserverView => ({
+        state: {
+          bound: true,
+          anchor: '推进多阶段任务',
+          tail: { kind: 'now', text: '正在执行 T6' },
+          decision: '',
+          happened: ['已完成 T1-T5'],
+          updated_at: updatedAt,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          tasks,
+          runs: [
+            {
+              id: 'run-1',
+              run_id: 1,
+              task_id: tasks[tasks.length - 1]?.id || 'T1',
+              actor: '主会话',
+              at: updatedAt,
+              cursor_from: 0,
+              cursor_to: 2,
+              phase_goal: '多阶段持续推进',
+              tail: { kind: 'now', text: '正在执行 T6' },
+              happened_add: ['已完成 T1-T5'],
+              decision: '',
+              summary: '正在执行 T6',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      });
+
+      const initialTasks = [
+        mkTask('T1', 'done', '初始化仓库结构'),
+        mkTask('T2', 'done', '梳理接口契约'),
+        mkTask('T3', 'done', '完成数据层校验'),
+        mkTask('T4', 'done', '接入路由和鉴权'),
+        mkTask('T5', 'done', '补充后端单测'),
+        mkTask('T6', 'doing', '实现前端折叠与渐变提示'),
+        mkTask('T7', 'waiting', '待主人拍板最终视觉细节'),
+      ];
+
+      const { rerender } = render(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-tasks-fold-1',
+            records: baseRecords,
+            observer: makeObserver(initialTasks),
+          })}
+        />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // 1. 初始化默认折叠：T1–T5 隐藏，仅 T6、T7 主行可见，顶部出现渐变预览行 T5 与展开按钮
+      expect(screen.queryByTestId('watcher-task-row-T1')).toBeNull();
+      expect(screen.queryByTestId('watcher-task-row-T5')).toBeNull();
+      expect(screen.getByTestId('watcher-task-row-T6')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T7')).toBeTruthy();
+
+      const peekRow = screen.getByTestId('watcher-tasks-peek-row');
+      expect(peekRow.textContent).toContain('T5');
+      expect(peekRow.textContent).toContain('补充后端单测');
+
+      const foldRow = screen.getByTestId('watcher-tasks-fold-row');
+      expect(foldRow.textContent).toContain('已自动折叠 5 项已完结旧事项 (T1–T5)');
+      const foldToggle = screen.getByTestId('watcher-tasks-fold-toggle');
+      expect(foldToggle.getAttribute('aria-expanded')).toBe('false');
+
+      // 2. 点击展开：完整显示 T1..T7，按钮变为「收起已完结」
+      fireEvent.click(foldToggle);
+      expect(screen.getByTestId('watcher-tasks-fold-toggle').getAttribute('aria-expanded')).toBe('true');
+      expect(screen.queryByTestId('watcher-tasks-peek-row')).toBeNull();
+      expect(screen.getByTestId('watcher-task-row-T1')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T5')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T6')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T7')).toBeTruthy();
+
+      // 3. 模拟后台 Progress 每 15 秒轮询推送更新（updated_at 与任务进度变化）：用户手动展开态保持稳定不被重置
+      const polledTasks = [
+        ...initialTasks.slice(0, 5),
+        mkTask('T6', 'done', '实现前端折叠与渐变提示'),
+        mkTask('T7', 'doing', '补全验证与截图交付'),
+      ];
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-tasks-fold-1',
+            records: baseRecords,
+            observer: makeObserver(polledTasks, 1_753_800_025_000),
+          })}
+        />
+      );
+      expect(screen.getByTestId('watcher-tasks-fold-toggle').getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByTestId('watcher-task-row-T1')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T6')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T7')).toBeTruthy();
+
+      // 4. 切换到另一场全完结的长列表会话：新会话默认自动折叠，且全完结兜底保留最近 2 条 (T4, T5) 可见
+      const allDoneTasks = [
+        mkTask('T1', 'done', '已完成阶段1'),
+        mkTask('T2', 'done', '已完成阶段2'),
+        mkTask('T3', 'done', '已完成阶段3'),
+        mkTask('T4', 'done', '已完成阶段4'),
+        mkTask('T5', 'done', '已完成阶段5'),
+      ];
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-tasks-fold-all-done',
+            records: baseRecords,
+            observer: makeObserver(allDoneTasks, 1_753_800_030_000),
+          })}
+        />
+      );
+      expect(screen.getByTestId('watcher-tasks-fold-toggle').getAttribute('aria-expanded')).toBe('false');
+      expect(screen.getByTestId('watcher-tasks-fold-row').textContent).toContain('已自动折叠 3 项已完结旧事项 (T1–T3)');
+      expect(screen.getByTestId('watcher-tasks-peek-row').textContent).toContain('T3');
+      expect(screen.queryByTestId('watcher-task-row-T1')).toBeNull();
+      expect(screen.getByTestId('watcher-task-row-T4')).toBeTruthy();
+      expect(screen.getByTestId('watcher-task-row-T5')).toBeTruthy();
+
+      // 5. 切回第一场会话后仍保留之前的展开记忆，且支持再次点击收起
+      rerender(
+        <RecordStream
+          {...streamProps({
+            sessionId: 'ses-tasks-fold-1',
+            records: baseRecords,
+            observer: makeObserver(polledTasks, 1_753_800_025_000),
+          })}
+        />
+      );
+      expect(screen.getByTestId('watcher-tasks-fold-toggle').getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(screen.getByTestId('watcher-tasks-fold-toggle'));
+      expect(screen.getByTestId('watcher-tasks-fold-toggle').getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('watcher-task-row-T1')).toBeNull();
+      expect(screen.getByTestId('watcher-task-row-T7')).toBeTruthy();
+    });
   });
 });
 

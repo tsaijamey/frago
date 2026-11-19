@@ -113,6 +113,7 @@ import {
 } from '@/utils/decisionBlock';
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
 import { cleanGoalText, extractGoalSummary, isLongLedgerText } from '@/utils/goalAnchor';
+import { isCompletedWatcherTask, partitionTasksForOverview } from '@/utils/tasksOverview';
 import { parseTextQuoteBlocks } from '@/utils/textQuoteBlocks';
 import { parseWebBridgeContext } from '@/utils/webBridgeContext';
 import { scrollBehavior } from '@/utils/reducedMotion';
@@ -1596,6 +1597,18 @@ export default function RecordStream({
   const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
   const [anchorExpanded, setAnchorExpanded] = useState(false);
   const [stateExpanded, setStateExpanded] = useState(false);
+  // 按会话维度记忆用户是否手动展开过「已完结 Tx」行，避免后台轮询或流式更新强行重置。
+  const [completedTasksExpandedBySession, setCompletedTasksExpandedBySession] = useState<
+    Record<string, boolean>
+  >({});
+  const taskFoldKey = sessionId || '__default__';
+  const isCompletedTasksExpanded = Boolean(completedTasksExpandedBySession[taskFoldKey]);
+  const toggleCompletedTasksExpanded = useCallback(() => {
+    setCompletedTasksExpandedBySession((prev) => ({
+      ...prev,
+      [taskFoldKey]: !prev[taskFoldKey],
+    }));
+  }, [taskFoldKey]);
   useEffect(() => {
     setExpandedWatcherIds({});
     setInspectOpen(false);
@@ -2932,7 +2945,8 @@ export default function RecordStream({
             const updatedHm = formatHm(updatedAtMs);
             const doingCount = watcherTasks.filter((task) => task.status === 'doing').length;
             const waitingCount = watcherTasks.filter((task) => task.status === 'waiting').length;
-            const doneCount = watcherTasks.filter((task) => task.status === 'done').length;
+            const doneCount = watcherTasks.filter((task) => isCompletedWatcherTask(task)).length;
+            const taskPartition = partitionTasksForOverview(watcherTasks);
 
             let pendingCard: {
               taskId: string;
@@ -2993,6 +3007,46 @@ export default function RecordStream({
               doing: '在办',
               waiting: '待拍板',
               blocked: '阻塞',
+            };
+            const hiddenCount = taskPartition.hiddenCompletedTasks.length;
+            const foldRangeSuffix = taskPartition.hiddenIdSummary
+              ? ` (${taskPartition.hiddenIdSummary})`
+              : '';
+            const renderTaskRow = (task: ObserverTaskItem, keySuffix = '') => {
+              const completed = isCompletedWatcherTask(task);
+              const badgeCls = completed ? 'done' : task.status;
+              const badgeLabel =
+                taskStatusLabel[task.status] || (completed ? '已办结' : task.status);
+              return (
+                <tr
+                  key={`${task.id}${keySuffix}`}
+                  data-testid={`watcher-task-row-${task.id}`}
+                  data-task-completed={completed ? 'true' : 'false'}
+                  className={`w-task-row ${completed ? 'is-completed' : ''}`}
+                >
+                  <td>
+                    <span className="w-tid">{task.id}</span>
+                  </td>
+                  <td>
+                    <span className="w-tm">{formatHm(task.proposed_at)}</span>
+                  </td>
+                  <td>
+                    <span className="w-task-title">
+                      <WatcherInlineText text={task.title} />
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`w-st-badge ${badgeCls}`}>
+                      {task.status === 'doing' ? <i className="w-dot d-run" /> : null}
+                      {badgeLabel}
+                    </span>
+                  </td>
+                  <td>{task.actor}</td>
+                  <td>
+                    <WatcherInlineText text={task.conclusion} />
+                  </td>
+                </tr>
+              );
             };
 
             return (
@@ -3135,10 +3189,18 @@ export default function RecordStream({
                   <div className="w-sec-hd">
                     <span className="w-sec-title">事项总控表 · Tasks Overview</span>
                     <span className="w-sec-sub">
-                      {watcherTasks.length} 项事项 · JSON 实时汇总
+                      {taskPartition.canCollapse && !isCompletedTasksExpanded
+                        ? `${watcherTasks.length} 项事项 · 已折叠 ${hiddenCount} 项完结 · JSON 实时汇总`
+                        : `${watcherTasks.length} 项事项 · JSON 实时汇总`}
                     </span>
                   </div>
-                  <div className="w-tbl-wrap">
+                  <div
+                    className={`w-tbl-wrap ${
+                      taskPartition.canCollapse && !isCompletedTasksExpanded
+                        ? 'has-folded-tasks'
+                        : ''
+                    }`}
+                  >
                     <table className="w-tbl w-tasks-tbl">
                       <colgroup>
                         <col style={{ width: '54px' }} />
@@ -3165,32 +3227,136 @@ export default function RecordStream({
                               {t('workbench.stream.watcherEmptySummary')}
                             </td>
                           </tr>
+                        ) : taskPartition.canCollapse ? (
+                          !isCompletedTasksExpanded ? (
+                            <>
+                              {taskPartition.peekTask ? (
+                                <tr
+                                  key={`peek-${taskPartition.peekTask.id}`}
+                                  className="w-tasks-peek-row"
+                                  data-testid="watcher-tasks-peek-row"
+                                  aria-hidden="true"
+                                  onClick={toggleCompletedTasksExpanded}
+                                  title={
+                                    isZh
+                                      ? `点击展开全部 ${hiddenCount} 项已完结旧事项`
+                                      : `Expand ${hiddenCount} completed tasks`
+                                  }
+                                >
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      <span className="w-tid">{taskPartition.peekTask.id}</span>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      <span className="w-tm">
+                                        {formatHm(taskPartition.peekTask.proposed_at)}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      <span className="w-task-title">
+                                        <WatcherInlineText text={taskPartition.peekTask.title} />
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      <span className="w-st-badge done">
+                                        {taskStatusLabel[taskPartition.peekTask.status] || '已办结'}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      {taskPartition.peekTask.actor}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="w-tasks-peek-cell">
+                                      <WatcherInlineText
+                                        text={taskPartition.peekTask.conclusion}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                              <tr
+                                className="w-tasks-fold-row is-collapsed"
+                                data-testid="watcher-tasks-fold-row"
+                              >
+                                <td colSpan={6}>
+                                  <div className="w-tasks-fold-bar">
+                                    <span className="w-tasks-fold-info">
+                                      <span className="w-tasks-fold-dots" aria-hidden="true">
+                                        <i />
+                                        <i />
+                                        <i />
+                                      </span>
+                                      <span>
+                                        {isZh
+                                          ? `已自动折叠 ${hiddenCount} 项已完结旧事项${foldRangeSuffix}`
+                                          : `Collapsed ${hiddenCount} completed task(s)${foldRangeSuffix}`}
+                                      </span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="w-tasks-fold-btn"
+                                      data-testid="watcher-tasks-fold-toggle"
+                                      aria-expanded={false}
+                                      onClick={toggleCompletedTasksExpanded}
+                                    >
+                                      <span>
+                                        {isZh
+                                          ? `展开已完结 (${hiddenCount})`
+                                          : `Show completed (${hiddenCount})`}
+                                      </span>
+                                      <ChevronDown size={12} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {taskPartition.visibleTasks.map((task) => renderTaskRow(task))}
+                            </>
+                          ) : (
+                            <>
+                              <tr
+                                className="w-tasks-fold-row is-expanded"
+                                data-testid="watcher-tasks-fold-row"
+                              >
+                                <td colSpan={6}>
+                                  <div className="w-tasks-fold-bar">
+                                    <span className="w-tasks-fold-info">
+                                      <span>
+                                        {isZh
+                                          ? `已展开全部 ${hiddenCount} 项已完结事项${foldRangeSuffix}`
+                                          : `Showing all ${hiddenCount} completed task(s)${foldRangeSuffix}`}
+                                      </span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="w-tasks-fold-btn"
+                                      data-testid="watcher-tasks-fold-toggle"
+                                      aria-expanded={true}
+                                      onClick={toggleCompletedTasksExpanded}
+                                    >
+                                      <span>
+                                        {isZh
+                                          ? `收起已完结 (${hiddenCount})`
+                                          : `Collapse completed (${hiddenCount})`}
+                                      </span>
+                                      <ChevronUp size={12} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {watcherTasks.map((task) => renderTaskRow(task))}
+                            </>
+                          )
                         ) : (
-                          watcherTasks.map((task) => (
-                            <tr key={task.id}>
-                              <td>
-                                <span className="w-tid">{task.id}</span>
-                              </td>
-                              <td>
-                                <span className="w-tm">{formatHm(task.proposed_at)}</span>
-                              </td>
-                              <td>
-                                <span className="w-task-title">
-                                  <WatcherInlineText text={task.title} />
-                                </span>
-                              </td>
-                              <td>
-                                <span className={`w-st-badge ${task.status}`}>
-                                  {task.status === 'doing' ? <i className="w-dot d-run" /> : null}
-                                  {taskStatusLabel[task.status] || task.status}
-                                </span>
-                              </td>
-                              <td>{task.actor}</td>
-                              <td>
-                                <WatcherInlineText text={task.conclusion} />
-                              </td>
-                            </tr>
-                          ))
+                          watcherTasks.map((task) => renderTaskRow(task))
                         )}
                       </tbody>
                     </table>
