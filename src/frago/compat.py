@@ -3,7 +3,6 @@ import os
 import platform
 import shutil
 import sys
-from typing import List, Optional
 
 
 def _supports_unicode() -> bool:
@@ -20,10 +19,7 @@ def _supports_unicode() -> bool:
         return False
 
     # Windows Terminal and modern consoles support Unicode
-    if os.environ.get("WT_SESSION") or os.environ.get("TERM_PROGRAM"):
-        return True
-
-    return False
+    return bool(os.environ.get("WT_SESSION") or os.environ.get("TERM_PROGRAM"))
 
 
 # Cross-platform symbols with fallback
@@ -39,7 +35,7 @@ SYMBOLS = {
 }
 
 
-def prepare_command_for_windows(cmd: List[str]) -> List[str]:
+def prepare_command_for_windows(cmd: list[str]) -> list[str]:
     """Adjust command format for Windows platform
 
     npm globally installed commands are .CMD batch files on Windows.
@@ -68,7 +64,7 @@ def prepare_command_for_windows(cmd: List[str]) -> List[str]:
     return cmd
 
 
-def _search_node_version_dirs(base_dir: str, subpath: str, executable: str) -> Optional[str]:
+def _search_node_version_dirs(base_dir: str, subpath: str, executable: str) -> str | None:
     """Search for executable in Node version manager directories.
 
     Args:
@@ -97,18 +93,47 @@ _AGENT_BINARY = {
     "claude": "claude",
     "opencode": "opencode",
     "codex": "codex",
+    "agy": "agy",
 }
 
 
-def find_agent_cli(agent_type: str) -> Optional[str]:
+def find_agy_cli() -> str | None:
+    """Find Antigravity (agy) CLI executable path.
+
+    agy's own installer places the binary under ``~/.local/bin/agy`` which is
+    often absent from non-interactive server PATHs, so check it before
+    falling back to PATH and standard system/Homebrew locations.
+    """
+    from pathlib import Path
+
+    local = Path.home() / ".local" / "bin" / "agy"
+    if local.is_file() and os.access(local, os.X_OK):
+        return str(local)
+
+    path = shutil.which("agy")
+    if path:
+        return path
+
+    if platform.system() != "Windows":
+        for base in ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"):
+            candidate = os.path.join(base, "agy")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def find_agent_cli(agent_type: str) -> str | None:
     """Find a cli-agent executable path by agent type.
 
-    claude keeps its deep Node-version-manager search (npm-installed); other
-    agents fall back to PATH plus common system/Homebrew locations. Returns the
-    full path, or None if not found.
+    claude keeps its deep Node-version-manager search (npm-installed); agy
+    checks ``~/.local/bin/agy`` first; other agents fall back to PATH plus
+    common system/Homebrew locations. Returns the full path, or None if not
+    found.
     """
     if agent_type == "claude":
         return find_claude_cli()
+    if agent_type == "agy":
+        return find_agy_cli()
 
     binary = _AGENT_BINARY.get(agent_type, agent_type)
     path = shutil.which(binary)
@@ -123,7 +148,7 @@ def find_agent_cli(agent_type: str) -> Optional[str]:
     return None
 
 
-def find_claude_cli() -> Optional[str]:
+def find_claude_cli() -> str | None:
     """Find claude CLI executable path.
 
     Returns full path to claude executable, or None if not found.

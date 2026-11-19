@@ -123,9 +123,9 @@ def _installed_path(agent_type: str) -> str | None:
 
         if not kernel_installed():
             return None
-        from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
+        from frago.init.hook_binary import get_binary_name, get_hook_deploy_path
 
-        return str(get_hook_deploy_dir() / get_binary_name())
+        return str(get_hook_deploy_path() / get_binary_name())
     from frago.compat import find_agent_cli
 
     return find_agent_cli(agent_type)

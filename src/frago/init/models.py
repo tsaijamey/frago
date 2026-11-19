@@ -20,14 +20,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 def known_agent_cores() -> set[str]:
-    """合法的内核取值，与 `session.models.AgentType` 对齐。
+    """合法的活跃内核取值，与 `session.models.ACTIVE_AGENT_TYPES` 对齐。
 
-    Config 的字段校验、HTTP 写接口、CLI 都从这里取，NEVER 各写一张白名单。
+    仅返回 5 大活跃内核（claude/opencode/codex/coreagent/agy），排除仅供旧 JSON
+    反序列化兼容的保留占位符（cursor/cline）。Config 的字段校验、HTTP 写接口、
+    可用性字典与 CLI 都从这里取，NEVER 各写一张白名单。
     延迟 import 是为了不让 init/ 在模块加载期就拉起 session/。
     """
-    from frago.session.models import AgentType
+    from frago.session.models import ACTIVE_AGENT_TYPES
 
-    return {t.value for t in AgentType}
+    return {t.value for t in ACTIVE_AGENT_TYPES}
 
 
 class APIEndpoint(BaseModel):
@@ -294,7 +296,7 @@ class Config(BaseModel):
     @field_validator("agent_core")
     @classmethod
     def _known_agent_core(cls, v: str) -> str:
-        """合法内核取值与 AgentType 对齐（见 `known_agent_cores`）。"""
+        """合法内核取值与 ACTIVE_AGENT_TYPES 对齐（见 `known_agent_cores`）。"""
         allowed = known_agent_cores()
         if v not in allowed:
             raise ValueError(

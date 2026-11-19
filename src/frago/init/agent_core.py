@@ -36,11 +36,14 @@ def built_in_core() -> str:
 
 
 def kernel_installed() -> bool:
-    """自带内核在这台机器上装了吗（`~/.frago/bin` 下那个二进制在不在）。"""
-    try:
-        from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
+    """自带内核在这台机器上装了吗（纯只读检查 `~/.frago/bin` 下那个二进制在不在）。
 
-        return (get_hook_deploy_dir() / get_binary_name()).exists()
+    NEVER 调用会 ``mkdir`` 的 ``get_hook_deploy_dir()``，保证空 HOME 下的探测零建目录副作用。
+    """
+    try:
+        from frago.init.hook_binary import get_binary_name, get_hook_deploy_path
+
+        return (get_hook_deploy_path() / get_binary_name()).is_file()
     except Exception:  # noqa: BLE001 — 探测不出来当作没装，退回自带内核那条路本就无副作用
         return False
 
@@ -48,21 +51,42 @@ def kernel_installed() -> bool:
 def core_installed(agent_type: str) -> bool:
     """这一家内核本机装了吗。
 
-    判据按"这一家是什么"分岔：自带内核看那个二进制；其余几家用 `compat.find_agent_cli`
-    （claude 要翻 nvm/fnm/volta 那一堆目录，不是 `which` 一句话能覆盖的，那份知识住在
-    `compat` 里）。**这一处是全系统"内核装没装"的唯一判据**——设置接口、CLI、启动接口
-    都从这里取，NEVER 各写一份。
+    **这一处是全系统「内核装没装」的唯一判据**——设置接口（``_agent_core_availability``、
+    ``_cli_agents_status``）、CLI、启动接口都从这里取，NEVER 各写一份。
+
+    判据按内核形态分岔，并与各驱动 ``locate`` 语义及历史配置语义统一收口：
+    - 自带内核（``runs_on_kernel``）：纯只读检查 ``~/.frago/bin/frago-core`` 是否存在（``kernel_installed``）；
+    - 外部 CLI 内核：优先复用已注册 driver 的 ``locate()``（涵盖 ``claude`` 的深层 node 管理器查找、
+      ``agy`` 的 ``~/.local/bin/agy`` 查找等），未注册或未提供 ``locate`` 时回退 ``compat.find_agent_cli``；
+    - ``opencode``：二进制未命中时额外兼容 ``opencode_plugin.is_opencode_present()``（配置目录或 PATH 二进制）。
     """
-    from frago.agent_driver.driver import runs_on_kernel
+    from frago.agent_driver.driver import registered_drivers, runs_on_kernel
 
     if runs_on_kernel(agent_type):
         return kernel_installed()
-    from frago.compat import find_agent_cli
 
     try:
-        return find_agent_cli(agent_type) is not None
+        driver = registered_drivers().get(agent_type)
+        if driver is not None and driver.locate is not None:
+            if driver.locate() is not None:
+                return True
+        else:
+            from frago.compat import find_agent_cli
+
+            if find_agent_cli(agent_type) is not None:
+                return True
     except Exception:  # noqa: BLE001 — 一家探测失败不该让整轮会话起不来
-        return False
+        pass
+
+    if agent_type == "opencode":
+        try:
+            from frago.init.opencode_plugin import is_opencode_present
+
+            return is_opencode_present()
+        except Exception:  # noqa: BLE001 — 同上，兜底探测失败当作未装
+            return False
+
+    return False
 
 
 def resolve_agent_core(preference: str) -> tuple[str, str | None]:

@@ -55,7 +55,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -70,6 +69,7 @@ from frago.agent_driver.driver import (
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 from frago.agent_driver.transcript_source import JsonlTranscriptSource
+from frago.compat import find_agy_cli
 from frago.session import agy_store
 
 if TYPE_CHECKING:
@@ -199,22 +199,8 @@ _ENTER_RETRIES = 2
 
 # ── 探测可执行文件 ──────────────────────────────────────────────────
 def _locate() -> str | None:
-    """agy 装在哪。
-
-    agy 自己的安装器把它放在 ``~/.local/bin``，那不在 ``find_agent_cli`` 兜底的
-    几个系统目录里，故先看这一处，再退回通用的 PATH 查找。
-    """
-    local = Path.home() / ".local" / "bin" / "agy"
-    if local.is_file() and os.access(local, os.X_OK):
-        return str(local)
-    found = shutil.which("agy")
-    if found:
-        return found
-    for base in ("/opt/homebrew/bin", "/usr/local/bin"):
-        candidate = Path(base) / "agy"
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    """agy 装在哪（复用 ``compat.find_agy_cli`` 统一判据，先查 ``~/.local/bin/agy``）。"""
+    return find_agy_cli()
 
 
 # ── 目录信任 ────────────────────────────────────────────────────────

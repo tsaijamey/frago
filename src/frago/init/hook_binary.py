@@ -92,9 +92,14 @@ def get_bundled_binary_path() -> Path:
     return binary
 
 
+def get_hook_deploy_path() -> Path:
+    """Return ~/.frago/bin/ without creating it (read-only path probe)."""
+    return Path.home() / ".frago" / "bin"
+
+
 def get_hook_deploy_dir() -> Path:
     """Return ~/.frago/bin/, creating it if needed."""
-    deploy_dir = Path.home() / ".frago" / "bin"
+    deploy_dir = get_hook_deploy_path()
     deploy_dir.mkdir(parents=True, exist_ok=True)
     return deploy_dir
 
