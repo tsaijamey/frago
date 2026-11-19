@@ -147,6 +147,76 @@ class TestAgentCoreEndpoint:
         assert "not installed" in resp.json()["detail"]
         assert config_manager.load_config().agent_core == "coreagent"
 
+    def test_availability_follows_core_installed_monkeypatch_both_targets(
+        self, settings_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        from frago.init import agent_core
+
+        # 1) monkeypatch frago.init.agent_core.core_installed 为 False
+        monkeypatch.setattr(agent_core, "core_installed", lambda _t: False)
+        avail_from_init = settings_routes._agent_core_availability()
+        assert set(avail_from_init.keys()) == {
+            "claude",
+            "opencode",
+            "codex",
+            "coreagent",
+            "agy",
+        }
+        assert all(v is False for v in avail_from_init.values())
+        assert "cursor" not in avail_from_init
+        assert "cline" not in avail_from_init
+
+        # 2) monkeypatch frago.server.routes.settings.core_installed 为 False
+        monkeypatch.setattr(agent_core, "core_installed", lambda _t: True)
+        monkeypatch.setattr(settings_routes, "core_installed", lambda _t: False)
+        avail_from_settings = settings_routes._agent_core_availability()
+        assert set(avail_from_settings.keys()) == {
+            "claude",
+            "opencode",
+            "codex",
+            "coreagent",
+            "agy",
+        }
+        assert all(v is False for v in avail_from_settings.values())
+
+    @pytest.mark.parametrize("target_core", ["codex", "agy"])
+    def test_put_persists_codex_and_agy_via_single_source(
+        self,
+        settings_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        target_core: str,
+    ):
+        from frago.init import agent_core
+
+        monkeypatch.setattr(agent_core, "core_installed", lambda _t: True)
+
+        resp = settings_client.put(
+            "/api/settings/agent-core", json={"agent_core": target_core}
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["agent_core"] == target_core
+        assert set(body["available"].keys()) == {
+            "claude",
+            "opencode",
+            "codex",
+            "coreagent",
+            "agy",
+        }
+        assert body["available"][target_core] is True
+        assert config_manager.load_config().agent_core == target_core
+
+    @pytest.mark.parametrize("reserved_core", ["cursor", "cline"])
+    def test_put_rejects_reserved_placeholders(
+        self, settings_client: TestClient, reserved_core: str
+    ):
+        resp = settings_client.put(
+            "/api/settings/agent-core", json={"agent_core": reserved_core}
+        )
+        assert resp.status_code == 400
+        assert "Unknown agent core" in resp.json()["detail"]
+
 
 # ============================================================
 # 3. 启动路径的缺省解析

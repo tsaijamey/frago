@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
+from frago.init import agent_core as _agent_core_mod
+from frago.init.agent_core import core_installed
 from frago.server.services.gh_install_service import GhInstallService, detect_install_plan
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
@@ -1706,20 +1708,25 @@ class AgentCoreUpdateRequest(BaseModel):
     agent_core: str
 
 
-def _agent_core_availability() -> dict[str, bool]:
-    """本机装了哪些内核。探测复用既有出口，NEVER 新写一份。"""
-    from frago.compat import find_agent_cli
-    from frago.init.agent_core import kernel_installed
-    from frago.init.opencode_plugin import is_opencode_present
+_DEFAULT_CORE_INSTALLED = core_installed
 
-    return {
-        "claude": find_agent_cli("claude") is not None,
-        "opencode": is_opencode_present(),
-        # 自带内核（CoreAgent）：与 frago 同一个安装包，不需要用户另装什么。它从前不在这
-        # 张表里，于是设置页既显示不了、也存不下「默认走自带内核」——而那正是新装的缺省值
-        # （2026-10-09 改）。存得下这一条，缺省值才不是一个只有配置文件知道的事实。
-        "coreagent": kernel_installed(),
-    }
+
+def _is_core_installed(agent_type: str) -> bool:
+    """统一读取唯一安装判据 `core_installed`。
+
+    同时兼容测试对 `frago.server.routes.settings.core_installed`
+    与 `frago.init.agent_core.core_installed` 两处的 monkeypatch 打桩。
+    """
+    if core_installed is not _DEFAULT_CORE_INSTALLED:
+        return bool(core_installed(agent_type))
+    return bool(_agent_core_mod.core_installed(agent_type))
+
+
+def _agent_core_availability() -> dict[str, bool]:
+    """本机装了哪些内核。唯一判据来自 `core_installed`，覆盖全部活跃内核。"""
+    from frago.init.models import known_agent_cores
+
+    return {core: _is_core_installed(core) for core in sorted(known_agent_cores())}
 
 
 @router.get("/settings/agent-core", response_model=AgentCoreResponse)
@@ -1840,7 +1847,11 @@ def _opencode_supports_service_toggle() -> bool:
 
 
 def _cli_agents_status() -> CliAgentsStatusResponse:
-    """从 driver 注册表汇总本机全部 CLI Agent 客户端状态（已检测到的排在前面）。"""
+    """从 driver 注册表汇总本机全部 CLI Agent 客户端状态（已检测到的排在前面）。
+
+    安装判据统一对齐到 ``core_installed``（``_is_core_installed``），
+    二进制路径仍通过 ``driver.locate()`` 探测以供展示。
+    """
     from frago.agent_driver.driver import registered_drivers
     from frago.server.services.workbench_agents import FAMILY_BY_AGENT_TYPE
 
@@ -1852,9 +1863,9 @@ def _cli_agents_status() -> CliAgentsStatusResponse:
                 path = driver.locate()
             except Exception:  # noqa: BLE001 — 单个客户端探测出错不影响其余客户端展示
                 path = None
-        installed = path is not None
+        installed = _is_core_installed(agent_type)
         opencode_service: OpencodeServiceStatus | None = None
-        if agent_type == "opencode" and installed:
+        if agent_type == "opencode" and installed and path is not None:
             opencode_service = OpencodeServiceStatus(
                 supported=_opencode_supports_service_toggle(),
                 disabled=_read_opencode_service_disabled(),

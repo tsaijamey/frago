@@ -100,3 +100,22 @@ async def test_put_opencode_service_setting_runs_set_and_unset(
     assert calls[-1] == ("opencode", ["service", "unset", "disabled"])
     assert res_off.agents[0].opencode_service is not None
     assert res_off.agents[0].opencode_service.disabled is False
+
+
+def test_cli_agents_status_respects_core_installed_single_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from frago.init import agent_core
+
+    monkeypatch.setattr(
+        "frago.agent_driver.driver.registered_drivers",
+        lambda: {
+            "codex": _fake_driver("codex", "Codex CLI", "/opt/homebrew/bin/codex"),
+            "agy": _fake_driver("agy", "Antigravity CLI", "/Users/test/.local/bin/agy"),
+            "claude": _fake_driver("claude", "Claude Code", "/usr/local/bin/claude"),
+        },
+    )
+    monkeypatch.setattr(agent_core, "core_installed", lambda _t: False)
+
+    resp = settings_route._cli_agents_status()
+    assert all(a.installed is False for a in resp.agents)
