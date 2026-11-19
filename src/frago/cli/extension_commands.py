@@ -175,6 +175,28 @@ def status_cmd():
         sys.exit(1)
 
 
+@extension_group.command("prepare-cft")
+@click.option("--paths-only", is_flag=True,
+              help="Emit profile_dir and bundle_dir on two plain lines for wrapper consumption.")
+def prepare_cft_cmd(paths_only):
+    """Prepare extension bridge runtime for a bare Chrome for Testing launch.
+
+    Not meant to be run manually; invoked by the macOS CfT app wrapper.
+    """
+    from ..browser.extension.lifecycle import prepare_cft_extension_launch
+
+    try:
+        info = prepare_cft_extension_launch()
+    except Exception as e:
+        click.echo(json.dumps({"ok": False, "error": str(e)}), err=True)
+        sys.exit(1)
+    if paths_only:
+        click.echo(info["profile_dir"])
+        click.echo(info["bundle_dir"])
+    else:
+        click.echo(json.dumps(info, indent=2, ensure_ascii=False))
+
+
 # ═════════════════ MVP 6 commands via extension backend ═════════════════
 
 

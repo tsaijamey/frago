@@ -30,6 +30,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -237,6 +238,269 @@ def verify(binary: Path, *, system: str | None = None) -> str:
     raise CftFetchError("verify", f"CfT 装好了但 --version 没报出版本号：{err[-400:]}")
 
 
+# ─────────────────────────────── 包装器（macOS）───────────────────────────────
+
+_WRAPPER_MARKER = "# frago-cft-wrapper v1"
+
+_MACOS_WRAPPER_SCRIPT = f"""#!/usr/bin/env bash
+{_WRAPPER_MARKER}
+# Transparent launcher for Google Chrome for Testing.app on macOS.
+# - Explicit automation/probe flags (--user-data-dir, --headless, --version, --type, etc.)
+#   are passed straight through to the real binary (`Google Chrome for Testing.bin`).
+# - Bare launches (Dock / Finder / Spotlight / `open -a`) ensure the frago extension daemon,
+#   NativeMessagingHosts manifest, and profile preferences are ready, then exec the real
+#   binary against `$HOME/.frago/profiles/cft/extension` with the current `extension_bundle`.
+set -euo pipefail
+
+SOURCE="${{BASH_SOURCE[0]}}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" != /* ]]; then
+    SOURCE="$DIR/$TARGET"
+  else
+    SOURCE="$TARGET"
+  fi
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+REAL_BIN="$SCRIPT_DIR/Google Chrome for Testing.bin"
+
+if [ ! -x "$REAL_BIN" ]; then
+  echo "frago-cft-wrapper: missing real binary at $REAL_BIN" >&2
+  exit 127
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --user-data-dir=*|--user-data-dir|--headless=*|--headless|--version|--type=*|--load-extension=*|--load-extension|--remote-debugging-port=*|--dump-dom|-h|--help)
+      exec "$REAL_BIN" "$@"
+      ;;
+  esac
+done
+
+_find_frago_cmd() {{
+  local candidate
+  local saved_path="${{PATH:-/usr/bin:/bin:/usr/sbin:/sbin}}"
+  local search_path="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$saved_path"
+  local on_path=""
+  on_path="$(PATH="$search_path" command -v frago 2>/dev/null || true)"
+  for candidate in \
+    "$on_path" \
+    "$HOME/.local/bin/frago" \
+    "/opt/homebrew/bin/frago" \
+    "/usr/local/bin/frago" \
+    "$HOME/.cargo/bin/frago"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      FRAGO_CMD=("$candidate")
+      return 0
+    fi
+  done
+
+  local py_hint="$HOME/.frago/chrome/python_path"
+  if [ -r "$py_hint" ]; then
+    local py_bin=""
+    IFS= read -r py_bin < "$py_hint" || true
+    if [ -n "$py_bin" ] && [ -x "$py_bin" ]; then
+      FRAGO_CMD=("$py_bin" "-m" "frago.cli.main")
+      return 0
+    fi
+  fi
+
+  local uv_py="$HOME/.local/share/uv/tools/frago-cli/bin/python"
+  if [ -x "$uv_py" ]; then
+    FRAGO_CMD=("$uv_py" "-m" "frago.cli.main")
+    return 0
+  fi
+
+  local py_user_bin
+  for py_user_bin in "$HOME"/Library/Python/*/bin/frago; do
+    if [ -x "$py_user_bin" ]; then
+      FRAGO_CMD=("$py_user_bin")
+      return 0
+    fi
+  done
+
+  return 1
+}}
+
+PROFILE_DIR="$HOME/.frago/profiles/cft/extension"
+BUNDLE_DIR=""
+FRAGO_CMD=()
+
+if _find_frago_cmd; then
+  PREP_OUT="$("${{FRAGO_CMD[@]}}" extension prepare-cft --paths-only 2>/dev/null || true)"
+  if [ -n "$PREP_OUT" ]; then
+    {{
+      IFS= read -r _prep_profile || true
+      IFS= read -r _prep_bundle || true
+    }} <<< "$PREP_OUT"
+    if [ -n "${{_prep_profile:-}}" ]; then
+      PROFILE_DIR="$_prep_profile"
+    fi
+    if [ -n "${{_prep_bundle:-}}" ] && [ -f "$_prep_bundle/manifest.json" ]; then
+      BUNDLE_DIR="$_prep_bundle"
+    fi
+  fi
+fi
+
+mkdir -p "$PROFILE_DIR"
+
+if [ -n "$BUNDLE_DIR" ]; then
+  exec "$REAL_BIN" \
+    "--user-data-dir=$PROFILE_DIR" \
+    "--load-extension=$BUNDLE_DIR" \
+    --no-first-run \
+    --no-default-browser-check \
+    --enable-logging=stderr \
+    --disable-sync \
+    "$@"
+fi
+
+echo "frago-cft-wrapper: warning: extension bundle not resolved, launching profile without --load-extension" >&2
+exec "$REAL_BIN" \
+  "--user-data-dir=$PROFILE_DIR" \
+  --no-first-run \
+  --no-default-browser-check \
+  --enable-logging=stderr \
+  --disable-sync \
+  "$@"
+"""
+
+
+def _is_cft_wrapper(path: Path) -> bool:
+    """Return True if ``path`` is already our transparent launcher wrapper."""
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        with path.open("rb") as f:
+            head = f.read(256)
+    except OSError:
+        return False
+    return _WRAPPER_MARKER.encode("utf-8") in head
+
+
+def _app_bundle_for_binary(binary: Path) -> Path | None:
+    """Return the enclosing ``.app`` bundle if ``binary`` lives in ``Contents/MacOS/``."""
+    try:
+        macos_dir = binary.parent
+        contents_dir = macos_dir.parent
+        app_bundle = contents_dir.parent
+    except IndexError:
+        return None
+    if (
+        macos_dir.name == "MacOS"
+        and contents_dir.name == "Contents"
+        and app_bundle.suffix == ".app"
+        and (contents_dir / "Info.plist").is_file()
+    ):
+        return app_bundle
+    return None
+
+
+def record_runtime_python_hint() -> None:
+    """Persist ``sys.executable`` so LaunchServices bare launches can locate frago."""
+    chrome_dir = Path.home() / ".frago" / "chrome"
+    with contextlib.suppress(OSError):
+        chrome_dir.mkdir(parents=True, exist_ok=True)
+        hint_file = chrome_dir / "python_path"
+        current = hint_file.read_text(encoding="utf-8").strip() if hint_file.exists() else ""
+        if current != sys.executable:
+            tmp = hint_file.with_name(".python_path.frago-tmp")
+            tmp.write_text(f"{sys.executable}\n", encoding="utf-8")
+            tmp.replace(hint_file)
+
+
+def _initialize_default_cft_environment(say: Progress) -> None:
+    """Initialize default CfT extension profile, launcher, and NativeMessagingHosts."""
+    from .extension.lifecycle import initialize_cft_environment
+
+    info = initialize_cft_environment(ensure_daemon=False)
+    if info.get("prefs_initialized"):
+        say(f"已初始化 CfT 默认 Profile：{info['profile_dir']}")
+
+
+def ensure_cft_wrapper(binary: Path, *, system: str | None = None) -> bool:
+    """Install or idempotently update the macOS CfT transparent launcher wrapper.
+
+    Moves the real Mach-O binary to ``<binary>.bin`` if needed, writes the
+    transparent launcher script at ``binary``, and re-signs the ``.app``
+    bundle with ``codesign --force --deep -s -``.
+
+    If writing the wrapper or re-signing fails midway, automatically rolls back
+    so the original ``.bin`` binary (or previous wrapper) is restored in place
+    and the ``.app`` bundle is never left broken.
+
+    Returns True when changes were applied, False when already up-to-date or
+    not applicable (non-Darwin / non-.app test fixture).
+    """
+    system = system or _platform.system()
+    if system != "Darwin":
+        return False
+    if not binary.exists():
+        return False
+    app_bundle = _app_bundle_for_binary(binary)
+    if app_bundle is None:
+        return False
+
+    real_bin = binary.with_name(f"{binary.name}.bin")
+    is_wrapper = _is_cft_wrapper(binary)
+    old_wrapper_bytes: bytes | None = None
+    moved_real_bin = False
+
+    if is_wrapper and real_bin.exists():
+        try:
+            if binary.read_text(encoding="utf-8") == _MACOS_WRAPPER_SCRIPT:
+                return False
+            old_wrapper_bytes = binary.read_bytes()
+        except OSError:
+            pass
+    elif not is_wrapper:
+        # Fresh download or overwritten .app: preserve the real binary as .bin.
+        os.replace(binary, real_bin)
+        real_bin.chmod(real_bin.stat().st_mode | 0o755)
+        moved_real_bin = True
+    elif not real_bin.exists():
+        raise CftFetchError(
+            "verify",
+            f"CfT 包装器存在但缺少真实二进制：{real_bin}",
+            "请执行 `frago browser install --force` 重新获取 Chrome for Testing。",
+        )
+
+    tmp_wrapper = binary.with_name(f".{binary.name}.frago-tmp")
+    try:
+        tmp_wrapper.write_text(_MACOS_WRAPPER_SCRIPT, encoding="utf-8")
+        tmp_wrapper.chmod(0o755)
+        os.replace(tmp_wrapper, binary)
+
+        if shutil.which("codesign"):
+            proc = subprocess.run(
+                ["codesign", "--force", "--deep", "-s", "-", str(app_bundle)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                raise CftFetchError(
+                    "codesign",
+                    f"CfT 应用包重签名失败：{(proc.stderr or proc.stdout).strip()}",
+                )
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp_wrapper.unlink()
+        if moved_real_bin and real_bin.exists():
+            with contextlib.suppress(OSError):
+                os.replace(real_bin, binary)
+        elif old_wrapper_bytes is not None:
+            tmp_restore = binary.with_name(f".{binary.name}.frago-restore")
+            with contextlib.suppress(OSError):
+                tmp_restore.write_bytes(old_wrapper_bytes)
+                tmp_restore.chmod(0o755)
+                os.replace(tmp_restore, binary)
+        raise
+    return True
+
+
 # ─────────────────────────────── 并发 ───────────────────────────────
 
 
@@ -289,10 +553,17 @@ def ensure_cft(
     已经有就原样返回，什么都不下（force=True 时重取最新一版）。
     proxy=True 表示按本机探测；传字符串就用它；传 None/False 直连。
     """
-    root = root or _root()
+    default_root = _root()
+    use_default_root = root is None or root == default_root
+    root = root or default_root
     say = progress or (lambda _msg: None)
 
     if not force and (found := installed_binary(root)):
+        if ensure_cft_wrapper(found):
+            say(f"已更新 CfT 透明启动包装器：{found}")
+        if use_default_root:
+            record_runtime_python_hint()
+            _initialize_default_cft_environment(say)
         return found
 
     key = platform_key()
@@ -306,6 +577,11 @@ def ensure_cft(
     with _locked(root.parent / f".{root.name}.lock"):
         # 等锁期间别的进程可能已经装好了。
         if not force and (found := installed_binary(root)):
+            if ensure_cft_wrapper(found):
+                say(f"已更新 CfT 透明启动包装器：{found}")
+            if use_default_root:
+                record_runtime_python_hint()
+                _initialize_default_cft_environment(say)
             return found
 
         if proxy is True:
@@ -331,6 +607,8 @@ def ensure_cft(
             archive.unlink()
 
             rel = _relative_binary(key)
+            if ensure_cft_wrapper(unpacked / rel):
+                say("已注入透明启动包装器并完成本地重签名")
             say(f"验证：{verify(unpacked / rel)}")
 
             folder = rel.replace("\\", "/").split("/", 1)[0]
@@ -344,5 +622,8 @@ def ensure_cft(
             shutil.rmtree(staging, ignore_errors=True)
 
     binary = root / rel
+    if use_default_root:
+        record_runtime_python_hint()
+        _initialize_default_cft_environment(say)
     say(f"CfT 已就位：{binary}")
     return binary

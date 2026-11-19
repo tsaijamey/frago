@@ -119,16 +119,19 @@ def _spawn_daemon(log_path: Path | None) -> int:
     if SOCK_PATH.exists():
         with contextlib.suppress(OSError):
             SOCK_PATH.unlink()
-    if log_path:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
-    else:
-        stdio = subprocess.DEVNULL
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "frago.cli.main", "extension", "daemon"],
-        stdout=stdio, stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    with contextlib.ExitStack() as stack:
+        if log_path:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            stdio: Any = stack.enter_context(open(log_path, "wb"))
+        else:
+            stdio = subprocess.DEVNULL
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "frago.cli.main", "extension", "daemon"],
+            stdin=subprocess.DEVNULL,
+            stdout=stdio,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     return proc.pid
 
 
@@ -357,6 +360,28 @@ def _harden_extension_prefs_dict(
     return changed
 
 
+DEFAULT_CFT_VERTICAL_TABS: dict[str, Any] = {
+    "enabled": True,
+    "enabled_first_time": True,
+    "collapsed_state": False,
+    "uncollapsed_width": 240,
+}
+
+
+def _seed_cft_vertical_tabs_dict(prefs: dict[str, Any]) -> bool:
+    """Seed out-of-the-box CfT vertical tabs defaults without overwriting user choices."""
+    vt = prefs.get("vertical_tabs")
+    if not isinstance(vt, dict):
+        prefs["vertical_tabs"] = copy.deepcopy(DEFAULT_CFT_VERTICAL_TABS)
+        return True
+    changed = False
+    for key, default_val in DEFAULT_CFT_VERTICAL_TABS.items():
+        if key not in vt:
+            vt[key] = default_val
+            changed = True
+    return changed
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_name(f".{path.name}.frago-tmp")
     tmp_path.write_text(
@@ -371,10 +396,14 @@ def _ensure_developer_mode_and_enable_extension(
     *,
     extension_id: str = STABLE_EXTENSION_ID,
     bundle_dir: Path | None = None,
+    seed_vertical_tabs: bool = False,
 ) -> None:
     """Harden ``Default/Preferences`` (and ``Default/Secure Preferences`` if present)
     before launching Chromium so unpacked extension upgrades or refreshes never
     leave ``frago bridge`` disabled with "开启开发者模式即可使用此扩展程序".
+
+    When ``seed_vertical_tabs`` is True (for Frago's managed CfT extension profile),
+    also seeds ``vertical_tabs`` defaults if not explicitly set by the user.
 
     Must only be called while the profile is unlocked (no live browser process).
     """
@@ -397,9 +426,12 @@ def _ensure_developer_mode_and_enable_extension(
                 file=sys.stderr,
             )
             prefs = {}
-    if _harden_extension_prefs_dict(
+    prefs_changed = _harden_extension_prefs_dict(
         prefs, extension_id, manifest_permissions=manifest_perms
-    ) or not prefs_existed:
+    )
+    if seed_vertical_tabs:
+        prefs_changed = _seed_cft_vertical_tabs_dict(prefs) or prefs_changed
+    if prefs_changed or not prefs_existed:
         _write_json_atomic(prefs_path, prefs)
 
     secure_prefs_path = default_dir / "Secure Preferences"
@@ -420,14 +452,25 @@ def _ensure_developer_mode_and_enable_extension(
 
 
 def _fetch_cft_if_missing() -> None:
-    """没有 CfT 就先取一份，再交给挑浏览器那一步。
+    """没有 CfT 就先取一份，并确保透明启动包装器处于自愈就绪状态。
 
     取不到只提醒不中断：挑浏览器会退回用户自己装的那些，这台机器照样能用，
     但人得知道此刻驱动的不是 frago 自带的那份、以及为什么。
     """
-    from ..cft_fetch import CftFetchError, ensure_cft, installed_binary
+    from ..cft_fetch import (
+        CftFetchError,
+        ensure_cft,
+        ensure_cft_wrapper,
+        installed_binary,
+        record_runtime_python_hint,
+    )
 
-    if installed_binary() is not None:
+    if (found := installed_binary()) is not None:
+        try:
+            ensure_cft_wrapper(found)
+        except CftFetchError as e:
+            print(f"warning: 更新 CfT 透明启动包装器失败：{e}", file=sys.stderr)
+        record_runtime_python_hint()
         return
     try:
         ensure_cft(progress=lambda msg: print(f"[cft] {msg}", file=sys.stderr))
@@ -601,30 +644,13 @@ def start_extension_bridge(
             f"be incomplete; reinstall or pass --bundle-dir explicitly"
         )
 
-    # 4. Daemon
-    daemon_was_running = _daemon_alive()
-    daemon_pid: int | None
-    if daemon_was_running:
-        daemon_pid = None
-    else:
-        if daemon_log is None:
-            daemon_log = (Path.home() / ".frago" / "server" /
-                          "extension-daemon.log")
-        daemon_pid = _spawn_daemon(daemon_log)
-        _wait_socket(SOCK_PATH, timeout=socket_timeout)
-
-    # 5. Native messaging manifest at <profile>/NativeMessagingHosts/
-    launcher = _ensure_native_host_launcher()
-    manifest_path = install_manifest(
-        str(launcher),
-        target_dir=profile / "NativeMessagingHosts",
-    )
-
-    # 5.5. Profile preferences hardening (profile is unlocked at this point)
-    _ensure_developer_mode_and_enable_extension(
+    daemon_was_running, daemon_pid, manifest_path = _ensure_bridge_runtime_env(
         profile,
-        extension_id=STABLE_EXTENSION_ID,
-        bundle_dir=bundle,
+        bundle,
+        daemon_log=daemon_log,
+        socket_timeout=socket_timeout,
+        harden_prefs=True,
+        seed_vertical_tabs=(brand == "cft"),
     )
 
     # 6. Browser launch
@@ -650,6 +676,197 @@ def start_extension_bridge(
         manifest_path=str(manifest_path),
         extension_id=extension_id,
     )
+
+
+def _ensure_bridge_runtime_env(
+    profile: Path,
+    bundle: Path | None,
+    *,
+    daemon_log: Path | None = None,
+    socket_timeout: float = 5.0,
+    harden_prefs: bool = True,
+    seed_vertical_tabs: bool = False,
+    ensure_daemon: bool = True,
+) -> tuple[bool, int | None, Path]:
+    """Ensure optional daemon, native host launcher, manifest, and prefs hardening."""
+    daemon_was_running = _daemon_alive()
+    daemon_pid: int | None = None
+    if ensure_daemon and not daemon_was_running:
+        if daemon_log is None:
+            daemon_log = (Path.home() / ".frago" / "server" /
+                          "extension-daemon.log")
+        daemon_pid = _spawn_daemon(daemon_log)
+        _wait_socket(SOCK_PATH, timeout=socket_timeout)
+
+    launcher = _ensure_native_host_launcher()
+    manifest_path = install_manifest(
+        str(launcher),
+        target_dir=profile / "NativeMessagingHosts",
+    )
+
+    if harden_prefs:
+        _ensure_developer_mode_and_enable_extension(
+            profile,
+            extension_id=STABLE_EXTENSION_ID,
+            bundle_dir=bundle,
+            seed_vertical_tabs=seed_vertical_tabs,
+        )
+
+    return daemon_was_running, daemon_pid, manifest_path
+
+
+def initialize_cft_environment(
+    *,
+    profile_dir: Path | None = None,
+    bundle_dir: Path | None = None,
+    daemon_log: Path | None = None,
+    ensure_daemon: bool = False,
+    socket_timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Initialize Frago's managed CfT extension profile and bridge registration.
+
+    Called during installation/initialization (``frago browser install``,
+    ``frago init``, ``frago server`` startup, and ``cft_fetch.ensure_cft``) so
+    freshly installed users get vertical tabs, developer mode, Native Messaging
+    manifest, and launcher script out of the box without waiting for the first
+    automation command.
+
+    Idempotent and non-destructive on upgrades:
+    - Skips mutating ``Default/Preferences`` if the profile is currently locked.
+    - Preserves user cookies, login state, and explicit ``vertical_tabs`` settings.
+    """
+    from ..backends.extension import extension_profile_dir
+    from ..cft_fetch import record_runtime_python_hint
+
+    profile = profile_dir or extension_profile_dir("cft")
+    profile.mkdir(parents=True, exist_ok=True)
+    if profile_dir is None:
+        record_runtime_python_hint()
+
+    bundle = bundle_dir or bundle_path()
+    active_bundle = bundle if (bundle / "manifest.json").exists() else None
+    locked = _profile_locked(profile)
+    daemon_was_running, daemon_pid, manifest_path = _ensure_bridge_runtime_env(
+        profile,
+        active_bundle,
+        daemon_log=daemon_log,
+        socket_timeout=socket_timeout,
+        harden_prefs=not locked,
+        seed_vertical_tabs=True,
+        ensure_daemon=ensure_daemon,
+    )
+    return {
+        "profile_dir": str(profile),
+        "bundle_dir": str(bundle),
+        "launcher_path": str(Path.home() / ".frago" / "chrome" / "native_host_launcher.sh"),
+        "manifest_path": str(manifest_path),
+        "prefs_initialized": not locked,
+        "profile_locked": locked,
+        "daemon_running": daemon_was_running or (daemon_pid is not None),
+        "daemon_was_already_running": daemon_was_running,
+        "daemon_pid": daemon_pid,
+    }
+
+
+def ensure_cft_default_setup(
+    *,
+    fetch_if_missing: bool = False,
+    ensure_daemon: bool = False,
+    progress=None,
+) -> dict[str, Any]:
+    """Ensure CfT binary wrapper (if installed or requested) and CfT profile defaults.
+
+    Initialization order:
+    1. Download/extract CfT (when ``fetch_if_missing=True``) or locate existing CfT.
+    2. Install/update macOS ``.app`` transparent wrapper & ad-hoc codesign (with rollback).
+    3. Initialize ``~/.frago/profiles/cft/extension`` (vertical tabs, developer mode,
+       extension permissions) + ``NativeMessagingHosts/com.frago.bridge.json`` +
+       ``native_host_launcher.sh`` + optional ``frago extension daemon``.
+    """
+    from ..cft_fetch import (
+        ensure_cft,
+        ensure_cft_wrapper,
+        installed_binary,
+        record_runtime_python_hint,
+    )
+
+    wrapper_updated = False
+    binary_path: Path | None = None
+    if fetch_if_missing:
+        binary_path = ensure_cft(progress=progress)
+        wrapper_updated = _is_cft_wrapper_present(binary_path)
+    elif (found := installed_binary()) is not None:
+        binary_path = found
+        wrapper_updated = ensure_cft_wrapper(found)
+        record_runtime_python_hint()
+
+    env_info = initialize_cft_environment(ensure_daemon=ensure_daemon)
+    return {
+        **env_info,
+        "binary": str(binary_path) if binary_path else None,
+        "wrapper_updated": wrapper_updated,
+    }
+
+
+def _is_cft_wrapper_present(binary: Path) -> bool:
+    from ..cft_fetch import _is_cft_wrapper
+
+    return _is_cft_wrapper(binary)
+
+
+def prepare_cft_extension_launch(
+    *,
+    profile_dir: Path | None = None,
+    bundle_dir: Path | None = None,
+    daemon_log: Path | None = None,
+    socket_timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Prepare extension bridge environment for a bare CfT app launch.
+
+    Invoked by the macOS ``Google Chrome for Testing.app`` transparent
+    launcher wrapper when the user starts CfT via Dock / Finder / Spotlight /
+    ``open -a`` without explicit ``--user-data-dir=``.
+
+    - Ensures ``frago extension daemon`` is running.
+    - Writes ``NativeMessagingHosts/com.frago.bridge.json``.
+    - Hardens ``Default/Preferences`` (developer mode + vertical_tabs defaults +
+      extension enable) **only when the profile is unlocked** so a hot handoff
+      to a running instance never races with Chromium's preference writes.
+    - Resolves and returns ``profile_dir`` and the current ``bundle_dir``.
+    """
+    from ..backends.extension import extension_profile_dir
+    from ..cft_fetch import record_runtime_python_hint
+
+    profile = profile_dir or extension_profile_dir("cft")
+    profile.mkdir(parents=True, exist_ok=True)
+    if profile_dir is None:
+        record_runtime_python_hint()
+
+    bundle = bundle_dir or bundle_path()
+    if not (bundle / "manifest.json").exists():
+        raise RuntimeError(
+            f"bundle dir {bundle} has no manifest.json — frago install may "
+            f"be incomplete; reinstall or pass --bundle-dir explicitly"
+        )
+
+    locked = _profile_locked(profile)
+    daemon_was_running, daemon_pid, manifest_path = _ensure_bridge_runtime_env(
+        profile,
+        bundle,
+        daemon_log=daemon_log,
+        socket_timeout=socket_timeout,
+        harden_prefs=not locked,
+        seed_vertical_tabs=True,
+        ensure_daemon=True,
+    )
+    return {
+        "profile_dir": str(profile),
+        "bundle_dir": str(bundle),
+        "manifest_path": str(manifest_path),
+        "daemon_was_already_running": daemon_was_running,
+        "daemon_pid": daemon_pid,
+        "profile_locked": locked,
+    }
 
 
 def stop_extension_bridge(

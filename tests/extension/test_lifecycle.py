@@ -442,3 +442,305 @@ def test_start_extension_bridge_hardens_preferences_before_launch(tmp_path):
     sp_ext = observed_before_launch["secure"]["extensions"]["settings"][lc.STABLE_EXTENSION_ID]
     assert sp_ext["state"] == 1
     assert sp_ext["disable_reasons"] == []
+
+
+# ─────────────────────── CfT wrapper self-heal & prepare ──────────────
+
+
+def test_fetch_cft_heals_existing_wrapper(monkeypatch):
+    """When CfT is already installed, _fetch_cft_if_missing still runs ensure_cft_wrapper."""
+    fake_bin = Path("/tmp/Google Chrome for Testing")
+    healed: list[Path] = []
+    hints: list[bool] = []
+    monkeypatch.setattr(cf, "installed_binary", lambda root=None: fake_bin)
+    monkeypatch.setattr(cf, "ensure_cft_wrapper", lambda b: healed.append(b) or True)
+    monkeypatch.setattr(cf, "record_runtime_python_hint", lambda: hints.append(True))
+    monkeypatch.setattr(cf, "ensure_cft", lambda **_kw: pytest.fail("should not re-fetch"))
+    lc._fetch_cft_if_missing()
+    assert healed == [fake_bin]
+    assert hints == [True]
+
+
+def test_prepare_cft_extension_launch_unlocked_hardens_prefs(tmp_path):
+    """Unlocked profile gets daemon, manifest, and developer_mode hardening."""
+    import json
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps({"permissions": ["tabs", "sidePanel"]}),
+        encoding="utf-8",
+    )
+    profile = tmp_path / "profile"
+
+    with patch.object(lc, "_daemon_alive", return_value=False), \
+         patch.object(lc, "_spawn_daemon", return_value=5555) as spawn, \
+         patch.object(lc, "_wait_socket") as wait_sock, \
+         patch.object(lc, "_profile_locked", return_value=False), \
+         patch.object(lc, "_ensure_native_host_launcher",
+                      return_value=Path("/tmp/fake-launcher.sh")), \
+         patch.object(lc, "install_manifest",
+                      return_value=profile / "NativeMessagingHosts" / "com.frago.bridge.json"):
+        info = lc.prepare_cft_extension_launch(profile_dir=profile, bundle_dir=bundle)
+
+    spawn.assert_called_once()
+    wait_sock.assert_called_once()
+    assert info["profile_dir"] == str(profile)
+    assert info["bundle_dir"] == str(bundle)
+    assert info["daemon_was_already_running"] is False
+    assert info["daemon_pid"] == 5555
+    assert info["profile_locked"] is False
+    prefs = json.loads((profile / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["extensions"]["ui"]["developer_mode"] is True
+
+
+def test_prepare_cft_extension_launch_locked_skips_prefs_hardening(tmp_path):
+    """Hot handoff while CfT is running skips Preferences mutation to avoid races."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    profile = tmp_path / "profile"
+
+    with patch.object(lc, "_daemon_alive", return_value=True), \
+         patch.object(lc, "_profile_locked", return_value=True), \
+         patch.object(lc, "_ensure_native_host_launcher",
+                      return_value=Path("/tmp/fake-launcher.sh")), \
+         patch.object(lc, "install_manifest",
+                      return_value=profile / "NativeMessagingHosts" / "com.frago.bridge.json"), \
+         patch.object(lc, "_ensure_developer_mode_and_enable_extension",
+                      side_effect=AssertionError("must not mutate locked prefs")):
+        info = lc.prepare_cft_extension_launch(profile_dir=profile, bundle_dir=bundle)
+
+    assert info["daemon_was_already_running"] is True
+    assert info["daemon_pid"] is None
+    assert info["profile_locked"] is True
+
+
+# ─────────────── CfT default installation & initialization ────────────
+
+
+def test_initialize_cft_environment_fresh_blank_profile(tmp_path, monkeypatch):
+    """Fresh blank CfT profile gets vertical_tabs, developer_mode, launcher, and manifest."""
+    import json
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps({"permissions": ["tabs", "sidePanel"]}),
+        encoding="utf-8",
+    )
+
+    info = lc.initialize_cft_environment(bundle_dir=bundle, ensure_daemon=False)
+    profile = Path(info["profile_dir"])
+    assert profile == fake_home / ".frago" / "profiles" / "cft" / "extension"
+    assert info["prefs_initialized"] is True
+
+    prefs = json.loads((profile / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["vertical_tabs"] == {
+        "enabled": True,
+        "enabled_first_time": True,
+        "collapsed_state": False,
+        "uncollapsed_width": 240,
+    }
+    assert prefs["extensions"]["ui"]["developer_mode"] is True
+
+    launcher = fake_home / ".frago" / "chrome" / "native_host_launcher.sh"
+    assert launcher.exists()
+    manifest = json.loads(
+        (profile / "NativeMessagingHosts" / "com.frago.bridge.json").read_text(encoding="utf-8")
+    )
+    assert manifest["path"] == str(launcher)
+    assert (fake_home / ".frago" / "chrome" / "python_path").exists()
+
+
+def test_initialize_cft_environment_upgrade_idempotency_preserves_custom_prefs_and_cookies(tmp_path, monkeypatch):
+    """Upgrading / re-running initialization preserves cookies, custom vertical_tabs, and unrelated prefs."""
+    import json
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    profile = fake_home / ".frago" / "profiles" / "cft" / "extension"
+    default_dir = profile / "Default"
+    default_dir.mkdir(parents=True)
+    cookies = default_dir / "Cookies"
+    cookies.write_bytes(b"SQLite-user-cookies-payload")
+
+    # User explicitly disabled vertical tabs and customized width.
+    (default_dir / "Preferences").write_text(
+        json.dumps({
+            "profile": {"name": "Daily"},
+            "vertical_tabs": {
+                "enabled": False,
+                "collapsed_state": True,
+                "uncollapsed_width": 320,
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+
+    lc.initialize_cft_environment(bundle_dir=bundle, ensure_daemon=False)
+    lc.initialize_cft_environment(bundle_dir=bundle, ensure_daemon=False)
+
+    assert cookies.read_bytes() == b"SQLite-user-cookies-payload"
+    prefs = json.loads((default_dir / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["profile"] == {"name": "Daily"}
+    assert prefs["vertical_tabs"]["enabled"] is False
+    assert prefs["vertical_tabs"]["collapsed_state"] is True
+    assert prefs["vertical_tabs"]["uncollapsed_width"] == 320
+    assert prefs["vertical_tabs"]["enabled_first_time"] is True
+    assert prefs["extensions"]["ui"]["developer_mode"] is True
+
+
+def test_initialize_cft_environment_seeds_missing_vertical_tabs_enabled(tmp_path):
+    """Profile with vertical_tabs missing 'enabled' gets enabled=True seeded."""
+    import json
+
+    profile = tmp_path / "profile"
+    default_dir = profile / "Default"
+    default_dir.mkdir(parents=True)
+    (default_dir / "Preferences").write_text(
+        json.dumps({
+            "vertical_tabs": {
+                "collapsed_state": False,
+                "uncollapsed_width": 240,
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    lc.initialize_cft_environment(profile_dir=profile, ensure_daemon=False)
+    prefs = json.loads((default_dir / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["vertical_tabs"]["enabled"] is True
+    assert prefs["vertical_tabs"]["enabled_first_time"] is True
+    assert prefs["vertical_tabs"]["collapsed_state"] is False
+    assert prefs["vertical_tabs"]["uncollapsed_width"] == 240
+
+
+def test_prepare_cft_extension_launch_seeds_vertical_tabs(tmp_path):
+    """Bare .app launch also seeds vertical_tabs.enabled=True when profile is unlocked."""
+    import json
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    profile = tmp_path / "profile"
+
+    with patch.object(lc, "_daemon_alive", return_value=True), \
+         patch.object(lc, "_profile_locked", return_value=False), \
+         patch.object(lc, "_ensure_native_host_launcher",
+                      return_value=Path("/tmp/fake-launcher.sh")), \
+         patch.object(lc, "install_manifest",
+                      return_value=profile / "NativeMessagingHosts" / "com.frago.bridge.json"):
+        lc.prepare_cft_extension_launch(profile_dir=profile, bundle_dir=bundle)
+
+    prefs = json.loads((profile / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["vertical_tabs"]["enabled"] is True
+
+
+def test_ensure_cft_default_setup_end_to_end(tmp_path, monkeypatch):
+    """ensure_cft_default_setup wraps existing CfT, initializes profile, and is idempotent."""
+    import json
+    import sys
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    if sys.platform == "darwin":
+        app = fake_home / ".frago" / "tools" / "chrome-for-testing" / "chrome-mac-arm64" / "Google Chrome for Testing.app"
+        macos = app / "Contents" / "MacOS"
+        macos.mkdir(parents=True)
+        (app / "Contents" / "Info.plist").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<plist version="1.0"><dict>'
+            '<key>CFBundleExecutable</key><string>Google Chrome for Testing</string>'
+            '<key>CFBundleIdentifier</key><string>com.google.chrome.for.testing</string>'
+            '<key>CFBundlePackageType</key><string>APPL</string>'
+            '</dict></plist>',
+            encoding="utf-8",
+        )
+        binary = macos / "Google Chrome for Testing"
+        binary.write_text("#!/bin/sh\necho 'Google Chrome for Testing 153.0.8010.52'\n", encoding="utf-8")
+        binary.chmod(0o755)
+        monkeypatch.setattr(cf, "installed_binary", lambda root=None: binary)
+    else:
+        monkeypatch.setattr(cf, "installed_binary", lambda root=None: None)
+
+    first = lc.ensure_cft_default_setup(fetch_if_missing=False, ensure_daemon=False)
+    second = lc.ensure_cft_default_setup(fetch_if_missing=False, ensure_daemon=False)
+
+    if sys.platform == "darwin":
+        assert first["wrapper_updated"] is True
+        assert second["wrapper_updated"] is False
+
+    profile = fake_home / ".frago" / "profiles" / "cft" / "extension"
+    prefs = json.loads((profile / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["vertical_tabs"]["enabled"] is True
+    assert prefs["extensions"]["ui"]["developer_mode"] is True
+
+
+def test_init_command_invokes_browser_environment_initialization(tmp_path, monkeypatch):
+    """frago init --skip-deps --non-interactive initializes default CfT profile."""
+    from click.testing import CliRunner
+
+    from frago.cli import init_command as ic
+
+    called: list[bool] = []
+
+    def _fake_setup(*, fetch_if_missing=False, ensure_daemon=False, progress=None):
+        called.append(fetch_if_missing)
+        return {
+            "profile_dir": str(tmp_path / "cft" / "extension"),
+            "wrapper_updated": False,
+        }
+
+    monkeypatch.setattr("frago.browser.extension.lifecycle.ensure_cft_default_setup", _fake_setup)
+    monkeypatch.setattr(ic, "config_exists", lambda: False)
+    monkeypatch.setattr(ic, "save_config", lambda _cfg: None)
+
+    runner = CliRunner()
+    result = runner.invoke(ic.init, ["--skip-deps", "--non-interactive"])
+    assert result.exit_code == 0, result.output
+    assert called == [False]
+    assert "Browser profile initialized" in result.output
+
+
+def test_browser_install_command_initializes_cft_profile(tmp_path, monkeypatch):
+    """frago browser install reports initialized profile, manifest, and wrapper status."""
+    import json
+
+    from click.testing import CliRunner
+
+    from frago.cli.browser_commands import install_cft
+
+    fake_bin = tmp_path / "Google Chrome for Testing"
+    fake_bin.write_text("#!/usr/bin/env bash\n# frago-cft-wrapper v1\n", encoding="utf-8")
+
+    monkeypatch.setattr("frago.browser.cft_fetch.ensure_cft", lambda **_kw: fake_bin)
+    monkeypatch.setattr(
+        "frago.browser.extension.lifecycle.initialize_cft_environment",
+        lambda **_kw: {
+            "profile_dir": str(tmp_path / "profile"),
+            "manifest_path": str(tmp_path / "profile" / "NativeMessagingHosts" / "com.frago.bridge.json"),
+            "prefs_initialized": True,
+        },
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(install_cft, [])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["wrapper_installed"] is True
+    assert payload["prefs_initialized"] is True
+    assert payload["profile_dir"].endswith("profile")
