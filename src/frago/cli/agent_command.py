@@ -173,6 +173,63 @@ def _worker_bound_connection(agent_type: str | None = None):
     return None if connection.kind == KIND_OFFICIAL else connection
 
 
+def _resolve_worker_agent_core(
+    explicit_agent_type: str | None,
+    worker_connection,
+    *,
+    use_profile: str | None = None,
+    has_inline_creds: bool = False,
+) -> tuple[str, object | None, str | None]:
+    """决定本次 worker 会话实际使用的内核与绑定连接，返回 ``(agent_type, worker_connection, core_note)``。
+
+    解析优先级：
+    1. 显式 ``--agent-type``（或从 ``--session-id``/``--resume`` 已有会话识别出的内核）直接采用；
+    2. 未显式指定时，若 worker 绑定连接自带内核名（``worker_connection.agent_type``），采用该内核；
+    3. 否则退回全局配置偏好（``get_agent_core()``）。
+
+    绑定连接自带内核未安装时的校验与降级取舍：
+    - 只要未显式点名内核，不论内核来自绑定连接（``worker_connection.agent_type``）还是来自
+      全局配置偏好，**一律经 ``frago.init.agent_core.resolve_agent_core`` 做同源安装判据校验**，
+      NEVER 跳过 ``resolve_agent_core`` 直接放行到驱动层崩溃。
+    - 取舍：当绑定连接指定的内核本机未安装（``not core_installed(bound_core)``）时，选择
+      **经 ``resolve_agent_core`` 统一降级回自带内核（``coreagent``）并在 stderr 输出换核说明**，
+      而不是硬报错退出；同时按降级后的内核重新解析 ``_worker_bound_connection(resolved_core)``
+      （覆盖掉原本指向未安装外部 CLI 的连接对象，若 ``coreagent`` 未绑连接则为 ``None``），
+      避免把只属于未安装外部 CLI 的连接/账号误传给 ``coreagent``。
+    """
+    if explicit_agent_type:
+        return explicit_agent_type, worker_connection, None
+
+    from frago.init.agent_core import resolve_agent_core
+
+    if worker_connection is not None and worker_connection.agent_type:
+        bound_core = worker_connection.agent_type
+        resolved_core, core_note = resolve_agent_core(bound_core)
+        if resolved_core != bound_core:
+            # 绑定连接指定的内核未安装、已降级：改用降级后内核自身的绑定连接，
+            # 防止把属于未安装外部 CLI 的连接对象继续留给 coreagent。
+            next_conn = (
+                None
+                if (use_profile or has_inline_creds)
+                else _worker_bound_connection(resolved_core)
+            )
+            return resolved_core, next_conn, core_note
+        if not use_profile and not has_inline_creds and resolved_core:
+            specific_conn = _worker_bound_connection(resolved_core)
+            if specific_conn is not None:
+                worker_connection = specific_conn
+        return resolved_core, worker_connection, core_note
+
+    from frago.init.config_manager import get_agent_core
+
+    resolved_core, core_note = resolve_agent_core(get_agent_core())
+    if not use_profile and not has_inline_creds and resolved_core:
+        specific_conn = _worker_bound_connection(resolved_core)
+        if specific_conn is not None:
+            worker_connection = specific_conn
+    return resolved_core, worker_connection, core_note
+
+
 # 停机态 → 退出码契约（spec 20260607 Phase 7）。调用方 Agent 靠它判断下一步，
 # NEVER 改动既有映射：ok 已答完；timeout 会话仍活可 `frago agent send` 续；
 # needs_input 撞上认证墙/权限门/澄清门，须真人介入；error 是 driver/tmux 层失败。
@@ -984,22 +1041,16 @@ def agent_run(
     # --agent-type 是"这一次破例用谁"；其次是 worker 那条连接自带的内核（厂商 CLI 型
     # 连接的内核就是它本身，换模型也只能在它自己身上换）；最后才是界面上选定的内核。
     #
-    # 选定那个只是一份**偏好**：它指向的内核本机没装时退回自带内核，并把"换过了"说在
-    # stderr 上（判据见 frago.init.agent_core，与页面那条同源）。
-    if not agent_type:
-        if worker_connection is not None and worker_connection.agent_type:
-            agent_type = worker_connection.agent_type
-        else:
-            from frago.init.agent_core import resolve_agent_core
-            from frago.init.config_manager import get_agent_core
-
-            agent_type, core_note = resolve_agent_core(get_agent_core())
-            if core_note:
-                click.echo(f"[!] {core_note}", err=True)
-        if not use_profile and not has_inline_creds and agent_type:
-            specific_conn = _worker_bound_connection(agent_type)
-            if specific_conn is not None:
-                worker_connection = specific_conn
+    # 绑定连接自带内核与全局偏好一致，一律经 resolve_agent_core 校验：本机没装时统一
+    # 降级回自带内核并在 stderr 亮明换核说明（判据见 frago.init.agent_core，与页面同源）。
+    agent_type, worker_connection, core_note = _resolve_worker_agent_core(
+        agent_type,
+        worker_connection,
+        use_profile=use_profile,
+        has_inline_creds=has_inline_creds,
+    )
+    if core_note:
+        click.echo(f"[!] {core_note}", err=True)
 
     from frago.agent_driver.driver import runs_on_kernel
 
