@@ -1870,6 +1870,7 @@
       "pickedHeader": "Brought in today",
       "pickedHeaderHint": "From the Timeline — here until the day ends",
       "restHeader": "Everything else",
+      "schedulesHeader": "Scheduled tasks",
       "orphanWorkersHeader": "Workers with no known caller",
       "branched": "branched",
       "branchOfHint": "Open the session this branch came from",
@@ -1939,6 +1940,31 @@
       "idleFor": "client exited · stopped {{age}} ago",
       "clientExited": "client exited",
       "noReply": "No reply from the agent yet"
+    },
+    "children": {
+      "runningBanner": "{{count}} derived task(s) running in the background",
+      "hostAlive": "External process active",
+      "historySummary": "Derived activity · {{count}} finished",
+      "expand": "Show details",
+      "collapse": "Hide details",
+      "sessionsSection": "Derived child sessions",
+      "processesSection": "Running child processes",
+      "openSession": "Open session",
+      "status": {
+        "running": "Running",
+        "delivering": "Delivering",
+        "done": "Completed",
+        "error": "Failed",
+        "idle": "Idle"
+      },
+      "kind": {
+        "dispatch": "Dispatched worker",
+        "branch": "Branch",
+        "handoff": "Handoff",
+        "agent_cli": "Agent CLI",
+        "subshell": "Subshell",
+        "command": "Command"
+      }
     },
     "stream": {
       "lens": {

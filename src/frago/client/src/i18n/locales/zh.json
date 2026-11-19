@@ -1870,6 +1870,7 @@
       "pickedHeader": "今天捡回",
       "pickedHeaderHint": "从时间轴捡回来，今天余下的时间留在这里",
       "restHeader": "其余",
+      "schedulesHeader": "定时任务",
       "orphanWorkersHeader": "不知道谁派的 worker",
       "branched": "branched",
       "branchOfHint": "打开这条分支出自的会话",
@@ -1939,6 +1940,31 @@
       "idleFor": "客户端已退出 · {{age}}前停下",
       "clientExited": "客户端已退出",
       "noReply": "agent 还没有回复"
+    },
+    "children": {
+      "runningBanner": "后台仍有 {{count}} 个派生任务正在运行",
+      "hostAlive": "外部进程运行中",
+      "historySummary": "派生记录 · {{count}} 项已结束",
+      "expand": "展开明细",
+      "collapse": "收起明细",
+      "sessionsSection": "派生子会话",
+      "processesSection": "运行中子进程",
+      "openSession": "打开会话",
+      "status": {
+        "running": "运行中",
+        "delivering": "待回传",
+        "done": "已完成",
+        "error": "失败",
+        "idle": "空闲"
+      },
+      "kind": {
+        "dispatch": "派发 worker",
+        "branch": "分支会话",
+        "handoff": "交接会话",
+        "agent_cli": "Agent CLI",
+        "subshell": "子 Shell",
+        "command": "后台命令"
+      }
     },
     "stream": {
       "lens": {

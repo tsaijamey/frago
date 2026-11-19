@@ -2188,28 +2188,48 @@ describe('SessionRail 左栏', () => {
       status: 'done',
     });
     const rows = [one, pairSession, cronSession, quietSession];
-    render(
+    const { rerender } = render(
       <TestRail
         state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
         selectedId={null}
         onSelect={NOOP}
       />
     );
+    // schedule 来源会话收进独立可折叠「定时任务」分组
+    const schedulesHeader = screen.getByTestId('schedules-header');
+    expect(schedulesHeader.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Schedule daily sync')).toBeNull();
+
+    // 选中定时任务会话重新挂载时自动展开该分组（兼容 jsdom 中未 mock Virtuoso 的初始窗口渲染）
+    rerender(
+      <TestRail
+        key="cron-expanded"
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId="cron-1"
+        onSelect={NOOP}
+      />
+    );
+
     const items = screen.getAllByTestId('session-item');
-    expect(items[0].querySelector('[data-testid=session-preview]')).toBeNull();
+    const oneItem = items.find((el) => el.textContent?.includes(one.title))!;
+    const pairItem = items.find((el) => el.textContent?.includes('Paired session · Alice'))!;
+    const cronItem = items.find((el) => el.textContent?.includes('Schedule daily sync'))!;
+    const quietItem = items.find((el) => el.textContent?.includes('Normal finished session'))!;
+
+    expect(oneItem.querySelector('[data-testid=session-preview]')).toBeNull();
     // human 默认来源静默，但 Error 属于非常态生命周期正常渲染
-    expect(items[0].querySelector('[data-testid=session-origin]')).toBeNull();
-    expect(items[0].querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Error');
-    expect(items[0].querySelector('[data-testid=session-lifecycle]')?.className).toContain('text-accent-error');
+    expect(oneItem.querySelector('[data-testid=session-origin]')).toBeNull();
+    expect(oneItem.querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Error');
+    expect(oneItem.querySelector('[data-testid=session-lifecycle]')?.className).toContain('text-accent-error');
     // Pair + Running 双显
-    expect(items[1].querySelector('[data-testid=session-origin]')?.textContent).toBe('Pair');
-    expect(items[1].querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Running');
+    expect(pairItem.querySelector('[data-testid=session-origin]')?.textContent).toBe('Pair');
+    expect(pairItem.querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Running');
     // Cron 非常态来源渲染，但 Completed 静默
-    expect(items[2].querySelector('[data-testid=session-origin]')?.textContent).toBe('Cron');
-    expect(items[2].querySelector('[data-testid=session-lifecycle]')).toBeNull();
+    expect(cronItem.querySelector('[data-testid=session-origin]')?.textContent).toBe('Cron');
+    expect(cronItem.querySelector('[data-testid=session-lifecycle]')).toBeNull();
     // Normal Direct + Completed 整行 .si-badges 容器不渲染
-    expect(items[3].querySelector('[data-testid=session-badges]')).toBeNull();
-    expect(items[0].textContent).not.toContain('verdict.jsonl');
+    expect(quietItem.querySelector('[data-testid=session-badges]')).toBeNull();
+    expect(oneItem.textContent).not.toContain('verdict.jsonl');
 
     expect(
       sessionOriginOf(session({ session_id: 'hook-1', origin: 'hook' as WorkbenchSession['origin'], title: 'pre-commit hook' }))

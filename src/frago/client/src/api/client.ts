@@ -2029,4 +2029,20 @@ export async function getSessionTerminal(
   );
 }
 
+export type {
+  SessionChildProcess,
+  SessionChildrenResponse,
+  SessionChildrenSummary,
+  SessionChildSession,
+  SessionLaunchedBy,
+} from '@/types/api';
+import type { SessionChildrenResponse } from '@/types/api';
+
+/** 查询该会话的启动来源、派生子会话与运行中子进程。 */
+export async function getSessionChildren(sessionId: string): Promise<SessionChildrenResponse> {
+  return fetchApi<SessionChildrenResponse>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/children`
+  );
+}
+
 

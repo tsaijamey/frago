@@ -59,7 +59,9 @@ import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { useSessionObserver } from '@/hooks/useSessionObserver';
+import { useSessionChildren } from '@/hooks/useSessionChildren';
 import { useSessionQueue } from '@/hooks/useSessionQueue';
+import SessionChildrenBar from './SessionChildrenBar';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
@@ -363,6 +365,7 @@ export default function SessionWorkbenchPage() {
    */
   const marks = useSessionMarks(selectedId);
   const observer = useSessionObserver(selectedId);
+  const sessionChildren = useSessionChildren(selectedId, { live: selectedAlive });
   const marksRef = useRef<WorkbenchMark[]>(marks.marks);
   marksRef.current = marks.marks;
 
@@ -1309,6 +1312,7 @@ export default function SessionWorkbenchPage() {
               onStopped={() => {
                 forYou.refresh();
                 void sessions.reload();
+                void sessionChildren.reload();
               }}
               onDeleted={() => {
                 setWorkbenchSessionId(null);
@@ -1318,6 +1322,13 @@ export default function SessionWorkbenchPage() {
             />
           ) : null}
         </header>
+
+        {!showLaunch && !creatingNew && selectedId ? (
+          <SessionChildrenBar
+            data={sessionChildren.data}
+            onSelectSession={openSession}
+          />
+        ) : null}
 
         <div className="min-h-0 flex-1">
           {showLaunch && launch ? (
@@ -1393,11 +1404,13 @@ export default function SessionWorkbenchPage() {
                     if (!alive && selected?.in_tmux) {
                       forYou.refresh();
                       void sessions.reload();
+                      void sessionChildren.reload();
                     }
                   }}
                   onStopped={() => {
                     forYou.refresh();
                     void sessions.reload();
+                    void sessionChildren.reload();
                   }}
                   onSwitchToTalk={switchToTalk}
                   onFocusComposer={() => {

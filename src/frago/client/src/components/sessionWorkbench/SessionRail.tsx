@@ -77,9 +77,14 @@ import {
   activityTs,
   expandSessionGroupIds,
   getSessionGroupIds,
+  startOfToday,
   type WorkbenchSession,
   type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
+
+function isScheduledSession(session: WorkbenchSession): boolean {
+  return Boolean(session.local_ops) || (session.origin as string) === 'schedule';
+}
 
 /** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
 const CHIP_ON = 'bg-bg-active text-text-primary font-medium';
@@ -145,6 +150,7 @@ type RailRow =
   | { kind: 'pinned-header' }
   | { kind: 'picked-header'; count: number }
   | { kind: 'rest-header'; count: number }
+  | { kind: 'schedules-header'; count: number }
   | { kind: 'workers-header' }
   | {
       kind: 'session';
@@ -400,6 +406,10 @@ export default function SessionRail({
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   /** 认不出谁派的那堆 worker 那一区是不是展开着。默认折起来。 */
   const [orphansOpen, setOrphansOpen] = useState(false);
+  /** 「定时任务」那一区是不是展开着。默认折起来，不与用户手动会话混在主干里；直达定时任务会话时初始即展开。 */
+  const [schedulesOpen, setSchedulesOpen] = useState(() =>
+    Boolean(selectedId && sessions.some((s) => s.session_id === selectedId && isScheduledSession(s)))
+  );
   /** 「今天捡回」那一区是不是折起来了。默认摊开——捡回来的就是要一眼看见。 */
   const [pickedCollapsed, setPickedCollapsed] = useState(false);
   /** 「其余会话」那一区是不是折起来了。默认摊开。 */
@@ -478,7 +488,15 @@ export default function SessionRail({
     return expandSessionGroupIds(sessions, seeds);
   }, [sessions, today]);
 
-  const { trunkRows, childrenOf, branchChildrenOf, handoffChildrenOf, orphanRows, pickedRows } = useMemo(() => {
+  const {
+    trunkRows,
+    childrenOf,
+    branchChildrenOf,
+    handoffChildrenOf,
+    orphanRows,
+    pickedRows,
+    scheduleRows,
+  } = useMemo(() => {
     // 认父亲要在**整份可见清单 + 置顶区**里认，不是只在下面那一片里认：派活、分出分支或交接的
     // 原会话可能被置顶了（即便原会话自己是昨天的、不在 visible 里），或者在「今天捡回」里，
     // 它的 worker、分支与交接都要跟着它挂在同一棵树下，绝不能脱离原会话掉进 Everything else。
@@ -505,6 +523,35 @@ export default function SessionRail({
     if (pinnedSeedIds.size > 0) {
       for (const s of sessions) {
         if (!byId.has(s.session_id) && isUnderPinned(s)) {
+          byId.set(s.session_id, s);
+        }
+      }
+    }
+    // 定时任务 / 本机管理会话（local_ops 或 origin === 'schedule'）默认被 withinToday 从日常主干筛除；
+    // 这里把过去 24 小时或正在跑的定时任务会话集中收入「定时任务」独立分组，既不混入用户手动会话，又可随时展开查看。
+    const todayFloor = startOfToday();
+    const matchesRailFilter = (s: WorkbenchSession): boolean => {
+      if (railFilter === 'all') return true;
+      const k = lifeOf(s).key;
+      if (railFilter === 'decision') return k === 'waiting';
+      if (railFilter === 'backlog') return k === 'callback';
+      return k === 'running';
+    };
+    const isRecentOrRunning = (s: WorkbenchSession): boolean =>
+      s.status === 'running' || (s.last_reply_at ?? s.created_at) >= todayFloor;
+
+    for (const s of sessions) {
+      if (byId.has(s.session_id) || pins.isPinned(s.session_id)) continue;
+      if (!isScheduledSession(s)) continue;
+      if (!isRecentOrRunning(s) || !matchesRailFilter(s)) continue;
+      byId.set(s.session_id, s);
+    }
+    // 若定时任务会话派出了子 worker / 分支，一并收入树下避免孤立。
+    if (railFilter === 'all') {
+      for (const s of sessions) {
+        if (byId.has(s.session_id) || !s.parent_session_id) continue;
+        const p = byId.get(s.parent_session_id);
+        if (p && isScheduledSession(p) && isRecentOrRunning(s)) {
           byId.set(s.session_id, s);
         }
       }
@@ -542,6 +589,7 @@ export default function SessionRail({
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
     const picked: WorkbenchSession[] = [];
+    const schedules: WorkbenchSession[] = [];
     const placedRoots = new Set<string>();
 
     /**
@@ -589,6 +637,8 @@ export default function SessionRail({
       placedRoots.add(root.session_id);
       if (pickedGroupIds.has(root.session_id)) {
         picked.push(root);
+      } else if (isScheduledSession(root)) {
+        schedules.push(root);
       } else {
         trunk.push(root);
       }
@@ -615,6 +665,9 @@ export default function SessionRail({
         } else if (pickedGroupIds.has(session.session_id)) {
           placedRoots.add(session.session_id);
           picked.push(session);
+        } else if (isScheduledSession(session)) {
+          placedRoots.add(session.session_id);
+          schedules.push(session);
         } else {
           placedRoots.add(session.session_id);
           trunk.push(session);
@@ -635,6 +688,9 @@ export default function SessionRail({
         } else if (pickedGroupIds.has(session.session_id)) {
           placedRoots.add(session.session_id);
           picked.push(session);
+        } else if (isScheduledSession(session)) {
+          placedRoots.add(session.session_id);
+          schedules.push(session);
         } else {
           placedRoots.add(session.session_id);
           trunk.push(session);
@@ -662,8 +718,12 @@ export default function SessionRail({
         continue;
       }
 
-      if (session.origin === 'worker') orphans.push(session);
-      else {
+      if (isScheduledSession(session)) {
+        placedRoots.add(session.session_id);
+        schedules.push(session);
+      } else if (session.origin === 'worker') {
+        orphans.push(session);
+      } else {
         placedRoots.add(session.session_id);
         trunk.push(session);
       }
@@ -690,8 +750,9 @@ export default function SessionRail({
       handoffChildrenOf: handoffs,
       orphanRows: orphans,
       pickedRows: picked,
+      scheduleRows: schedules,
     };
-  }, [sessions, pinnedRows, filteredVisible, pins, pickedGroupIds, railFilter, selectedId]);
+  }, [sessions, pinnedRows, filteredVisible, pins, pickedGroupIds, railFilter, selectedId, lifeOf]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -735,10 +796,30 @@ export default function SessionRail({
     setShown(PAGE_SIZE);
   }, [railFilter]);
 
-  // 路由直达或搜索选中了折叠在父会话下的 worker、末尾孤立 worker 或超出首屏分页的会话时，
+  // 路由直达或搜索选中了折叠在父会话下的 worker、定时任务会话、末尾孤立 worker 或超出首屏分页的会话时，
   // 自动展开对应分组或扩充分页，让当前选中的卡片在左栏可见。
   useEffect(() => {
     if (!selectedId) return;
+    const isUnderSchedule = (sid: string): boolean => {
+      if (scheduleRows.some((s) => s.session_id === sid)) return true;
+      return scheduleRows.some((root) => {
+        const queue = [root.session_id];
+        const seen = new Set<string>();
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          if (seen.has(cur)) continue;
+          seen.add(cur);
+          if (cur === sid) return true;
+          for (const k of childrenOf.get(cur) ?? []) queue.push(k.session_id);
+          for (const b of branchChildrenOf.get(cur) ?? []) queue.push(b.session_id);
+          for (const h of handoffChildrenOf.get(cur) ?? []) queue.push(h.session_id);
+        }
+        return false;
+      });
+    };
+    if (isUnderSchedule(selectedId)) {
+      setSchedulesOpen(true);
+    }
     for (const [parentId, kids] of childrenOf.entries()) {
       if (kids.some((k) => k.session_id === selectedId)) {
         setExpandedWorkers((prev) => {
@@ -753,7 +834,7 @@ export default function SessionRail({
     if (orphanRows.some((s) => s.session_id === selectedId)) {
       setOrphansOpen(true);
     }
-  }, [selectedId, childrenOf, orphanRows]);
+  }, [selectedId, childrenOf, branchChildrenOf, handoffChildrenOf, orphanRows, scheduleRows]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -853,6 +934,12 @@ export default function SessionRail({
       out.push({ kind: 'rest-header', count: restPlaced.length });
     }
     if (!restCollapsed) out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
+    if (scheduleRows.length) {
+      out.push({ kind: 'schedules-header', count: scheduleRows.length });
+      if (schedulesOpen) {
+        out.push(...scheduleRows.flatMap((s) => trunkWithKids(s)));
+      }
+    }
     if (orphanRows.length) {
       out.push({ kind: 'workers-header' });
       out.push(
@@ -865,10 +952,12 @@ export default function SessionRail({
     pins.collapsed,
     pickedCollapsed,
     restCollapsed,
+    schedulesOpen,
     pinnedPlaced,
     pickedRows,
     pagedRest,
     restPlaced.length,
+    scheduleRows,
     childrenOf,
     branchChildrenOf,
     handoffChildrenOf,
@@ -1504,6 +1593,28 @@ export default function SessionRail({
                     </span>
                   </button>,
                   'rest-header'
+                );
+              }
+              if (row.kind === 'schedules-header') {
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => setSchedulesOpen((v) => !v)}
+                    aria-expanded={schedulesOpen}
+                    data-testid="schedules-header"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
+                  >
+                    {schedulesOpen ? (
+                      <ChevronDown size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronRight size={12} className="shrink-0" />
+                    )}
+                    <span>{t('workbench.rail.schedulesHeader')}</span>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {row.count}
+                    </span>
+                  </button>,
+                  'schedules-header'
                 );
               }
               if (row.kind === 'workers-header') {

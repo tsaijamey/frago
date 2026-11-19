@@ -1490,3 +1490,76 @@ export interface SessionTerminalSnapshot {
     | null;
 }
 
+/** 当前会话自身的启动来源（如果它是由父会话派发/分支，或由定时任务触发）。 */
+export interface SessionLaunchedBy {
+  session_id: string | null;
+  title: string | null;
+  family: string | null;
+  relation_kind: 'dispatch' | 'branch' | 'handoff' | string | null;
+  origin: string;
+  source: 'session_origin' | 'async_dispatch' | 'local_ops' | string;
+  label: string;
+}
+
+/** 派生子会话状态条目的汇总。 */
+export interface SessionChildSession {
+  session_id: string;
+  title: string;
+  family: string;
+  relation_kind: 'dispatch' | 'branch' | 'handoff' | string;
+  origin: string;
+  status: 'running' | 'delivering' | 'done' | 'error' | 'idle';
+  is_running: boolean;
+  alive: boolean;
+  in_tmux: boolean;
+  tmux_name: string | null;
+  launched_by_session_id: string;
+  launched_by_title: string;
+  launched_by_label: string;
+  source: 'session_origin' | 'async_dispatch' | 'both' | string;
+  job_id: string | null;
+  delivery_state: string | null;
+  employee_id: string | null;
+  prompt_head: string;
+  started_at: number | null;
+  last_active_at: number | null;
+}
+
+/** 在本机 tmux 窗格或 claude --resume 进程树下探测到的活跃子进程。 */
+export interface SessionChildProcess {
+  pid: number;
+  ppid: number;
+  comm: string;
+  command: string;
+  elapsed: string;
+  state: string;
+  is_running: boolean;
+  kind: 'agent_cli' | 'subshell' | 'command' | string;
+  source: 'tmux_pane' | 'process_tree' | 'coreagent_runner' | string;
+  tmux_name: string | null;
+  host_session_id: string;
+  launched_by_pid: number;
+  launched_by_comm: string;
+  launched_by_session_id: string;
+  launched_by_label: string;
+  linked_session_id: string | null;
+}
+
+export interface SessionChildrenSummary {
+  total_children: number;
+  running_children: number;
+  delivering_children: number;
+  total_processes: number;
+  running_processes: number;
+  has_running: boolean;
+  host_alive: boolean;
+}
+
+export interface SessionChildrenResponse {
+  session_id: string;
+  launched_by: SessionLaunchedBy | null;
+  summary: SessionChildrenSummary;
+  child_sessions: SessionChildSession[];
+  child_processes: SessionChildProcess[];
+}
+
