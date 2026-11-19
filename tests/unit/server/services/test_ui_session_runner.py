@@ -386,3 +386,40 @@ def test_绑定表里查不到时退回手把原值(monkeypatch):
     claimed = SimpleNamespace(driver=SimpleNamespace(agent_type="codex"), session_id="webui-z")
     assert usr._turn_finished(claimed) is True
     assert seen == ["webui-z"]
+
+
+def test_send_and_submit_when_idle_propagate_tmux_send_error(monkeypatch):
+    """回归：driver 确认未落地抛出 TmuxSendError 时，UiSessionRunner 显式向上传递（且 submit_when_idle 清空输入框残留）。"""
+    import threading
+
+    import pytest
+
+    from frago.agent_driver.tmux_session import TmuxSendError
+
+    class _SendErrorPool(FakePool):
+        def run(self, prompt, **kwargs):
+            super().run(prompt, **kwargs)
+            raise TmuxSendError("codex-1", "codex 消息投喂未落地：已尝试 5 次回车", attempts=5)
+
+    runner = UiSessionRunner(pool=_SendErrorPool(), cwd="/tmp")
+    with pytest.raises(TmuxSendError, match="未落地"):
+        runner.send("codex-1", "喂一句", agent_type="codex", timeout_s=180.0)
+
+    cleared: list[bool] = []
+    driver = SimpleNamespace(
+        agent_type="codex",
+        submit=lambda _s, _t: (_ for _ in ()).throw(
+            TmuxSendError("codex-1", "codex 消息投喂未落地", attempts=5)
+        ),
+        clear_input=lambda _s: cleared.append(True) or True,
+    )
+    session = SimpleNamespace(
+        status="idle", driver=driver, _submit_lock=threading.Lock(), last_active_at=None
+    )
+    monkeypatch.setattr(
+        "frago.server.services.ui_session_runner._turn_finished", lambda _s: True
+    )
+    idle_runner = UiSessionRunner(pool=_AcquirePool(session), cwd="/tmp")
+    with pytest.raises(TmuxSendError, match="未落地"):
+        idle_runner.submit_when_idle("codex-1", "补发一句", landed=lambda: False)
+    assert cleared == [True], "submit 抛 TmuxSendError 时也必须清掉输入框残留文本"

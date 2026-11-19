@@ -578,3 +578,23 @@ class TestSendRoute:
         response = self._send(client, OC_SID)
         assert response.status_code == 500
         assert "tmux 没起来" in response.json()["detail"]
+
+    def test_codex_unlanded_tmux_send_error_surfaces_to_page(
+        self, client, runner, three_families, monkeypatch
+    ):
+        """回归：codex 投喂确认未落地时抛出的 TmuxSendError 必须立即回传页面，不再假装已发送。"""
+        from frago.agent_driver.tmux_session import TmuxSendError
+
+        def unlanded(*_a, **_k):
+            raise TmuxSendError(
+                CODEX_SID,
+                "codex 消息投喂未落地：已尝试 5 次回车，会话记录仍未增长（baseline=128），消息未送达",
+                attempts=5,
+            )
+
+        monkeypatch.setattr(runner, "send", unlanded)
+        response = self._send(client, CODEX_SID)
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "没发出去" in detail
+        assert "codex 消息投喂未落地" in detail

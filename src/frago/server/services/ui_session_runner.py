@@ -26,6 +26,7 @@ Phase 2 的空闲回收（idle eviction）落在 ``evict_idle`` + 模块级 ``_i
 from __future__ import annotations
 
 import contextlib
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,10 +35,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from frago.agent_driver.pool import WarmSessionPool
+from frago.agent_driver.tmux_session import TmuxSendError
 from frago.session import agy_store  # noqa: F401 - 外部单测打桩兼容
 
 if TYPE_CHECKING:
     from frago.agent_driver.tmux_session import TmuxAgentSession
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -104,15 +108,24 @@ class UiSessionRunner:
         mint 的一个把手，真编号要等会话起来后认领。
         """
         was_warm = self._pool.has(session_id)
-        result = self._pool.run(
-            text,
-            agent_type=agent_type or self._agent_type,
-            session_id=session_id,
-            cwd=cwd or self._cwd,
-            native_session_id=native_session_id,
-            timeout_s=timeout_s,
-            origin="human",
-        )
+        try:
+            result = self._pool.run(
+                text,
+                agent_type=agent_type or self._agent_type,
+                session_id=session_id,
+                cwd=cwd or self._cwd,
+                native_session_id=native_session_id,
+                timeout_s=timeout_s,
+                origin="human",
+            )
+        except TmuxSendError as exc:
+            logger.warning(
+                "ui session send aborted: submit unconfirmed (session=%s, agent=%s): %s",
+                session_id,
+                agent_type or self._agent_type,
+                exc,
+            )
+            raise
         # 对齐本体 HarnessTurnProcess (drive_agent_turn) 后置条件契约：
         # 终态为 error，或同步等待（timeout_s > 0）下以 timeout 收场的回合，
         # 绝不可伪造为成功的 SessionActivation 返回 200 OK，否则前端会清空草稿并静默吞掉整轮消息。
@@ -167,8 +180,21 @@ class UiSessionRunner:
         )
         if getattr(session, "status", None) == "busy" or not _turn_finished(session):
             return "not_now"
-        with session._submit_lock:
-            session.driver.submit(session, text)
+        try:
+            with session._submit_lock:
+                session.driver.submit(session, text)
+        except TmuxSendError as exc:
+            logger.warning(
+                "ui session submit_when_idle aborted: submit unconfirmed (session=%s, agent=%s): %s",
+                session_id,
+                agent_type or self._agent_type,
+                exc,
+            )
+            clear = session.driver.clear_input
+            if clear is not None:
+                with session._submit_lock, contextlib.suppress(Exception):
+                    clear(session)
+            raise
         session.last_active_at = datetime.now(UTC)
 
         deadline = clock() + confirm_s

@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from frago.agent_driver.tmux_session import TmuxSendError
 from frago.employee import (
     EmployeeOntologyService,
     default_employee_color,
@@ -148,13 +149,14 @@ def _dispatch_states_by_caller(
             tid = (job.target_session_id or "").strip()
             completed_ms = _iso_to_epoch_ms(getattr(job, "completed_at", None))
             updated_ms = _iso_to_epoch_ms(getattr(job, "updated_at", None))
-            if st == "delivering" and completed_ms is None:
-                if (
-                    updated_ms is not None
-                    and (cur_ms - updated_ms) > _DISPATCH_STALE_DELIVERING_MS
-                    and tid not in live_targets
-                ):
-                    continue
+            if (
+                st == "delivering"
+                and completed_ms is None
+                and updated_ms is not None
+                and (cur_ms - updated_ms) > _DISPATCH_STALE_DELIVERING_MS
+                and tid not in live_targets
+            ):
+                continue
 
             job_ts_ms = completed_ms or updated_ms
             last_reply = reply_map.get(cid)
@@ -1862,6 +1864,10 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         # 内核不在、或者 CoreAgent 还没配连接：这一轮在会话记录里一行都没留下，
         # 页面上除了这句话没有别的线索，所以理由必须原样带出去。
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except TmuxSendError as e:
+        # 驱动层确认投喂未落地（重试耗尽仍未写入会话记录）：立即向页面显式报错，
+        # 绝不静默假装已发送或落入完成轮询空等超时。
+        raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
     except Exception as e:  # noqa: BLE001 — 驱动失败照实交代，NEVER 吞成"发出去了"
         raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
 
