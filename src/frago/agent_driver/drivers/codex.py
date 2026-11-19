@@ -37,6 +37,7 @@ opencode 好办：codex 的会话文件在 TUI 起来那一刻就建好，不必
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -54,7 +55,7 @@ from frago.agent_driver.driver import (
     PaneMatcher,
     register_driver,
 )
-from frago.agent_driver.tmux_session import TmuxAgentSession
+from frago.agent_driver.tmux_session import TmuxAgentSession, TmuxSendError, _pane_tail
 from frago.agent_driver.transcript_source import JsonlTranscriptSource
 from frago.compat import find_agent_cli
 from frago.session import codex_store
@@ -780,8 +781,13 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     假象，补发的空 Enter 会落进下一轮，把下一次 send 变成什么都不返回——opencode
     与 claude 两侧都为此付过代价，这里不再重蹈。
 
-    确认不了也不抛不卡：留一条 debug 日志，交给完成轮询的超时兜底。那条日志是事后
-    排查"整段提示词滞留输入框"的唯一线索，NEVER 静默走掉。
+    严格区分两类未确认情形：
+    - **已有基线（``baseline is not None``）且耗尽 ``1 + _ENTER_RETRIES`` 次回车后仍未
+      变长**：确认投喂未落地，立即抛 :class:`TmuxSendError`，不再静默落入完成轮询并
+      伪装已发送。
+    - **冷启动尚未认领 rollout（初始 ``baseline is None``）**：轮询中才认到 rollout
+      并赋值 ``baseline`` 后 ``break`` 退出（此时 ``landed`` 为 False），或全程尚未
+      认领到 rollout，属于正常冷启动路径，绝不误杀，照常进入完成轮询。
 
     ## 投喂前先清框，且不再"读一次屏就补打"
 
@@ -839,6 +845,7 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
             session.session_id,
         )
     baseline = _rollout_size(session)
+    had_baseline = baseline is not None
     session.send_text(prompt)
     # 文本进框后先停一口气再按 Enter。codex 的输入框带粘贴判定，紧跟粘贴突发到达的
     # Enter 会被当成粘贴内容里的换行而非提交，长消息会整段滞留在框里——claude 侧为
@@ -875,10 +882,28 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
             session.session_id,
         )
     if not landed:
+        attempts = 1 + _ENTER_RETRIES
+        if had_baseline:
+            tail = ""
+            with contextlib.suppress(Exception):
+                tail = _pane_tail(session.capture_pane())
+            logger.warning(
+                "codex submit unconfirmed after %d enters with baseline=%s (session=%s)",
+                attempts,
+                baseline,
+                session.session_id,
+            )
+            raise TmuxSendError(
+                session.session_id,
+                f"codex 消息投喂未落地：已尝试 {attempts} 次回车，会话记录仍未增长（baseline={baseline}），消息未送达",
+                tmux_name=getattr(session, "tmux_name", ""),
+                attempts=attempts,
+                tail=tail,
+            )
         logger.debug(
-            "codex submit unconfirmed after %d enters; falling through to "
-            "completion polling (session=%s)",
-            1 + _ENTER_RETRIES,
+            "codex cold-start submit unconfirmed without initial baseline after %d enters; "
+            "falling through to completion polling (session=%s)",
+            attempts,
             session.session_id,
         )
 

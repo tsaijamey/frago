@@ -104,6 +104,30 @@ class TmuxTextEncodingError(RuntimeError):
     """
 
 
+class TmuxSendError(RuntimeError):
+    """投喂消息给 agent TUI 确认未落地（重试耗尽仍未进入会话记录）。
+
+    用于阻止驱动在确认提交失败时静默落入完成轮询并伪装已发送，让调用方与页面
+    立即收到明确错误，而不是把未送达的消息静默耗尽超时。
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        reason: str,
+        *,
+        tmux_name: str = "",
+        attempts: int = 0,
+        tail: str = "",
+    ) -> None:
+        self.session_id = session_id
+        self.reason = reason
+        self.tmux_name = tmux_name
+        self.attempts = attempts
+        self.tail = tail
+        super().__init__(reason)
+
+
 class _SessionVanished(RuntimeError):
     """抓屏失败且复核确认 tmux 会话已不存在。
 
@@ -957,6 +981,11 @@ class TmuxAgentSession:
                 status="error",
                 duration_ms=int((self._clock() - start) * 1000),
             )
+        except Exception:
+            if self.status == "busy":
+                self.status = "idle"
+                self.last_active_at = datetime.now(UTC)
+            raise
 
     def _send_turn(self, prompt: str, *, start: float, timeout_s: float | None) -> TurnResult:
         pre_snapshot = self._capture_resilient()

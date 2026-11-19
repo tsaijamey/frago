@@ -16,6 +16,7 @@ import tomllib
 import pytest
 
 from frago.agent_driver.drivers import codex as codex_driver
+from frago.agent_driver.tmux_session import TmuxAgentSession, TmuxSendError
 
 BANNER_PANE = """
 ╭──────────────────────────────────────────────────────╮
@@ -420,7 +421,8 @@ def test_submit_settles_before_the_first_enter(monkeypatch):
     （2026-10-14 补上）。
     """
     monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
-    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: 0)
+    sizes = iter([0, 1])
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: next(sizes, 1))
 
     session = _FakeTimeline(BANNER_PANE + "\n› 干活\n")
     codex_driver._submit(session, "干活")
@@ -432,20 +434,100 @@ def test_submit_settles_before_the_first_enter(monkeypatch):
 
 
 def test_submit_keeps_retrying_enter_up_to_the_cap(monkeypatch):
-    """回归：一直核对不落地时，回车按到上限为止。
+    """回归：一直核对不落地时，回车按到上限为止，随后立即显式抛 TmuxSendError。
 
-    上限买到的是时间窗——够罩住"界面还在起"那一段。它不是"更对"，只是"更久"：
-    2026-10-14 那次"回车三次都没生效"为什么没生效仍未查实。
+    上限买到的是时间窗——够罩住"界面还在起"那一段。耗尽上限仍未见 rollout 变长时，
+    绝不能静默落入完成轮询并假装已发送，必须立即抛错。
     """
     monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
     monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: 0)
 
     session = _FakePane(BANNER_PANE + "\n› 干活\n")
-    codex_driver._submit(session, "干活")
+    with pytest.raises(TmuxSendError) as exc_info:
+        codex_driver._submit(session, "干活")
 
     enters = sum(1 for key in session.keys if key == ("Enter",))
     assert enters == 1 + codex_driver._ENTER_RETRIES
     assert enters == 5, "上限 4 次重试 = 共 5 次回车（2026-10-14 定的）"
+    assert exc_info.value.attempts == 5
+    assert exc_info.value.session_id == "sid"
+
+
+def test_submit_raises_and_skips_completion_polling_when_baseline_never_grows(monkeypatch):
+    """回归（20261014-codex-feed-can-lose-a-message）：有 baseline 且确认未落地立即报错，不落入完成轮询。"""
+    from frago.agent_driver.driver import load_driver
+
+    monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: 128)
+    monkeypatch.setattr(codex_driver, "_clear_input", lambda s: True)
+
+    sent: list[list[str]] = []
+
+    def fake_tmux(argv: list[str]) -> str:
+        sent.append(argv)
+        if argv[:2] == ["tmux", "capture-pane"]:
+            return BANNER_PANE + "\n› 干活\n"
+        return ""
+
+    session = TmuxAgentSession(
+        "codex-unlanded",
+        load_driver("codex"),
+        cwd="/tmp",
+        native_session_id=True,
+        runner=fake_tmux,
+        poll_interval_s=0.0,
+        sleep=lambda _s: None,
+    )
+
+    wait_called = False
+
+    def should_not_poll(*_args, **_kwargs):
+        nonlocal wait_called
+        wait_called = True
+        return None
+
+    monkeypatch.setattr(session, "_wait_for_any", should_not_poll)
+
+    with pytest.raises(TmuxSendError) as exc_info:
+        session.send("干活", timeout_s=30.0)
+
+    assert wait_called is False, "确认投喂未落地后绝不可落入完成轮询"
+    assert session.status == "idle", "投喂抛错收场后会话状态不能卡死在 busy"
+    assert exc_info.value.session_id == "codex-unlanded"
+    assert exc_info.value.attempts == 1 + codex_driver._ENTER_RETRIES
+    assert "未落地" in str(exc_info.value)
+
+
+def test_submit_cold_start_delayed_baseline_claim_does_not_false_alarm(monkeypatch):
+    """回归：冷启动首次投喂初始 baseline is None（延迟认领）绝不误报 TmuxSendError。"""
+    monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
+    monkeypatch.setattr(codex_driver, "_clear_input", lambda s: True)
+
+    # 情形 1：全程未认领到 rollout（始终 None）→ 不抛错，交由完成轮询兜底认领
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: None)
+    s1 = _FakePane(BANNER_PANE + "\n› 冷启动首轮\n")
+    codex_driver._submit(s1, "冷启动首轮")
+    assert len(s1.keys) == 1 + codex_driver._ENTER_RETRIES
+
+    # 情形 2：提交前 baseline is None，直到最后一轮回车轮询才认领到 rollout（此时 landed 仍为 False）→ 绝不误杀
+    total_polls = (1 + codex_driver._ENTER_RETRIES) * codex_driver._SUBMIT_VERIFY_POLLS
+    delayed_last = iter([None] * total_polls + [256])
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: next(delayed_last, 256))
+    s2 = _FakePane(BANNER_PANE + "\n› 冷启动首轮\n")
+    codex_driver._submit(s2, "冷启动首轮")
+
+    # 情形 3：提交前 baseline is None，首轮回车轮询认到基线 256 后 break，次轮回车确认增长到 400 → 正常落地退出
+    delayed_then_grow = iter(
+        [
+            None,  # 提交前 baseline
+            256,  # 第 1 次 Enter 轮询认到 rollout，赋值 baseline 并 break
+            400,  # 第 2 次 Enter 轮询看到变长，确认落地
+        ]
+    )
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: next(delayed_then_grow, 400))
+    s3 = _FakePane(BANNER_PANE + "\n› 冷启动首轮\n")
+    codex_driver._submit(s3, "冷启动首轮")
+    assert s3.keys == [("Enter",), ("Enter",)]
 
 
 def test_clear_input_confirms_an_empty_box_with_a_probe():

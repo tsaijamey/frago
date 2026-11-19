@@ -5,6 +5,9 @@ from frago.agent_driver.pool import WarmSessionPool
 from frago.agent_driver.tmux_session import (
     SessionLauncher,
     TmuxAgentSession,
+    TmuxSendError,
+    TmuxStartupError,
+    TmuxTextEncodingError,
     TurnResult,
 )
 from frago.agent_driver.transcript import write_turn
@@ -13,6 +16,9 @@ __all__ = [
     "AgentDriver",
     "SessionLauncher",
     "TmuxAgentSession",
+    "TmuxSendError",
+    "TmuxStartupError",
+    "TmuxTextEncodingError",
     "TurnResult",
     "WarmSessionPool",
     "load_driver",
