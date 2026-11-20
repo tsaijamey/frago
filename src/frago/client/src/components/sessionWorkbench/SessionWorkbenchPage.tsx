@@ -61,7 +61,6 @@ import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { useSessionObserver } from '@/hooks/useSessionObserver';
 import { useSessionChildren } from '@/hooks/useSessionChildren';
 import { useSessionQueue } from '@/hooks/useSessionQueue';
-import SessionChildrenBar from './SessionChildrenBar';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
@@ -1323,13 +1322,6 @@ export default function SessionWorkbenchPage() {
           ) : null}
         </header>
 
-        {!showLaunch && !creatingNew && selectedId ? (
-          <SessionChildrenBar
-            data={sessionChildren.data}
-            onSelectSession={openSession}
-          />
-        ) : null}
-
         <div className="min-h-0 flex-1">
           {showLaunch && launch ? (
             <SessionLaunchPanel
@@ -1431,6 +1423,8 @@ export default function SessionWorkbenchPage() {
               }
               onSendFileEdit={handleSendFileEdit}
               observer={observer}
+              childrenData={sessionChildren.data}
+              childrenLoading={sessionChildren.loading}
             />
             </DecisionCardContext.Provider>
           )}

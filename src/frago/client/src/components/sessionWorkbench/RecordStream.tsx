@@ -39,6 +39,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import {
   ArrowDown,
+  ArrowUpRight,
   CheckCheck,
   ChevronDown,
   ChevronRight,
@@ -79,7 +80,7 @@ import FileViewer, {
   type PackedAnnotationsPayload,
 } from './FileViewer';
 import { revealPath } from '@/api';
-import type { SessionFileRow } from '@/types/api';
+import type { SessionChildrenResponse, SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import EmptyState from '@/components/ui/EmptyState';
 import type { LocateState } from './StackPanel';
@@ -114,6 +115,8 @@ import {
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
 import { cleanGoalText, extractGoalSummary, isLongLedgerText } from '@/utils/goalAnchor';
 import { isCompletedWatcherTask, partitionTasksForOverview } from '@/utils/tasksOverview';
+import { computeProgressBadge, matchActorToChildSession } from '@/utils/sessionChildrenTree';
+import { ProgressDelegationSection, ProgressOriginStrip } from './ProgressChildrenSection';
 import { parseTextQuoteBlocks } from '@/utils/textQuoteBlocks';
 import { parseWebBridgeContext } from '@/utils/webBridgeContext';
 import { scrollBehavior } from '@/utils/reducedMotion';
@@ -1307,6 +1310,10 @@ export interface RecordStreamProps {
   onSendFileEdit?: (payload: FileEditSendPayload) => void | Promise<void>;
   /** 旁路 AI 定期观察这场的解读结果（供 Watcher 档展示游标增量总结与包裹的 Talk）。 */
   observer?: SessionObserverView | null;
+  /** 本会话的上游来历、8 层派生子会话树与 OS 后台进程探测结果。 */
+  childrenData?: SessionChildrenResponse | null;
+  /** `/children` 接口首取加载中标记。 */
+  childrenLoading?: boolean;
 }
 
 interface WatcherSlice {
@@ -1584,6 +1591,8 @@ export default function RecordStream({
   onPackPrompt,
   onSendFileEdit,
   observer = null,
+  childrenData = null,
+  childrenLoading = false,
 }: RecordStreamProps) {
   const { t, i18n } = useTranslation();
   const isZh = i18n.language?.startsWith('zh');
@@ -1685,19 +1694,26 @@ export default function RecordStream({
   const groups = useMemo(() => groupSegments(segments), [segments]);
   const lastSegment = segments[segments.length - 1];
 
-  const watcherCount = useMemo(() => {
-    if (!resolved.length) return 0;
-    const state = observer?.state ?? null;
-    const runs = state?.runs ?? [];
-    if (runs.length > 0) return runs.length;
-    const hasFallback = Boolean(
-      cleanGoalText(state?.anchor) ||
-        state?.happened?.length ||
-        state?.tail?.text ||
-        state?.decision
-    );
-    return hasFallback ? 1 : 0;
-  }, [resolved.length, observer?.state]);
+  const scopedChildrenData = useMemo(
+    () =>
+      childrenData && (!sessionId || childrenData.session_id === sessionId)
+        ? childrenData
+        : null,
+    [childrenData, sessionId]
+  );
+
+  const progressBadge = useMemo(
+    () => computeProgressBadge(scopedChildrenData),
+    [scopedChildrenData]
+  );
+
+  const hasAnyChildrenContext = Boolean(
+    scopedChildrenData &&
+      (scopedChildrenData.launched_by ||
+        scopedChildrenData.child_sessions.length > 0 ||
+        scopedChildrenData.child_processes.length > 0 ||
+        scopedChildrenData.summary?.external_host_alive)
+  );
 
   const { watcherSlices, unsummarizedTailRecords, firstHumanGoal } = useMemo<{
     watcherSlices: WatcherSlice[];
@@ -2695,11 +2711,12 @@ export default function RecordStream({
     Boolean(sessionId) &&
     !error &&
     ((loading && !records.length) ||
-      (Boolean(observer?.loading) && !observer?.state && !observer?.error));
+      (Boolean(observer?.loading) && !observer?.state && !observer?.error) ||
+      (Boolean(childrenLoading) && !scopedChildrenData));
 
   return (
     <div className="streamcol flex h-full min-h-0 min-w-0 flex-col">
-      {records.length && !watcherWaitingForInitial ? (
+      {(records.length > 0 || hasAnyChildrenContext) && !watcherWaitingForInitial ? (
         <div
           data-testid="stream-lens"
           className="wb-lens shrink-0 border-b border-border-color px-4 py-2"
@@ -2720,8 +2737,19 @@ export default function RecordStream({
                 watcherOpen && !filesOpen && !terminalOpen ? 'ui-seg-pill--active' : ''
               }`}
             >
-              {t('workbench.stream.watcher')}
-              <span className="ui-seg-count">{watcherCount}</span>
+              <span>{t('workbench.stream.watcher')}</span>
+              {progressBadge.badgeText ? (
+                <span
+                  data-testid="lens-watcher-badge"
+                  className={`wb-lens-badge ${
+                    progressBadge.tone === 'delivering' ? 'is-delivering' : 'is-running'
+                  }`}
+                >
+                  {progressBadge.badgeText}
+                </span>
+              ) : progressBadge.externalOnlyDot ? (
+                <span data-testid="lens-watcher-external-dot" className="wb-lens-live" />
+              ) : null}
             </button>
             {(['talk', 'all'] as const).map((id) => (
               <button
@@ -2916,17 +2944,67 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {!records.length && !loading && !watcherWaitingForInitial && !error ? (
-            <div className="my-auto flex flex-col items-center py-16">
+          {!records.length &&
+          !loading &&
+          !watcherWaitingForInitial &&
+          !error &&
+          !(watcherOpen && (Boolean(observer?.state) || hasAnyChildrenContext)) ? (
+            <div className="my-auto flex flex-col items-center gap-4 py-16">
               <EmptyState
                 Icon={Inbox}
                 title={t('workbench.stream.emptySession')}
                 description={t('workbench.stream.emptySessionHint')}
               />
+              {hasAnyChildrenContext && scopedChildrenData ? (
+                <div
+                  data-testid="empty-stream-children-hint"
+                  className="w-empty-children-card"
+                >
+                  <ProgressOriginStrip
+                    launchedBy={scopedChildrenData.launched_by}
+                    onSelectSession={onSelectSession}
+                  />
+                  <div className="w-empty-children-foot">
+                    <span className="w-empty-children-summary">
+                      {progressBadge.activeCount > 0
+                        ? t('workbench.children.emptyActiveSummary', {
+                            count: progressBadge.activeCount,
+                          })
+                        : scopedChildrenData.summary.external_host_alive
+                          ? t('workbench.children.externalHostTitle')
+                          : t('workbench.children.emptyHistorySummary', {
+                              count:
+                                scopedChildrenData.child_sessions.length +
+                                scopedChildrenData.child_processes.length,
+                            })}
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="empty-stream-open-progress"
+                      onClick={() => {
+                        setWatcherOpen(true);
+                        onFilesOpenChange?.(false);
+                        onTerminalOpenChange?.(false);
+                      }}
+                      className="w-empty-children-btn"
+                    >
+                      <span>{t('workbench.children.emptyViewProgress')}</span>
+                      <ArrowUpRight size={12} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          {watcherOpen && !watcherWaitingForInitial && (records.length > 0 || Boolean(observer?.state)) ? (() => {
+          {watcherOpen &&
+          !watcherWaitingForInitial &&
+          (records.length > 0 || Boolean(observer?.state) || hasAnyChildrenContext) ? (() => {
+            const hasObserverOrRecords = records.length > 0 || Boolean(observer?.state);
+            const isDelegationActive = Boolean(
+              scopedChildrenData?.summary?.has_running ||
+                scopedChildrenData?.summary?.external_host_alive
+            );
             const state = observer?.state ?? null;
             const rawAnchorHasBridge =
               parseWebBridgeContext(state?.anchor ?? '').hasBridgeContext ||
@@ -3024,6 +3102,36 @@ export default function RecordStream({
             const foldRangeSuffix = taskPartition.hiddenIdSummary
               ? ` (${taskPartition.hiddenIdSummary})`
               : '';
+            const renderTaskActor = (actor: string) => {
+              const matched = matchActorToChildSession(
+                actor,
+                scopedChildrenData?.child_sessions ?? []
+              );
+              if (!matched || !onSelectSession) {
+                return actor;
+              }
+              const dotCls =
+                matched.status === 'running'
+                  ? 'd-run'
+                  : matched.status === 'delivering' || matched.status === 'awaiting_input'
+                    ? 'd-warn'
+                    : matched.status === 'error'
+                      ? 'd-err'
+                      : 'd-muted';
+              return (
+                <button
+                  type="button"
+                  data-testid={`task-actor-link-${matched.session_id}`}
+                  onClick={() => onSelectSession(matched.session_id)}
+                  title={matched.title}
+                  className="w-actor-link"
+                >
+                  <span aria-hidden="true" className={`w-dot ${dotCls}`} />
+                  <span className="truncate">{actor}</span>
+                  <ArrowUpRight size={11} strokeWidth={1.5} className="shrink-0" />
+                </button>
+              );
+            };
             const renderTaskRow = (task: ObserverTaskItem, keySuffix = '') => {
               const completed = isCompletedWatcherTask(task);
               const badgeCls = completed ? 'done' : task.status;
@@ -3053,7 +3161,7 @@ export default function RecordStream({
                       {badgeLabel}
                     </span>
                   </td>
-                  <td>{task.actor}</td>
+                  <td>{renderTaskActor(task.actor)}</td>
                   <td>
                     <WatcherInlineText text={task.conclusion} />
                   </td>
@@ -3063,7 +3171,14 @@ export default function RecordStream({
 
             return (
               <div className="wwrap" data-testid="watcher-view">
-                {/* 1. 顶部态势锚点卡 */}
+                {/* L0. 上游来历微条（仅当由其他会话或定时任务启动时展示） */}
+                <ProgressOriginStrip
+                  launchedBy={scopedChildrenData?.launched_by ?? null}
+                  onSelectSession={onSelectSession}
+                />
+
+                {/* L1. 顶部态势锚点卡 */}
+                {hasObserverOrRecords ? (
                 <section className="w-anchor-card" data-testid="watcher-anchor-card">
                   <div className="w-anchor-top">
                     <div className="w-anchor-title">
@@ -3150,9 +3265,18 @@ export default function RecordStream({
                     </div>
                   ) : null}
                 </section>
+                ) : null}
 
-                {/* 1b. 最新发出 / 尚未纳入下批里程碑汇总的实时对话区：置顶在锚点卡下方，保证与「最新在上」读序一致 */}
-                {(() => {
+                {/* L2（活跃置顶）：委派与后台执行区 */}
+                {isDelegationActive ? (
+                  <ProgressDelegationSection
+                    data={scopedChildrenData}
+                    onSelectSession={onSelectSession}
+                  />
+                ) : null}
+
+                {/* L3. 最新发出 / 尚未纳入下批里程碑汇总的实时对话区：置顶在锚点卡下方，保证与「最新在上」读序一致 */}
+                {hasObserverOrRecords ? (() => {
                   const tailSegments = unsummarizedTailRecords.length
                     ? buildTalkSegments(unsummarizedTailRecords)
                     : [];
@@ -3194,9 +3318,10 @@ export default function RecordStream({
                       </div>
                     </section>
                   );
-                })()}
+                })() : null}
 
-                {/* 2. 第一张表：事项总控表 */}
+                {/* L4. 第一张表：事项总控表 */}
+                {hasObserverOrRecords ? (
                 <section className="w-sec" data-testid="watcher-tasks-table">
                   <div className="w-sec-hd">
                     <span className="w-sec-title">事项总控表 · Tasks Overview</span>
@@ -3283,7 +3408,7 @@ export default function RecordStream({
                                   </td>
                                   <td>
                                     <div className="w-tasks-peek-cell">
-                                      {taskPartition.peekTask.actor}
+                                      {renderTaskActor(taskPartition.peekTask.actor)}
                                     </div>
                                   </td>
                                   <td>
@@ -3374,8 +3499,18 @@ export default function RecordStream({
                     </table>
                   </div>
                 </section>
+                ) : null}
 
-                {/* 3. 第二张表：② 阶段里程碑追加记录表 */}
+                {/* L2（纯历史态降位折叠）：委派与后台执行区 */}
+                {!isDelegationActive ? (
+                  <ProgressDelegationSection
+                    data={scopedChildrenData}
+                    onSelectSession={onSelectSession}
+                  />
+                ) : null}
+
+                {/* L5. 第二张表：② 阶段里程碑追加记录表 */}
+                {hasObserverOrRecords ? (
                 <section className="w-sec" data-testid="watcher-milestones-table">
                   <div className="w-sec-hd">
                     <span className="w-sec-title">
@@ -3635,6 +3770,7 @@ export default function RecordStream({
                     </table>
                   </div>
                 </section>
+                ) : null}
               </div>
             );
           })() : watcherOpen ? null : (

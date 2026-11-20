@@ -77,7 +77,9 @@ export function useSessionChildren(
 
   const reload = useCallback(() => load(true), [load]);
 
-  const fastPoll = Boolean(live || data?.summary?.has_running || data?.summary?.host_alive);
+  const fastPoll = Boolean(
+    live || data?.summary?.has_running || data?.summary?.external_host_alive
+  );
   useAutoRefresh(
     async () => {
       if (!currentSidRef.current) return;

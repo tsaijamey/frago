@@ -1501,6 +1501,12 @@ export interface SessionLaunchedBy {
   label: string;
 }
 
+export type SessionChildrenHostMode =
+  | 'none'
+  | 'managed_tmux'
+  | 'managed_coreagent'
+  | 'external_cli';
+
 /** 派生子会话状态条目的汇总。 */
 export interface SessionChildSession {
   session_id: string;
@@ -1508,7 +1514,9 @@ export interface SessionChildSession {
   family: string;
   relation_kind: 'dispatch' | 'branch' | 'handoff' | string;
   origin: string;
-  status: 'running' | 'delivering' | 'done' | 'error' | 'idle';
+  status: 'running' | 'delivering' | 'done' | 'error' | 'idle' | 'awaiting_input';
+  lifecycle_state?: string | null;
+  depth?: number;
   is_running: boolean;
   alive: boolean;
   in_tmux: boolean;
@@ -1553,6 +1561,8 @@ export interface SessionChildrenSummary {
   running_processes: number;
   has_running: boolean;
   host_alive: boolean;
+  host_mode?: SessionChildrenHostMode;
+  external_host_alive?: boolean;
 }
 
 export interface SessionChildrenResponse {

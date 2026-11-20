@@ -117,7 +117,6 @@ export default function SessionLaunchPanel({
               className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}
             >
               {t('workbench.stream.watcher')}
-              <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
             </button>
           </div>
           <span
