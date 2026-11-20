@@ -498,3 +498,248 @@ def test_ensure_cft_default_root_initializes_profile_and_manifest(tmp_path, monk
     assert launcher.exists()
     assert manifest["path"] == str(launcher)
     assert (fake_home / ".frago" / "chrome" / "python_path").exists()
+
+
+# ── Cookie / 登录态防清空保护预检（Cookie Guard Pre-check）──────────────
+
+
+def _make_versioned_cft_zip(rel: str, version: str) -> bytes:
+    key_folder = rel.replace("\\", "/").split("/", 1)[0]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        if key_folder.startswith("chrome-mac"):
+            plist_info = zipfile.ZipInfo(
+                f"{key_folder}/Google Chrome for Testing.app/Contents/Info.plist"
+            )
+            zf.writestr(
+                plist_info,
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<plist version="1.0"><dict>'
+                "<key>CFBundleExecutable</key><string>Google Chrome for Testing</string>"
+                "<key>CFBundleIdentifier</key><string>com.google.chrome.for.testing</string>"
+                "<key>CFBundleShortVersionString</key>"
+                f"<string>{version}</string>"
+                "<key>CFBundlePackageType</key><string>APPL</string>"
+                "</dict></plist>",
+            )
+        bin_info = zipfile.ZipInfo(rel.replace("\\", "/"))
+        bin_info.external_attr = (stat.S_IFREG | 0o755) << 16
+        zf.writestr(
+            bin_info,
+            f"#!/bin/sh\necho 'Google Chrome for Testing {version}'\n",
+        )
+    return buf.getvalue()
+
+
+def _seed_cft_profile_assets(profiles_root: Path, name: str = "extension") -> Path:
+    prof = profiles_root / name
+    (prof / "Default" / "Network").mkdir(parents=True, exist_ok=True)
+    (prof / "Local State").write_bytes(b"mock-local-state-meta-bytes")
+    (prof / "Default" / "Network" / "Cookies").write_bytes(b"SQLite format 3\x00" + b"x" * 128)
+    (prof / "Default" / "Preferences").write_text('{"vertical_tabs":{"enabled":true}}', encoding="utf-8")
+    (prof / "Default" / "Secure Preferences").write_text("{}", encoding="utf-8")
+    return prof
+
+
+def test_cft_fetch_module_has_no_hardcoded_developer_home():
+    src = Path(cf.__file__).read_text(encoding="utf-8")
+    assert "/Users/frago" not in src
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS .app wrapper + codesign")
+def test_codesign_preserves_bundle_identifier_on_real_bin_and_app(tmp_path):
+    import subprocess
+
+    app, binary = _make_fake_cft_app(tmp_path)
+    assert cf.ensure_cft_wrapper(binary, system="Darwin", check_profiles=False) is True
+    real_bin = binary.with_name(f"{binary.name}.bin")
+
+    for target in (app, real_bin):
+        info = subprocess.run(
+            ["codesign", "-dvv", str(target)],
+            capture_output=True, text=True, check=False,
+        )
+        assert info.returncode == 0, info.stderr
+        assert "Identifier=com.google.chrome.for.testing" in info.stderr
+
+    verify_proc = subprocess.run(
+        ["codesign", "--verify", "--deep", "--strict", str(app)],
+        capture_output=True, text=True, check=False,
+    )
+    assert verify_proc.returncode == 0, verify_proc.stderr
+
+
+def test_cookie_guard_blocks_when_profile_locked_by_live_pid(tmp_path, monkeypatch):
+    profiles_root = tmp_path / "profiles" / "cft"
+    prof = _seed_cft_profile_assets(profiles_root, "extension")
+    os.symlink(f"localhost-{os.getpid()}", prof / "SingletonLock")
+
+    root = tmp_path / "chrome-for-testing"
+    _app, binary = _make_fake_cft_app(root)
+
+    monkeypatch.setattr(cf, "fetch_manifest_entry",
+                        lambda k, proxy: ("158.0.8127.36", f"https://example/{k}.zip"))
+    monkeypatch.setattr(cf, "_download",
+                        lambda *a, **k: pytest.fail("占锁拦截时不该开始下载安装包"))
+
+    with pytest.raises(cf.CftFetchError) as exc:
+        cf.ensure_cft(root=root, force=True, proxy=None, profiles_root=profiles_root)
+    assert exc.value.kind == "locked"
+    assert "frago browser stop" in (exc.value.remedy or "")
+    assert not cf._is_cft_wrapper(binary)
+
+
+def test_cookie_guard_treats_dead_pid_singleton_lock_as_stale(tmp_path):
+    profiles_root = tmp_path / "profiles" / "cft"
+    prof = _seed_cft_profile_assets(profiles_root, "extension")
+    os.symlink("localhost-99999999", prof / "SingletonLock")
+
+    reports = cf.inspect_cft_profiles(profiles_root)
+    assert len(reports) == 1
+    assert reports[0].locked is False
+    assert reports[0].has_cookie_assets is True
+
+    res = cf.precheck_cft_cookie_guard(
+        existing_binary=None,
+        new_version="158.0.8127.36",
+        reason="wrapper-resign",
+        profiles_root=profiles_root,
+    )
+    assert res.backup_dir is not None
+    assert res.backup_dir.is_dir()
+
+
+def test_cookie_guard_intercepts_cross_major_upgrade_and_creates_0700_snapshot(tmp_path, monkeypatch):
+    import json
+
+    key = cf.platform_key()
+    if key is None:
+        pytest.skip("本机平台没有 CfT")
+    rel = cf._relative_binary(key)
+    root = tmp_path / "chrome-for-testing"
+    profiles_root = tmp_path / "profiles" / "cft"
+    ext_prof = _seed_cft_profile_assets(profiles_root, "extension")
+    cdp_prof = profiles_root / "9222"
+    (cdp_prof / "Default").mkdir(parents=True)
+    (cdp_prof / "Default" / "Cookies").write_bytes(b"cdp-cookies-payload")
+
+    # Install 153 first (without cookies yet).
+    v153_zip = _make_versioned_cft_zip(rel, "153.0.8010.52")
+    monkeypatch.setattr(cf, "fetch_manifest_entry",
+                        lambda k, proxy: ("153.0.8010.52", f"https://example/{k}-153.zip"))
+    monkeypatch.setattr(cf, "_download",
+                        lambda _url, dest, **_kw: dest.write_bytes(v153_zip))
+    binary = cf.ensure_cft(root=root, proxy=None)
+    assert "153.0.8010.52" in (cf.installed_cft_version(binary) or "")
+
+    # Now attempt force-upgrade 153 -> 158 while profiles have Cookies.
+    monkeypatch.setattr(cf, "fetch_manifest_entry",
+                        lambda k, proxy: ("158.0.8127.36", f"https://example/{k}-158.zip"))
+    monkeypatch.setattr(cf, "_download",
+                        lambda *a, **k: pytest.fail("未显式放行跨主版本升级时不该下载覆盖"))
+
+    with pytest.raises(cf.CftFetchError) as exc:
+        cf.ensure_cft(root=root, force=True, proxy=None, profiles_root=profiles_root)
+    assert exc.value.kind == "cookie_guard"
+    assert "FRAGO_CFT_ALLOW_COOKIE_RISK=1" in (exc.value.remedy or "")
+
+    # Old version remains intact, and 0700 snapshot backup was created with all assets.
+    assert "153.0.8010.52" in (cf.installed_cft_version(binary) or "")
+    backups_root = profiles_root / cf._COOKIE_GUARD_BACKUP_DIR_NAME
+    assert (stat.S_IMODE(backups_root.stat().st_mode) & 0o077) == 0
+    snaps = [p for p in backups_root.iterdir() if p.is_dir()]
+    assert len(snaps) == 1
+    snap = snaps[0]
+    assert (stat.S_IMODE(snap.stat().st_mode) & 0o077) == 0
+    assert (snap / "extension" / "Default" / "Network" / "Cookies").read_bytes() == (
+        ext_prof / "Default" / "Network" / "Cookies"
+    ).read_bytes()
+    assert (snap / "extension" / "Local State").read_bytes() == (ext_prof / "Local State").read_bytes()
+    assert (snap / "9222" / "Default" / "Cookies").read_bytes() == b"cdp-cookies-payload"
+
+    manifest = json.loads((snap / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["old_version"] == "153.0.8010.52"
+    assert manifest["new_version"] == "158.0.8127.36"
+    assert manifest["reason"] == "force-upgrade"
+
+
+def test_cookie_guard_allows_upgrade_when_opted_in_and_keeps_snapshot(tmp_path, monkeypatch):
+    key = cf.platform_key()
+    if key is None:
+        pytest.skip("本机平台没有 CfT")
+    rel = cf._relative_binary(key)
+    root = tmp_path / "chrome-for-testing"
+    profiles_root = tmp_path / "profiles" / "cft"
+    ext_prof = _seed_cft_profile_assets(profiles_root, "extension")
+    orig_cookie_bytes = (ext_prof / "Default" / "Network" / "Cookies").read_bytes()
+
+    v153_zip = _make_versioned_cft_zip(rel, "153.0.8010.52")
+    v158_zip = _make_versioned_cft_zip(rel, "158.0.8127.36")
+
+    monkeypatch.setattr(cf, "fetch_manifest_entry",
+                        lambda k, proxy: ("153.0.8010.52", f"https://example/{k}-153.zip"))
+    monkeypatch.setattr(cf, "_download", lambda _url, dest, **_kw: dest.write_bytes(v153_zip))
+    cf.ensure_cft(root=root, proxy=None)
+
+    monkeypatch.setattr(cf, "fetch_manifest_entry",
+                        lambda k, proxy: ("158.0.8127.36", f"https://example/{k}-158.zip"))
+    monkeypatch.setattr(cf, "_download", lambda _url, dest, **_kw: dest.write_bytes(v158_zip))
+    monkeypatch.setenv("FRAGO_CFT_ALLOW_COOKIE_RISK", "1")
+
+    said: list[str] = []
+    binary = cf.ensure_cft(
+        root=root, force=True, proxy=None, profiles_root=profiles_root, progress=said.append
+    )
+    assert "158.0.8127.36" in (cf.installed_cft_version(binary) or "")
+    assert any("安全快照" in m for m in said)
+    assert (ext_prof / "Default" / "Network" / "Cookies").read_bytes() == orig_cookie_bytes
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS .app wrapper + codesign")
+def test_ensure_cft_wrapper_snapshots_and_is_idempotent_for_existing_cookies(tmp_path):
+    profiles_root = tmp_path / "profiles" / "cft"
+    _seed_cft_profile_assets(profiles_root, "extension")
+    _app, binary = _make_fake_cft_app(tmp_path)
+
+    assert cf.ensure_cft_wrapper(binary, system="Darwin", profiles_root=profiles_root) is True
+    backups_root = profiles_root / cf._COOKIE_GUARD_BACKUP_DIR_NAME
+    assert len(list(backups_root.iterdir())) == 1
+
+    # Second call is a pure idempotent no-op and creates no duplicate backup.
+    assert cf.ensure_cft_wrapper(binary, system="Darwin", profiles_root=profiles_root) is False
+    assert len(list(backups_root.iterdir())) == 1
+
+
+def test_verify_protected_cookie_assets_auto_restores_from_snapshot_on_truncation(tmp_path):
+    profiles_root = tmp_path / "profiles" / "cft"
+    ext_prof = _seed_cft_profile_assets(profiles_root, "extension")
+    cookie_path = ext_prof / "Default" / "Network" / "Cookies"
+    orig_bytes = cookie_path.read_bytes()
+
+    reports = cf.inspect_cft_profiles(profiles_root)
+    backup_dir = cf.snapshot_cft_profiles(
+        profiles_root, reports, reason="test-restore", old_version="153.0.0.0", new_version="158.0.0.0"
+    )
+
+    # Simulate Chromium wiping/truncating Cookies to 0 bytes.
+    cookie_path.write_bytes(b"")
+    assert cookie_path.stat().st_size == 0
+
+    with pytest.raises(cf.CftFetchError) as exc:
+        cf._verify_protected_cookie_assets(reports, backup_dir)
+    assert exc.value.kind == "cookie_guard"
+    assert "自动从快照" in str(exc.value)
+    assert cookie_path.read_bytes() == orig_bytes
+
+
+def test_cookie_guard_prunes_old_backups_keeping_latest_five(tmp_path):
+    profiles_root = tmp_path / "profiles" / "cft"
+    _seed_cft_profile_assets(profiles_root, "extension")
+    reports = cf.inspect_cft_profiles(profiles_root)
+
+    for idx in range(7):
+        cf.snapshot_cft_profiles(profiles_root, reports, reason=f"step-{idx}")
+
+    backups_root = profiles_root / cf._COOKIE_GUARD_BACKUP_DIR_NAME
+    kept = [p for p in backups_root.iterdir() if p.is_dir()]
+    assert len(kept) == cf._MAX_COOKIE_GUARD_BACKUPS

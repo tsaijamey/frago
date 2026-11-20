@@ -26,6 +26,7 @@ import contextlib
 import json
 import os
 import platform as _platform
+import plistlib
 import re
 import shutil
 import stat
@@ -36,6 +37,8 @@ import time
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 MANIFEST_URL = (
@@ -420,12 +423,456 @@ def _initialize_default_cft_environment(say: Progress) -> None:
         say(f"已初始化 CfT 默认 Profile：{info['profile_dir']}")
 
 
-def ensure_cft_wrapper(binary: Path, *, system: str | None = None) -> bool:
+_COOKIE_GUARD_BACKUP_DIR_NAME = ".cookie-guard-backups"
+_MAX_COOKIE_GUARD_BACKUPS = 5
+_PROFILE_AUTH_FILES: tuple[str, ...] = (
+    "Local State",
+    "Default/Network/Cookies",
+    "Default/Network/Cookies-journal",
+    "Default/Network/Cookies-wal",
+    "Default/Network/Cookies-shm",
+    "Default/Cookies",
+    "Default/Cookies-journal",
+    "Default/Preferences",
+    "Default/Secure Preferences",
+)
+_COOKIE_DB_FILES: tuple[str, ...] = (
+    "Default/Network/Cookies",
+    "Default/Cookies",
+)
+_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+\.\d+|\d+\.\d+)")
+
+
+@dataclass(frozen=True)
+class CftProfileGuardReport:
+    """Non-secret metadata summary for one managed CfT profile directory."""
+
+    profile_dir: Path
+    locked: bool
+    lock_pid: int | None
+    has_cookie_assets: bool
+    cookie_files: tuple[str, ...]
+    asset_files: tuple[str, ...]
+    cookie_bytes: dict[str, int]
+    total_bytes: int
+
+
+@dataclass(frozen=True)
+class CftCookieGuardResult:
+    """Pre-check outcome before CfT upgrade, replacement, or bundle re-sign."""
+
+    profiles_root: Path
+    reports: tuple[CftProfileGuardReport, ...]
+    locked_profiles: tuple[Path, ...]
+    cookie_profiles: tuple[Path, ...]
+    old_version: str | None
+    new_version: str | None
+    major_upgrade: bool
+    backup_dir: Path | None
+
+
+def cft_profiles_root(profiles_root: Path | None = None) -> Path:
+    """Return the managed CfT profiles root (``~/.frago/profiles/cft``)."""
+    return profiles_root or (Path.home() / ".frago" / "profiles" / "cft")
+
+
+def _is_under_default_root(binary: Path) -> bool:
+    try:
+        binary.resolve().relative_to(_root().resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _app_bundle_info(binary: Path) -> tuple[str | None, str | None]:
+    """Read ``(CFBundleIdentifier, version)`` from enclosing ``Info.plist`` without secrets."""
+    app_bundle = _app_bundle_for_binary(binary)
+    if app_bundle is None:
+        return (None, None)
+    plist_path = app_bundle / "Contents" / "Info.plist"
+    try:
+        with plist_path.open("rb") as f:
+            data = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return (None, None)
+    if not isinstance(data, dict):
+        return (None, None)
+    bundle_id = data.get("CFBundleIdentifier")
+    if not isinstance(bundle_id, str) or not bundle_id.strip():
+        bundle_id = None
+    else:
+        bundle_id = bundle_id.strip()
+    version: str | None = None
+    for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+        raw = data.get(key)
+        if isinstance(raw, str) and _VERSION_RE.search(raw):
+            version = _VERSION_RE.search(raw).group(1)  # type: ignore[union-attr]
+            break
+    return (bundle_id, version)
+
+
+def installed_cft_version(binary: Path | None) -> str | None:
+    """Best-effort version string of an existing CfT installation."""
+    if binary is None or not binary.exists():
+        return None
+    _bundle_id, plist_ver = _app_bundle_info(binary)
+    if plist_ver:
+        return plist_ver
+    if _platform.system() != "Windows":
+        try:
+            proc = subprocess.run(
+                [str(binary), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            out = (proc.stdout or "").strip()
+            if proc.returncode == 0 and out and (match := _VERSION_RE.search(out)):
+                return match.group(1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return None
+
+
+def _major_version(version: str | None) -> int | None:
+    if not version:
+        return None
+    match = re.match(r"^(\d+)", version.strip())
+    return int(match.group(1)) if match else None
+
+
+def _iter_cft_profile_dirs(profiles_root: Path) -> list[Path]:
+    if not profiles_root.is_dir():
+        return []
+    return sorted(
+        (
+            p
+            for p in profiles_root.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def _read_profile_lock_pid(profile_dir: Path) -> int | None:
+    lock = profile_dir / "SingletonLock"
+    if not lock.is_symlink() and not lock.exists():
+        return None
+    try:
+        target = os.readlink(lock) if lock.is_symlink() else lock.resolve(strict=False).name
+        target_name = Path(target).name
+        return int(target_name.rsplit("-", 1)[-1])
+    except (OSError, ValueError):
+        return None
+
+
+def _is_profile_locked(profile_dir: Path) -> tuple[bool, int | None]:
+    lock = profile_dir / "SingletonLock"
+    if not lock.exists() and not lock.is_symlink():
+        return (False, None)
+    pid = _read_profile_lock_pid(profile_dir)
+    if pid is None:
+        return (True, None)
+    if os.name == "nt":
+        return (True, pid)
+    try:
+        os.kill(pid, 0)
+        return (True, pid)
+    except ProcessLookupError:
+        return (False, pid)
+    except PermissionError:
+        return (True, pid)
+    except OSError:
+        return (False, pid)
+
+
+def inspect_cft_profiles(profiles_root: Path | None = None) -> tuple[CftProfileGuardReport, ...]:
+    """Inspect managed CfT profiles using filesystem metadata only (never reads secrets)."""
+    root_dir = cft_profiles_root(profiles_root)
+    reports: list[CftProfileGuardReport] = []
+    for pdir in _iter_cft_profile_dirs(root_dir):
+        locked, lock_pid = _is_profile_locked(pdir)
+        asset_files: list[str] = []
+        cookie_files: list[str] = []
+        cookie_bytes: dict[str, int] = {}
+        total_bytes = 0
+        for rel in _PROFILE_AUTH_FILES:
+            fpath = pdir / rel
+            try:
+                if not fpath.is_file():
+                    continue
+                size = fpath.stat().st_size
+            except OSError:
+                continue
+            asset_files.append(rel)
+            total_bytes += size
+            if rel in _COOKIE_DB_FILES and size > 0:
+                cookie_files.append(rel)
+                cookie_bytes[rel] = size
+        reports.append(
+            CftProfileGuardReport(
+                profile_dir=pdir,
+                locked=locked,
+                lock_pid=lock_pid,
+                has_cookie_assets=bool(cookie_files),
+                cookie_files=tuple(cookie_files),
+                asset_files=tuple(asset_files),
+                cookie_bytes=cookie_bytes,
+                total_bytes=total_bytes,
+            )
+        )
+    return tuple(reports)
+
+
+def _prune_old_cookie_backups(backups_root: Path, keep: int = _MAX_COOKIE_GUARD_BACKUPS) -> None:
+    if not backups_root.is_dir():
+        return
+    dirs = sorted(
+        (d for d in backups_root.iterdir() if d.is_dir() and not d.name.startswith(".")),
+        key=lambda d: d.name,
+    )
+    for stale in dirs[: max(0, len(dirs) - keep)]:
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def snapshot_cft_profiles(
+    profiles_root: Path,
+    reports: tuple[CftProfileGuardReport, ...],
+    *,
+    reason: str,
+    old_version: str | None = None,
+    new_version: str | None = None,
+) -> Path:
+    """Create a 0700 atomic snapshot of Cookies/Local State/Preferences metadata files."""
+    backups_root = profiles_root / _COOKIE_GUARD_BACKUP_DIR_NAME
+    backups_root.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        backups_root.chmod(0o700)
+
+    safe_reason = re.sub(r"[^a-zA-Z0-9_-]+", "-", reason).strip("-") or "guard"
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    staging = Path(tempfile.mkdtemp(prefix=f".tmp-{safe_reason}-", dir=backups_root))
+    try:
+        with contextlib.suppress(OSError):
+            staging.chmod(0o700)
+
+        manifest_profiles: dict[str, dict[str, int]] = {}
+        for rep in reports:
+            if not rep.asset_files:
+                continue
+            prof_dest = staging / rep.profile_dir.name
+            prof_meta: dict[str, int] = {}
+            for rel in rep.asset_files:
+                src = rep.profile_dir / rel
+                if not src.is_file():
+                    continue
+                dst = prof_dest / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                prof_meta[rel] = dst.stat().st_size
+            if prof_meta:
+                manifest_profiles[rep.profile_dir.name] = prof_meta
+
+        manifest = {
+            "created_at": datetime.now(UTC).isoformat(),
+            "reason": safe_reason,
+            "old_version": old_version,
+            "new_version": new_version,
+            "profiles": manifest_profiles,
+        }
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        final_dir = backups_root / f"{stamp}-{safe_reason}"
+        suffix = 1
+        while final_dir.exists():
+            final_dir = backups_root / f"{stamp}-{safe_reason}-{suffix}"
+            suffix += 1
+        staging.rename(final_dir)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    _prune_old_cookie_backups(backups_root)
+    return final_dir
+
+
+def restore_cft_profile_snapshot(
+    snapshot_dir: Path,
+    profiles_root: Path | None = None,
+) -> list[Path]:
+    """Restore backed-up Cookies/Local State/Preferences files from ``snapshot_dir``."""
+    root_dir = cft_profiles_root(profiles_root)
+    if not snapshot_dir.is_dir():
+        raise CftFetchError("backup", f"快照目录不存在：{snapshot_dir}")
+
+    restored: list[Path] = []
+    for prof_backup in sorted(p for p in snapshot_dir.iterdir() if p.is_dir()):
+        target_profile = root_dir / prof_backup.name
+        locked, pid = _is_profile_locked(target_profile)
+        if locked:
+            raise CftFetchError(
+                "locked",
+                f"恢复快照前发现 Profile 仍在运行中（{target_profile}，PID={pid}）",
+                "请先执行 `frago browser stop` 关闭浏览器后再恢复快照。",
+            )
+        for rel in _PROFILE_AUTH_FILES:
+            src = prof_backup / rel
+            if not src.is_file():
+                continue
+            dst = target_profile / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dst.with_name(f".{dst.name}.frago-restore")
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
+            restored.append(dst)
+    return restored
+
+
+def precheck_cft_cookie_guard(
+    *,
+    existing_binary: Path | None,
+    new_version: str | None = None,
+    reason: str = "upgrade",
+    profiles_root: Path | None = None,
+    allow_cookie_risk: bool = False,
+    system: str | None = None,
+    progress: Progress | None = None,
+) -> CftCookieGuardResult:
+    """Pre-check managed CfT profiles for live locks and Cookie/Keychain wipe risk.
+
+    1. Blocks immediately if any managed CfT profile holds an active ``SingletonLock``.
+    2. Creates a 0700 atomic snapshot of Cookies/Local State/Preferences whenever
+       auth assets exist before upgrading or re-signing.
+    3. On cross-major-version replacement or macOS ad-hoc binary replacement when
+       Cookie assets exist, intercepts unless explicitly opted in via
+       ``allow_cookie_risk=True`` or ``FRAGO_CFT_ALLOW_COOKIE_RISK=1``.
+    """
+    say = progress or (lambda _msg: None)
+    system = system or _platform.system()
+    resolved_profiles = cft_profiles_root(profiles_root)
+    reports = inspect_cft_profiles(resolved_profiles)
+    locked_profiles = tuple(r.profile_dir for r in reports if r.locked)
+    cookie_profiles = tuple(r.profile_dir for r in reports if r.has_cookie_assets)
+
+    if locked_profiles:
+        names = ", ".join(p.name for p in locked_profiles)
+        raise CftFetchError(
+            "locked",
+            f"受管 CfT Profile（{names}）正在运行中，禁止在占锁状态下执行升级或重签",
+            "请先执行 `frago browser stop`（如有 CDP 实例则同时停止）后再重试。",
+        )
+
+    old_version = installed_cft_version(existing_binary)
+    old_major = _major_version(old_version)
+    new_major = _major_version(new_version)
+    major_upgrade = bool(
+        old_major is not None and new_major is not None and old_major != new_major
+    )
+
+    backup_dir: Path | None = None
+    if any(r.asset_files for r in reports):
+        try:
+            backup_dir = snapshot_cft_profiles(
+                resolved_profiles,
+                reports,
+                reason=reason,
+                old_version=old_version,
+                new_version=new_version,
+            )
+        except OSError as e:
+            raise CftFetchError(
+                "backup",
+                f"升级或重签前创建受管 Profile 登录态快照失败：{e}",
+                "请先手动备份 ~/.frago/profiles/cft 后再重试。",
+            ) from e
+        say(f"已创建受管 CfT 登录态安全快照：{backup_dir}")
+
+    if reason == "force-upgrade" and existing_binary is not None and cookie_profiles:
+        high_risk = major_upgrade or (system == "Darwin")
+        effective_allow = allow_cookie_risk or (
+            os.environ.get("FRAGO_CFT_ALLOW_COOKIE_RISK") == "1"
+        )
+        if high_risk and not effective_allow:
+            ver_desc = (
+                f"{old_version} -> {new_version}"
+                if old_version and new_version
+                else (new_version or old_version or "跨版本/重签替换")
+            )
+            prof_names = ", ".join(p.name for p in cookie_profiles)
+            raise CftFetchError(
+                "cookie_guard",
+                f"拦截高危 CfT 升级（{ver_desc}）：受管 Profile（{prof_names}）存在已登录 Cookie，"
+                "跨主版本替换或 macOS ad-hoc 重签可能导致 Keychain Safe Storage 解密失败并清空登录态",
+                f"已预先备份关键凭据快照至：{backup_dir}\n"
+                "若确认需要继续强制升级并承担重新登录风险，请以 "
+                "FRAGO_CFT_ALLOW_COOKIE_RISK=1 重试。",
+            )
+
+    return CftCookieGuardResult(
+        profiles_root=resolved_profiles,
+        reports=reports,
+        locked_profiles=locked_profiles,
+        cookie_profiles=cookie_profiles,
+        old_version=old_version,
+        new_version=new_version,
+        major_upgrade=major_upgrade,
+        backup_dir=backup_dir,
+    )
+
+
+def _verify_protected_cookie_assets(
+    reports: tuple[CftProfileGuardReport, ...],
+    backup_dir: Path | None,
+) -> None:
+    """Verify protected Cookie DB files did not vanish or truncate during mutation."""
+    corrupted: list[str] = []
+    for rep in reports:
+        for rel, before_size in rep.cookie_bytes.items():
+            if before_size <= 0:
+                continue
+            target = rep.profile_dir / rel
+            try:
+                now_size = target.stat().st_size if target.is_file() else 0
+            except OSError:
+                now_size = 0
+            if now_size == 0:
+                corrupted.append(f"{rep.profile_dir.name}/{rel}")
+
+    if corrupted:
+        restored_note = ""
+        if backup_dir is not None:
+            with contextlib.suppress(Exception):
+                restore_cft_profile_snapshot(
+                    backup_dir, profiles_root=reports[0].profile_dir.parent
+                )
+                restored_note = f"（已自动从快照 {backup_dir} 回滚恢复）"
+        raise CftFetchError(
+            "cookie_guard",
+            f"检测到受管 Cookie 文件在操作后丢失或归零：{', '.join(corrupted)}{restored_note}",
+        )
+
+
+def ensure_cft_wrapper(
+    binary: Path,
+    *,
+    system: str | None = None,
+    profiles_root: Path | None = None,
+    check_profiles: bool = True,
+    progress: Progress | None = None,
+) -> bool:
     """Install or idempotently update the macOS CfT transparent launcher wrapper.
 
     Moves the real Mach-O binary to ``<binary>.bin`` if needed, writes the
     transparent launcher script at ``binary``, and re-signs the ``.app``
-    bundle with ``codesign --force --deep -s -``.
+    bundle preserving ``CFBundleIdentifier``.
+
+    Before mutating an existing installed bundle, checks managed CfT profile
+    locks and creates a 0700 snapshot backup of Cookies / Local State /
+    Preferences when applicable.
 
     If writing the wrapper or re-signing fails midway, automatically rolls back
     so the original ``.bin`` binary (or previous wrapper) is restored in place
@@ -455,18 +902,39 @@ def ensure_cft_wrapper(binary: Path, *, system: str | None = None) -> bool:
             old_wrapper_bytes = binary.read_bytes()
         except OSError:
             pass
-    elif not is_wrapper:
-        # Fresh download or overwritten .app: preserve the real binary as .bin.
-        os.replace(binary, real_bin)
-        real_bin.chmod(real_bin.stat().st_mode | 0o755)
-        moved_real_bin = True
-    elif not real_bin.exists():
+    elif is_wrapper and not real_bin.exists():
         raise CftFetchError(
             "verify",
             f"CfT 包装器存在但缺少真实二进制：{real_bin}",
             "请执行 `frago browser install --force` 重新获取 Chrome for Testing。",
         )
 
+    effective_profiles_root: Path | None = None
+    if check_profiles:
+        if profiles_root is not None:
+            effective_profiles_root = profiles_root
+        elif _is_under_default_root(binary):
+            effective_profiles_root = cft_profiles_root()
+
+    guard_result: CftCookieGuardResult | None = None
+    if effective_profiles_root is not None:
+        guard_result = precheck_cft_cookie_guard(
+            existing_binary=binary,
+            new_version=None,
+            reason="wrapper-resign",
+            profiles_root=effective_profiles_root,
+            allow_cookie_risk=True,
+            system=system,
+            progress=progress,
+        )
+
+    if not is_wrapper:
+        # Fresh download or overwritten .app: preserve the real binary as .bin.
+        os.replace(binary, real_bin)
+        real_bin.chmod(real_bin.stat().st_mode | 0o755)
+        moved_real_bin = True
+
+    bundle_id, _ = _app_bundle_info(binary)
     tmp_wrapper = binary.with_name(f".{binary.name}.frago-tmp")
     try:
         tmp_wrapper.write_text(_MACOS_WRAPPER_SCRIPT, encoding="utf-8")
@@ -474,8 +942,24 @@ def ensure_cft_wrapper(binary: Path, *, system: str | None = None) -> bool:
         os.replace(tmp_wrapper, binary)
 
         if shutil.which("codesign"):
+            id_args = ["--identifier", bundle_id] if bundle_id else []
+            # Only sign .bin when freshly moved so wrapper-template updates do
+            # not churn .bin's CDHash unnecessarily; sign .app without --deep to
+            # keep CFBundleIdentifier consistent without disturbing nested helpers.
+            if moved_real_bin:
+                bin_proc = subprocess.run(
+                    ["codesign", "--force", "-s", "-", *id_args, str(real_bin)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if bin_proc.returncode != 0:
+                    raise CftFetchError(
+                        "codesign",
+                        f"CfT 主二进制重签名失败：{(bin_proc.stderr or bin_proc.stdout).strip()}",
+                    )
             proc = subprocess.run(
-                ["codesign", "--force", "--deep", "-s", "-", str(app_bundle)],
+                ["codesign", "--force", "-s", "-", *id_args, str(app_bundle)],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -498,6 +982,9 @@ def ensure_cft_wrapper(binary: Path, *, system: str | None = None) -> bool:
                 tmp_restore.chmod(0o755)
                 os.replace(tmp_restore, binary)
         raise
+
+    if guard_result is not None and guard_result.cookie_profiles:
+        _verify_protected_cookie_assets(guard_result.reports, guard_result.backup_dir)
     return True
 
 
@@ -547,6 +1034,8 @@ def ensure_cft(
     force: bool = False,
     progress: Progress | None = None,
     proxy: str | None | bool = True,
+    allow_cookie_risk: bool = False,
+    profiles_root: Path | None = None,
 ) -> Path:
     """保证 root 下有一份能跑的本平台 CfT，返回可执行文件路径。
 
@@ -557,9 +1046,19 @@ def ensure_cft(
     use_default_root = root is None or root == default_root
     root = root or default_root
     say = progress or (lambda _msg: None)
+    effective_profiles_root = (
+        profiles_root
+        if profiles_root is not None
+        else (cft_profiles_root() if use_default_root else None)
+    )
 
     if not force and (found := installed_binary(root)):
-        if ensure_cft_wrapper(found):
+        if ensure_cft_wrapper(
+            found,
+            profiles_root=effective_profiles_root,
+            check_profiles=effective_profiles_root is not None,
+            progress=say,
+        ):
             say(f"已更新 CfT 透明启动包装器：{found}")
         if use_default_root:
             record_runtime_python_hint()
@@ -577,7 +1076,12 @@ def ensure_cft(
     with _locked(root.parent / f".{root.name}.lock"):
         # 等锁期间别的进程可能已经装好了。
         if not force and (found := installed_binary(root)):
-            if ensure_cft_wrapper(found):
+            if ensure_cft_wrapper(
+                found,
+                profiles_root=effective_profiles_root,
+                check_profiles=effective_profiles_root is not None,
+                progress=say,
+            ):
                 say(f"已更新 CfT 透明启动包装器：{found}")
             if use_default_root:
                 record_runtime_python_hint()
@@ -590,9 +1094,21 @@ def ensure_cft(
             proxy = detect_local_proxy()
         proxy = proxy or None
 
+        existing = installed_binary(root)
         say(f"frago 要用自带的浏览器 Chrome for Testing，本机还没有，现在去取（平台 {key}）")
         version, url = fetch_manifest_entry(key, proxy=proxy)
         say(f"版本 {version}，放到 {root}")
+
+        guard_result: CftCookieGuardResult | None = None
+        if force and existing is not None and effective_profiles_root is not None:
+            guard_result = precheck_cft_cookie_guard(
+                existing_binary=existing,
+                new_version=version,
+                reason="force-upgrade",
+                profiles_root=effective_profiles_root,
+                allow_cookie_risk=allow_cookie_risk,
+                progress=say,
+            )
 
         root.parent.mkdir(parents=True, exist_ok=True)
         # 临时目录和正式位置在同一个文件系统上，最后那一下改名才是原子的。
@@ -607,7 +1123,7 @@ def ensure_cft(
             archive.unlink()
 
             rel = _relative_binary(key)
-            if ensure_cft_wrapper(unpacked / rel):
+            if ensure_cft_wrapper(unpacked / rel, check_profiles=False):
                 say("已注入透明启动包装器并完成本地重签名")
             say(f"验证：{verify(unpacked / rel)}")
 
@@ -620,6 +1136,9 @@ def ensure_cft(
             (unpacked / folder).rename(target)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+
+    if guard_result is not None and guard_result.cookie_profiles:
+        _verify_protected_cookie_assets(guard_result.reports, guard_result.backup_dir)
 
     binary = root / rel
     if use_default_root:
