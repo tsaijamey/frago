@@ -4,276 +4,132 @@
 
 # frago
 
-**The local control center and runtime for CLI agents**
+**Not another chat window. A digital crew on your own computer.**
 
-Turn **Claude Code**, **codex**, **opencode**, and **agy** into general-purpose hands for everything beyond coding — in one searchable 1,000+ session workbench with real Chrome control, zero-token recipes, and event-driven guardrails.
+Role-based digital employees — PM, Developer, Designer, Analyst, Assistant — working together on your machine. With clear workspace rules instead of paranoid sandboxes, your crew **directly manages your local data and session history as shared context**; what one employee produces becomes the starting point for the next. They work quietly in the background without stealing your mouse, and hand you a decision card only when your call is needed.
 
-English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
+**Battle-tested across tens of thousands of real sessions on dozens of users' machines · macOS / Windows / Linux**
 
-[![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
-[![License](https://img.shields.io/badge/license-MIT-12a150?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
-[![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.md)
+English · [简体中文](README.zh-CN.md) · [**30-Sec Install**](#get-started-in-30-seconds) · [frago.ai](https://www.frago.ai) · [User Guide](docs/user-guide.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
 
-<img src="docs/images/hero-workbench.png" width="880" alt="frago Console: Manage 1,000+ agent sessions with real-time execution logs and action timelines." />
+<img src="docs/images/hero-cockpit-annotated.png" width="880" alt="frago Command Cockpit: your digital crew and global progress on the left, shared local data and handoff artifacts in the center, structured decision cards at key forks" />
 
 </div>
 
-> frago is not affiliated with OpenClaw. frago predates OpenClaw by approximately one month.
-
-## frago in one line
-
-**frago = the self-hosted developer control center and Agent OS for CLI agents.**
-
-frago does not ship a proprietary language model or lock you into a closed cloud sandbox. It works alongside **Claude Code**, **codex**, **opencode**, and **agy** on your own machine — turning scattered terminal windows into a unified web control center while giving every agent real browser hands, persistent memory, and zero-token repeatable workflows:
-
-- **1,000+ sessions in one web workbench** (`frago start`): Normalize and search every Claude Code, codex, opencode, and agy session at `http://127.0.0.1:8093`, inspect tool-call timelines card by card, and reply directly from the browser.
-- **Real Chrome browser & virtual desktop control** (`frago browser` · `frago desktop`): Drive your real Chrome profile with existing logins and native anti-bot pass-through (isolated in per-agent tab groups), or run and record repeatable takes on a headless virtual desktop stage.
-- **Explore once, freeze into zero-token recipes** (`frago recipe`): Turn multi-step browser or system procedures discovered by an agent into deterministic Python, shell, or `chrome-js` scripts that re-run in seconds with **0 token cost** and zero behavioral drift.
-
-## Why frago
-
-CLI agents offer immense potential for system automation, but in day-to-day engineering they consistently hit three walls:
-
-- **Single-session silos**: Capabilities and states are trapped inside individual terminal windows. Once a session closes or switches directories, authentication, context, and execution chains break — making it painful to search past work or schedule jobs at 3 AM.
-- **Dumping entire contexts at startup**: Standard setups dump hundreds of lines of static rules into every prompt upfront, burning token budgets and diluting attention; switch to a new repo or machine, and the agent reverts to square one.
-- **Trial-and-error never hardens into deterministic code**: Hard-won workflows discovered through multi-step reasoning stay as prose prompts. Every re-run forces the model to reason from scratch, paying the token tax again with unpredictable drift.
-
-What developers need isn't another closed cloud assistant — it's **a prepared local control center and Agent OS** that keeps any CLI agent disciplined and freezes proven tasks into deterministic code.
-
-## Core Philosophy: From Using AI to Harnessing AI (Harness Engineering)
-
-AI software engineering is evolving across three distinct paradigms:
-1. **Prompt Engineering**: Learning how to face an LLM;
-2. **Context Engineering**: Learning how to use an LLM;
-3. **Harness Engineering**: Learning how to harness an agent.
-
-frago implements this harness across three concrete layers:
-- **Hooks determine what the agent knows**: Precise static rules and context companions injected at lifecycle events, with zero persistent model overhead;
-- **Recipes determine what the agent doesn't need to repeat**: Procedures proven through reasoning are frozen into deterministic code running without model inference;
-- **Skills determine how the agent acts**: Providing standard domain practices and execution playbooks.
-
-## Agent-facing: Core Capabilities
-
-The system-level runtime provided directly to agent engines:
-
-| Core Capability | Definition & Core Responsibility | Commands & Mechanisms |
-|---|---|---|
-| **1. Guardrails & Rules**<br>Action boundaries | Zero-model static rules injected at critical events, keeping agent behavior strictly aligned without persistent token overhead | `frago hook-rules`<br>`frago book`<br>`~/.frago/hook/*` |
-| **2. Computer Use & Automation**<br>Real environment actions | Drive real authenticated browsers and reproducible virtual desktops with full visibility | `frago browser`<br>`frago desktop`<br>`frago apps`<br>`frago view` |
-| **3. Long-Term Memory**<br>Targeted recall | Decouples memory into decisions, artifacts, run traces, and handoffs instead of naive context dumps | `frago def` (decisions)<br>`frago context` (artifacts)<br>`frago session search` (traces)<br>`frago todo` (handoff) |
-| **4. Recipes**<br>Reusable Workflows | Freeze agent-discovered tasks into standalone, deterministic workflows with zero token overhead on re-runs | `frago recipe`<br>`frago daemon`<br>`frago market` |
-| **5. Multi-Agent Coordination & Scheduling**<br>Delegation & background | Delegate subtasks, connect external webhooks, and trigger autonomous background jobs | `frago agent`<br>`frago channel` · `frago reply`<br>`frago remote`<br>`frago schedule` |
-
-## Human-facing: Unified Management Console
-
-A transparent management window that remains cleanly decoupled from agent execution:
-
-| Module / Command | What it gives you |
-|---|---|
-| **Unified Console**<br>`frago start` · `frago server` | Normalizes session records from heterogeneous agents into a unified Web UI with real-time action timelines |
-| **Model Provider Profiles**<br>`frago profile` | Centralizes multi-provider credentials and endpoints, supplied to agents on demand without CLI clutter |
-| **Recipe Market**<br>`frago market` | Publish your automated tools, or install community-verified solutions with one click |
-| **Environment & Maintenance**<br>`frago init` · `frago update` · `frago autostart` | Desktop client, self-updates, and boot daemons — switch machines without starting from scratch |
-
-## What you can do with it
-
-Those were commands. These are scenarios — all carried by recipes, and the recipes are written by your agent on the spot:
-
-- **You stop needing Office**, because you can simply have the agent build you one to a recipe's spec
-- **You stop reshooting a tutorial video for the seventh time** — perform it once on the virtual stage and the recording is the deliverable
-- **You stop handing meeting audio to a third party** — transcription, key points and action items all happen on your own machine
-- **You stop copy-pasting between five websites** — the agent walks it in one pass, in the browser you're already signed into
-- **You stop hand-collating research** — fetch, dedupe, write up and file it in one recipe
-- **You stop having to remember how you did it last time** — once it works, it's code you can re-run
-
-### 🖥 The agent lives in a terminal. frago moves it into a web page.
-
-#### Task: "Open this site and read me the title and the first sentence"
-
-<p align="center"><img src="docs/images/feedback-detail.png" width="780" alt="One tool call, fully accounted for: command, success badge, timestamp, return value" /></p>
-
-First, what frago does *not* do: the command, the `success`, the timestamp and the return value
-are **produced by whichever cli-agent you run**. This machine runs Claude Code and opencode side
-by side; the session above happens to be the former. They already emit all of that — it just
-scrolls past in their own terminal windows, which makes it hard to manage.
-
-frago doesn't produce receipts, and **it doesn't pick a side**. It reads **every** agent's records,
-normalizes them into one shape, and turns them into one web page.
-
-|  | In a terminal | In frago |
-|---|---|---|
-| **Past sessions** | A resume-style picker that's awkward to use | 1,299 sessions in one list, searchable by title, directory or session id |
-| **Switching cli-agent** | Each one keeps its own records, in its own format | Normalized into one shape, merged into one list (above: 1,201 Claude Code + 98 opencode) |
-| **Reading a session back** | Page up, screen by screen | Laid out card by card, bucketed as `running / done / stopped / errored` |
-| **Continuing the conversation** | Find that terminal window again | Type on the page |
-| **Usage** | Count it yourself | A usage calendar |
-
-For people who live in a CLI, this is a convenience.
-For people who don't, it's **the line between using an agent and not**.
-
-(Those two `PreToolUse:Bash` rows above are the session companion stepping in — one reporting the receipt, one adding context. More below.)
-
-This next layer is the part frago does itself:
-
-| Layer | What frago does | What you get |
-|---|---|---|
-| **Logins** | Drives your browser's **own real profile** | Sites you're already signed into just work |
-| **Anti-bot** | It *is* a real browser, not a simulation | Checks pass on their own |
-| **Concurrency** | Each agent stays in its own real tab group | Two agents work at once without collision; the tab strip shows whose pages are whose |
-
-### 🛠 Once it works, the agent builds itself a tool
-
-#### Task: "I want to re-run this backtest myself and tweak the parameters"
-
-<p align="center"><img src="docs/images/etf-dashboard.png" width="800" alt="ETF backtest dashboard: parameter panel, equity curve, per-trade P&L" /></p>
-
-<p align="center"><sub>A <b>simulated</b> backtest on ¥100,000 of virtual capital, shown to illustrate the interface. Not investment advice.</sub></p>
-
-> **This is just one of them.** That screenshot is one of **317 personal recipes** on a single
-> development machine, picked because it photographs well. frago is not a trading tool — other
-> recipes on that same machine cut video, draft articles, transcribe meetings, pull arXiv papers,
-> scrape public neuroscience datasets, synthesize speech, generate storyboards, keep a ledger of
-> past sessions, and pick universities. **What your recipes look like depends on what you keep
-> asking an agent to do.**
-
-This is the real difference between frago and "an agent that's good at things": the path that
-worked doesn't rot in a chat log. It freezes into a **Recipe** — real, deterministic Python or shell.
-
-|  | The first time | Every time after |
-|---|---|---|
-| **Who does it** | The agent works it out step by step | A piece of deterministic code |
-| **Model involved** | Yes | **No** |
-| **Result** | This way today, maybe another way tomorrow | Identical to last time |
-| **Tokens** | Burned | **None** |
-
-**A Recipe is a tool the agent builds for itself, not documentation for humans.**
-
-|  | The agent-facing side | The human-facing side |
-|---|---|---|
-| **Form** | `recipe.md` + deterministic code | A page at `/app/<name>` |
-| **How it's used** | `recipe list --format json` to discover · `run` · `schedule` | Open it, tune parameters, read results |
-| **Required?** | Yes — this *is* the recipe | **No** — plenty of recipes have no UI at all and are complete software anyway |
-
-Only when a person genuinely needs to look — as with the backtest above, where a human tunes the
-parameters and reads the curve — does a recipe hang an interface off the side. The UI is the
-optional layer, not the point.
-
-### 🎬 And when you need to show it, there's a stage
-
-#### Task: "Record what you just did as a tutorial video"
-
-<p align="center"><img src="docs/images/agent-os-stage.png" width="760" alt="The agent_os stage: a fake macOS desktop inside a browser, with a real terminal and real pages underneath" /></p>
-
-It looks like a macOS desktop; underneath it is all real. That terminal is a real tmux
-session, that browser window is a real tab, and the mouse movement and clicks are reproducible.
-Perform once, record it, replay it whenever — instead of reshooting your screen a seventh time.
-
-## How it works
-
-<p align="center"><img src="docs/images/how-it-works.svg" width="860" alt="How frago works: you say something → the agent works on real browser, files and screen, receipting each step → what worked freezes into a Recipe → optionally a window for humans; the session companion runs underneath the whole time" /></p>
-
-The band across the bottom is the **session companion**, the layer most people underrate.
-It comes in two:
-
-| Layer | What it is | Model? | Match speed | Cost |
-|---|---|---|---|---|
-| **frago-core** | Static rules compiled into a 3 MB native binary | **No** | 34–961 ms measured on this machine, scaling with payload size | **Zero** |
-| **Lightweight AI** | Adds one line of context at the right moment, to *your* standards | Yes, but only a short prompt | One call | Negligible |
-
-Its only job is to keep the agent from drifting:
-
-| A common drift | What the companion does |
-|---|---|
-| Guessing from memory when it should open the browser | Stops it there and points it at the real browser |
-| Inventing a new directory for output | Points it at the place that already exists |
-| Repeating a mistake you corrected once | Reminds it next time the same situation comes up |
-
-Because the static layer is free and the AI layer only ever runs a short prompt,
-**it's cheap enough to leave on permanently**. The settings page shows the live state of both
-layers, in plain language.
-
-## Examples: recipes I built for myself
-
-**Illustration only.** These are **not built into frago and don't ship with it**, and they are not a
-recommended list — they're private recipes on my own machine, grown around my own life and work.
-They're here to answer one question: what can a recipe look like?
-
-frago installs blank. Your recipes grow out of **your** agent doing **your** repetitive work,
-and will most likely have nothing to do with any of these.
-
-| Recipe | What the agent does | What a person sees |
-|--------|--------------------|--------------------|
-| `agent_os` | Reassembles a real tmux session and a real browser tab into a scriptable virtual macOS desktop | The live stage at `/app/agent_os` |
-| `etf_backtest_dashboard_v5` | Runs zero-parameter backtests of A-share / cross-border ETF strategies, one set after another | Parameter sliders, net-value curves, per-trade P&L |
-| `etf_kdj_ths_auto_trade` | Watches 5-minute KDJ signals and places orders in the Tonghuashun client | Trade receipts and position checks (no LLM in the loop) |
-| `gaokao_henan_volunteer_analysis` | Converts score to province rank, matches universities to a family's budget and region, and flags disguised-private or overpriced programs | A report with a verification checklist, plus a web view |
-| `meeting_copilot` | Transcribes a live meeting, extracts points, questions and actions from local materials, and can voice-clone a reply onto the mic | A scrolling transcript and question list |
-| `article_studio` | One persistent editor agent per article — interviews you, rewrites in your voice, writes back into HTML | Article list on the left, reading and writing panes on the right |
-
-## Install
-
-**There's nothing to download.** frago is installed by the agent you already have. Add the install
-skill to Claude Code and ask for it — the skill prepares git and uv, clones the source, builds the
-environment, deploys the hooks, walks you through credentials, and finishes by opening a welcome
-page where the machine shows you what it can now do. You never type a frago command yourself.
-
-```
-/plugin marketplace add tsaijamey/how-to-install-frago
-/plugin install how-to-install-frago@how-to-install-frago
-```
-
-Then just ask it: **install frago**
-
-→ [**how-to-install-frago**](https://github.com/tsaijamey/how-to-install-frago) — the skill's own repository
-
-Works on macOS, Windows and Linux. Claude Code drives the install; opencode and codex work as agent
-cores once it's done. Installing needs only git and uv — a few more things are needed per capability
-(tmux to delegate work, Edge for browser automation, ffmpeg to record, bubblewrap to run recipes on
-Linux), and the skill asks what you intend to use, sets that up, and says what stays unavailable.
-
-<details>
-<summary><b>Rather do it yourself?</b> The package is on PyPI.</summary>
-
-<br>
-
-Requires Python 3.13+. This gets you the CLI and the web UI, but none of the machine preparation
-the skill does — hooks, credentials and per-capability dependencies are left to you.
-
-```bash
-uv tool install frago-cli   # install
-frago init                  # check dependencies, configure a model profile
-frago server start          # start the web UI at http://127.0.0.1:8093
-```
-
-Don't have uv yet, or want the one-line installer? See [Installation](docs/installation.md).
-
-</details>
-
-> There is no desktop app. The installers attached to older GitHub Releases are no longer maintained.
-
-## Documentation
-
-- [User Guide](docs/user-guide.md) — getting started after install
-- [Concepts](docs/concepts.md) — how Recipes, Runs, Sessions and prompting work together
-- [Recipe System](docs/recipes.md) — the recipe command surface, end to end
-- [Examples](docs/examples.md) — practical Run + Recipe + browser workflows
-- [Agent Cores](docs/agent-cores.md) — Claude Code / codex / opencode compared: equivalent, unique, and how usage differs
-- [Browser Support](docs/browser-support.md) — backends, ports, tab groups, the desktop stage
-- [Developer Docs](docs/developer.md) — CLI, architecture, development setup
-
-Inside the product, `frago book` reads the shipped knowledge base — the canonical operational manual that stays in sync with the code.
-
-## License
-
-MIT — see [LICENSE](LICENSE)
-
-## Contributing
-
-- [Submit an Issue](https://github.com/tsaijamey/frago/issues)
-- [Discussions](https://github.com/tsaijamey/frago/discussions)
-- [Community recipes](https://github.com/tsaijamey/frago-recipe-community) — public recipes live in their own repository
+---
+
+## Why a single chat window can't handle real work
+
+1. **Real work takes a team, not one chat box.**
+   One chat thread breaks down on long projects. In frago, specialized digital employees own clear roles and ledgers, handing off work automatically without you babysitting the screen.
+2. **To collaborate, digital employees need shared context.**
+   If you have to copy-paste between windows, you are the bottleneck. In frago, the local files, reports, scripts, and session history left by one employee become the immediate context for the next.
+3. **Clear rules let agents manage real data — not paranoia.**
+   Most tools constantly suspect AI will wipe your drive, trapping it in crippled sandboxes or endless permission popups. frago enforces role boundaries, predictable data folders (`~/.frago/data`), and companion guardrails so you can confidently let agents manage your local data.
 
 ---
 
-<div align="center"><sub>Created with Claude Code</sub></div>
+## At a Glance: Temporary Chat Windows vs. A Resident Digital Crew
+
+### 1. Human Copy-Paste Relay vs. Artifacts as Shared Context
+
+<p align="center"><img src="docs/images/compare-crew-context.png" width="840" alt="Left: You copy-pasting across isolated chat windows; Right: Digital employees directly managing structured local data and session history, where one employee's output is the next employee's context" /></p>
+
+### 2. Paranoid Popups & Terminal Chaos vs. Empowered Control in One Cockpit
+
+<p align="center"><img src="docs/images/compare-cockpit-control.png" width="840" alt="Left: Constant suspicion of AI deleting files, terminal clutter, and allow/deny popups; Right: Role boundaries and companion rules let your crew work quietly in the background while you decide at key forks" /></p>
+
+---
+
+## Four Pillars Behind Your Digital Crew (Click to expand)
+
+<details>
+<summary><b>1. Role-Based Digital Employees & Swappable Brains</b></summary>
+<br>
+Each digital employee has a defined role, dedicated data ledger, and automatic peer-handoff rules. frago ships with a built-in execution engine (<b>CoreAgent</b>) out of the box, and also lets you bind roles to <b>Claude Code</b>, <b>Codex</b>, <b>OpenCode</b>, or <b>Antigravity (agy)</b>. Switch models anytime without losing your team structure or local data.
+</details>
+
+<details>
+<summary><b>2. Direct Local Data Management: 4-Layer Context & Companion Rules</b></summary>
+<br>
+<ul>
+<li><b>Artifact Ledger</b> (<code>~/.frago/data/&lt;topic&gt;/&lt;date-task&gt;/</code>): Reports, scripts, and notes land in predictable folders so the next employee picks up with zero re-briefing;</li>
+<li><b>Domain Knowledge</b> (<code>frago def</code>): Hard-won lessons and constraints are saved on the fly and recalled automatically on future tasks;</li>
+<li><b>Session Memory</b> (<code>frago session search / ask</code>): Search across tens of thousands of past sessions and query previous contexts directly;</li>
+<li><b>Companion Guardrails</b> (<code>frago-core</code> + <code>LightAgent</code>): Automatically verify folder rules, role boundaries, and delivery quality — giving you confidence without paranoid sandboxing.</li>
+</ul>
+</details>
+
+<details>
+<summary><b>3. Two Non-Intrusive Workspaces: Signed-In Browser + Background Virtual Desktop</b></summary>
+<br>
+<ul>
+<li><b>Signed-In Browser Tabs</b> (<code>frago browser</code>): Reuse your already logged-in browser profile without re-authenticating; each employee works in its own color-coded tab group without hijacking your active tab.</li>
+<li><b>Background Virtual Desktop</b> (<code>frago desktop</code>): Long GUI tasks and screen recordings run on an isolated background screen while you keep typing in the foreground; take over in one click only when a captcha requires you.</li>
+</ul>
+</details>
+
+<details>
+<summary><b>4. Decision Cards at Key Forks + Zero-Token Deterministic Recipes</b></summary>
+<br>
+<ul>
+<li><b>Decision Cards</b> (<code>frago app ask</code>): No noisy command-by-command prompts. Employees surface a structured choice card only when options are ready and a business decision matters.</li>
+<li><b>Zero-Token Recipes</b> (<code>frago recipe</code>): Once an employee figures out a workflow (daily briefings, cross-site collection, media processing, dashboards), freeze it into deterministic code that re-runs at <b>0 token cost with zero drift</b>.</li>
+</ul>
+</details>
+
+---
+
+## Get Started in 30 Seconds
+
+**No manual environment setup or prior CLI agent required.**
+One command sets up everything (including the built-in CoreAgent) and opens your Command Cockpit at `http://127.0.0.1:8093`.
+
+### Option 1: One-Line Automatic Install (Recommended)
+
+**macOS / Linux (Paste in Terminal):**
+```bash
+curl -fsSL https://frago.ai/install.sh | bash
+```
+
+**Windows (Paste in PowerShell):**
+```powershell
+irm https://frago.ai/install.ps1 | iex
+```
+
+### Option 2: Let Claude Code / Codex Install It for You
+
+```text
+/plugin marketplace add tsaijamey/how-to-install-frago
+/plugin install how-to-install-frago@how-to-install-frago
+```
+Then simply tell your agent: **Install frago for me** (see [how-to-install-frago](https://github.com/tsaijamey/how-to-install-frago)).
+
+<details>
+<summary><b>Manual Install / Developer Setup (PyPI & Source)</b></summary>
+<br>
+Requires Python 3.13+:
+```bash
+uv tool install frago-cli   # Install CLI and Web Cockpit
+frago init                  # Check dependencies and initialize config
+frago server start          # Launch service (http://127.0.0.1:8093)
+```
+See the full multi-platform guide in [Installation Guide](docs/installation.md).
+</details>
+
+---
+
+## Documentation & Community
+
+| Goal | Start Here |
+|---|---|
+| Delegate your first job in 10 minutes | [User Guide](docs/user-guide.md) |
+| Understand digital employees, shared data context & Recipes | [Core Concepts](docs/concepts.md) · [Recipe System](docs/recipes.md) |
+| Pair multiple agent engines & browser collaboration | [Agent Cores](docs/agent-cores.md) · [Browser Support](docs/browser-support.md) |
+| Explore community Recipes & share feedback | [Community Recipes](https://github.com/tsaijamey/frago-recipe-community) · [Discussions](https://github.com/tsaijamey/frago/discussions) · [Issues](https://github.com/tsaijamey/frago/issues) |
+
+---
+
+<div align="center">
+<sub>MIT License · Your digital crew and local data belong entirely to you · Created with frago<br/>Note: frago is an independent open-source project and is not affiliated with OpenClaw.</sub>
+</div>
