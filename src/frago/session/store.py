@@ -452,11 +452,14 @@ class SessionOntologyStore:
             if rec is None:
                 return None
             rec.turn_seq = max(0, int(rec.turn_seq)) + 1
+            was_error = rec.lifecycle_state == "error"
             rec.lifecycle_state = "running"
             rec.waiting_reason = None
             rec.updated_at = int(time.time())
             if summary is not None:
                 rec.summary = str(summary)
+            elif was_error:
+                rec.summary = ""
             if not self._write_disk_unlocked(records):
                 raise FileGuardError(f"Failed to persist start_turn for session '{clean_id}'")
             return rec
@@ -524,10 +527,13 @@ class SessionOntologyStore:
                     raw_summary is None or rec.summary == raw_summary
                 ):
                     continue
+                was_error = rec.lifecycle_state == "error"
                 rec.lifecycle_state = target
                 rec.updated_at = now_ts
                 if raw_summary is not None:
                     rec.summary = str(raw_summary)
+                elif was_error and target == "running":
+                    rec.summary = ""
                 changed += 1
             if changed and not self._write_disk_unlocked(records):
                 raise FileGuardError("Failed to persist batch lifecycle state reconciliations")

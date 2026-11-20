@@ -264,6 +264,7 @@ def inspect_session_file(
             content = msg.get("content") if isinstance(msg, dict) else None
             n_tools = 0
             has_text = False
+            has_thinking = False
             if isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):
@@ -273,13 +274,20 @@ def inspect_session_file(
                         n_tools += 1
                     elif btype == "text" and str(block.get("text") or "").strip():
                         has_text = True
+                    elif btype == "thinking" and str(block.get("thinking") or "").strip():
+                        has_thinking = True
             elif isinstance(content, str) and content.strip():
                 has_text = True
             tool_call_count += n_tools
-            if n_tools > 0 or has_text:
+            if n_tools > 0 or has_text or has_thinking:
                 step_count += 1
                 last_turn_error = False
-            last_event_kind = "assistant_tool" if n_tools > 0 else "assistant_text"
+            if n_tools > 0:
+                last_event_kind = "assistant_tool"
+            elif has_text:
+                last_event_kind = "assistant_text"
+            elif has_thinking:
+                last_event_kind = "assistant_think"
         elif rec_type == "system":
             step_count += 1
             subtype = str(record.get("subtype") or "").strip().lower()
@@ -315,6 +323,12 @@ def inspect_session_file(
             step_count += 1
             last_event_kind = "error"
             last_turn_error = True
+        elif rec_type == "result":
+            if record.get("is_error") or record.get("error"):
+                last_event_kind = "error"
+                last_turn_error = True
+            elif not last_turn_error:
+                last_event_kind = "turn_end"
 
     started_at = first_dt or mtime_dt
     last_activity = mtime_dt

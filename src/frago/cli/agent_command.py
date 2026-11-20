@@ -388,6 +388,21 @@ def _run_tmux_driver(
 
     sid = session_id or str(uuid.uuid4())
     tmux_name = tmux_target or tmux_name_for(sid)
+    if session_id and not dry_run:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+            from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+            onto_svc = get_default_session_service()
+            if (
+                onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+                or not os.environ.get("PYTEST_CURRENT_TEST")
+            ):
+                onto_svc.start_turn(
+                    sid,
+                    agent_kernel_id=agent_type,
+                    origin="worker" if source == "worker" else "terminal",
+                )
     if not quiet:
         where = f" in {tmux_target}" if tmux_target else ""
         click.echo(f"[OK] tmux driver: agent={agent_type} session={sid}{where}", err=json_out)
@@ -523,6 +538,21 @@ def _run_kernel(
     from frago.agent_driver import kernel_backend
 
     sid = session_id or kernel_backend.new_session_id()
+    if session_id and not dry_run:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+            from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+            onto_svc = get_default_session_service()
+            if (
+                onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+                or not os.environ.get("PYTEST_CURRENT_TEST")
+            ):
+                onto_svc.start_turn(
+                    sid,
+                    agent_kernel_id=agent_type,
+                    origin="terminal",
+                )
     if not quiet:
         click.echo(f"[OK] kernel driver: session={sid}", err=json_out)
     if dry_run:

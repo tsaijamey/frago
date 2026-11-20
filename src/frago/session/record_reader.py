@@ -587,9 +587,47 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
             rec = onto_by_sid.get(card.session_id)
             alive = liveness.get(card.session_id) if liveness is not None else None
             age_s = max(0.0, now_s - (card.last_active_at / 1000.0))
-            if card.status == "error" or (rec is not None and rec.lifecycle_state == "error"):
-                if card.status == "error" and rec is not None and rec.lifecycle_state != "error":
-                    pending_heals.append((card.session_id, "error", "session_error"))
+            if not card.employee_id and rec is not None and rec.employee_id:
+                card.employee_id = rec.employee_id
+            # 新轮次已启动或转录明确处于非错误进行中状态时，不得被前序遗留的 error 状态压死
+            has_fresh_onto_turn = (
+                rec is not None
+                and rec.lifecycle_state == "running"
+                and int(getattr(rec, "turn_seq", 0) or 0) > 0
+                and float(getattr(rec, "updated_at", 0) or 0) > (card.last_active_at / 1000.0) + 1.0
+            )
+            fresh_onto_turn = has_fresh_onto_turn and (
+                alive is True
+                or (
+                    liveness is None
+                    and (now_s - float(getattr(rec, "updated_at", 0) or 0)) < stale_cutoff_s
+                )
+            )
+            # 仅认明确的进程存活 + 未闭环步骤；禁止仅凭 liveness is None 下的 90 秒窗口覆写本体 error
+            transcript_running = (
+                alive is True
+                and card.last_kind != "error"
+                and card.last_kind in session_index.IN_PROGRESS_KINDS
+            )
+            if fresh_onto_turn or transcript_running:
+                card.status = "running"
+                card.lifecycle_state = "running"
+                card.digest_stuck = None
+                if rec is not None and rec.lifecycle_state == "error":
+                    pending_heals.append((card.session_id, "running", ""))
+                continue
+            if card.status == "error":
+                if (
+                    rec is not None
+                    and rec.lifecycle_state != "error"
+                    and not (liveness is None and has_fresh_onto_turn)
+                ):
+                    pending_heals.append(
+                        (card.session_id, "error", card.digest_stuck or "session_error")
+                    )
+                card.lifecycle_state = "error"
+                continue
+            if rec is not None and rec.lifecycle_state == "error":
                 card.status = "error"
                 card.lifecycle_state = "error"
                 continue
@@ -610,8 +648,6 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
                         card.status = "done" if card.last_kind == "agent.say" else "idle"
                     elif lstate == "awaiting_input" and card.status == "running":
                         card.status = "idle"
-                if not card.employee_id and rec.employee_id:
-                    card.employee_id = rec.employee_id
             else:
                 if card.status == "running":
                     card.lifecycle_state = "completed" if (alive is False and age_s >= stale_cutoff_s) else "running"

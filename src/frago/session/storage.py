@@ -297,8 +297,19 @@ def _reconcile_monitored_status(
     elif live_tmux_ids is not None and session.session_id in live_tmux_ids:
         is_alive = True
 
-    # 1. Explicit authoritative error from transcript/metadata MUST never be folded into completed.
+    # 1. Explicit authoritative error from transcript/metadata MUST never be folded into completed,
+    #    unless a newer active turn has explicitly started in ontology and is currently alive.
     if session.status == SessionStatus.ERROR:
+        fresh_onto_turn = (
+            onto_rec is not None
+            and str(onto_rec.lifecycle_state or "").strip().lower() == "running"
+            and int(getattr(onto_rec, "turn_seq", 0) or 0) > 0
+            and is_alive is True
+            and float(getattr(onto_rec, "updated_at", 0) or 0)
+            > session.last_activity.timestamp() + 1.0
+        )
+        if fresh_onto_turn:
+            return SessionStatus.RUNNING
         if persist_reconciliation and onto_rec is not None and onto_rec.lifecycle_state != "error":
             with contextlib.suppress(Exception):
                 from frago.session.service import get_default_session_service
@@ -316,6 +327,23 @@ def _reconcile_monitored_status(
     # 2. Consult ontology store if this session is managed there.
     if onto_rec is not None:
         onto_state = str(onto_rec.lifecycle_state or "").strip().lower()
+        if onto_state == "error" and session.status == SessionStatus.RUNNING and (
+            is_alive is True
+            or session.last_activity.timestamp() > float(getattr(onto_rec, "updated_at", 0) or 0) + 2.0
+        ):
+            if persist_reconciliation:
+                with contextlib.suppress(Exception):
+                    from frago.session.service import get_default_session_service
+
+                    get_default_session_service().reconcile_session_lifecycle(
+                        session.session_id,
+                        agent_kernel_id=session.agent_type.value,
+                        is_alive=True,
+                        last_activity_ts=session.last_activity.timestamp(),
+                        observed_active=True,
+                        persist=True,
+                    )
+            return SessionStatus.RUNNING
         if onto_state in {"error", "cancelled", "completed"}:
             return _status_from_ontology_state(onto_state)
         if onto_state in {"running", "queued", "awaiting_input"}:
@@ -395,7 +423,7 @@ def _derive_session_from_raw(
         if stats is None:
             return None
         resolved_status = stats.status
-        if resolved_status != SessionStatus.ERROR and onto_rec is not None:
+        if resolved_status not in (SessionStatus.ERROR, SessionStatus.RUNNING) and onto_rec is not None:
             onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
             if onto_state in {"error", "cancelled", "completed", "awaiting_input"}:
                 resolved_status = _status_from_ontology_state(onto_state)
@@ -425,7 +453,13 @@ def _derive_session_from_raw(
     if onto_rec is not None:
         onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
         if onto_state in {"error", "cancelled", "completed", "awaiting_input"}:
-            live_status = _status_from_ontology_state(onto_state)
+            onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
+            if not (
+                live_status == SessionStatus.RUNNING
+                and onto_state == "error"
+                and last_active.timestamp() > onto_updated + 2.0
+            ):
+                live_status = _status_from_ontology_state(onto_state)
     if status_filter is not None and live_status != status_filter:
         # 状态已经对不上时直接放行，不必为一场会被筛掉的会话去读 256 KB 原文算创建时刻。
         return None

@@ -26,6 +26,7 @@ Phase 2 的空闲回收（idle eviction）落在 ``evict_idle`` + 模块级 ``_i
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -59,6 +60,15 @@ class SessionActivation:
     text: str
 
 
+def _accepts_kw(fn: object, kw: str) -> bool:
+    """探测目标函数是否显式声明了指定关键字参数，兼容未带该参数的历史测试替身（含仅转发 **kwargs 的子类）。"""
+    try:
+        sig = inspect.signature(fn)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return kw in sig.parameters
+
+
 class UiSessionRunner:
     """把 WebUI 一轮 send→answer 跑进常驻 tmux 会话的薄封装（UI 专用）。"""
 
@@ -76,7 +86,10 @@ class UiSessionRunner:
                 from frago.init.config_manager import load_config
 
                 max_size = load_config().webui_sessions.max_resident
-            pool = WarmSessionPool(max_size=max_size)
+            pool = WarmSessionPool(
+                max_size=max_size,
+                default_env={"FRAGO_SURFACE": "webui"},
+            )
         self._pool = pool
         self._cwd = cwd or str(Path.home())
         self._agent_type = agent_type
@@ -108,16 +121,18 @@ class UiSessionRunner:
         mint 的一个把手，真编号要等会话起来后认领。
         """
         was_warm = self._pool.has(session_id)
+        run_kwargs: dict[str, object] = {
+            "agent_type": agent_type or self._agent_type,
+            "session_id": session_id,
+            "cwd": cwd or self._cwd,
+            "native_session_id": native_session_id,
+            "timeout_s": timeout_s,
+            "origin": "human",
+        }
+        if _accepts_kw(self._pool.run, "env"):
+            run_kwargs["env"] = {"FRAGO_SURFACE": "webui"}
         try:
-            result = self._pool.run(
-                text,
-                agent_type=agent_type or self._agent_type,
-                session_id=session_id,
-                cwd=cwd or self._cwd,
-                native_session_id=native_session_id,
-                timeout_s=timeout_s,
-                origin="human",
-            )
+            result = self._pool.run(text, **run_kwargs)
         except TmuxSendError as exc:
             logger.warning(
                 "ui session send aborted: submit unconfirmed (session=%s, agent=%s): %s",
@@ -131,6 +146,24 @@ class UiSessionRunner:
         # 绝不可伪造为成功的 SessionActivation 返回 200 OK，否则前端会清空草稿并静默吞掉整轮消息。
         if result.status == "error":
             detail = (result.text or "").strip() or "会话执行异常中止"
+            with contextlib.suppress(Exception):
+                import os
+
+                from frago.session.service import get_default_session_service
+                from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+                onto_svc = get_default_session_service()
+                if (
+                    onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+                    or not os.environ.get("PYTEST_CURRENT_TEST")
+                ):
+                    onto_svc.reconcile_session_lifecycle(
+                        session_id,
+                        agent_kernel_id=agent_type or self._agent_type,
+                        origin="web",
+                        is_alive=False,
+                        observed_error=detail,
+                    )
             raise RuntimeError(detail)
         if timeout_s > 0 and result.status == "timeout":
             raise TimeoutError(f"等待会话响应超时（{int(timeout_s)}s），请确认终端状态后重试")
@@ -171,12 +204,17 @@ class UiSessionRunner:
 
         阻塞调用，最长约 ``confirm_s`` 加一次提交的工夫，调用方在线程里跑。
         """
+        acquire_kwargs: dict[str, object] = {
+            "native_session_id": native_session_id,
+            "origin": "human",
+        }
+        if _accepts_kw(self._pool.acquire, "env"):
+            acquire_kwargs["env"] = {"FRAGO_SURFACE": "webui"}
         session = self._pool.acquire(
             agent_type or self._agent_type,
             session_id,
             cwd or self._cwd,
-            native_session_id=native_session_id,
-            origin="human",
+            **acquire_kwargs,
         )
         if getattr(session, "status", None) == "busy" or not _turn_finished(session):
             return "not_now"

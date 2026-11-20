@@ -138,12 +138,16 @@ class _Session:
     turn_seq: int = 0
     in_flight_turns: list[int] = field(default_factory=list)
     pending_turns: list[int] = field(default_factory=list)
+    #: runner 轮次序号 → 本体存储 turn_seq 映射，供收口时带单调栅栏校验，防 Turn 1 迟到覆盖 Turn 2。
+    onto_turn_seqs: dict[int, int] = field(default_factory=dict)
     #: 这一场被叫停了（或服务要停了）。置上之后喂料线程不再往下走，自己退出去。
     closed: bool = False
     #: 虚拟桌面导演等无人值守会话：人看的是桌面画面而不是工作台聊天页，关闭轻量审阅与拍板卡强拦。
     unattended: bool = False
     #: 虚拟桌面专职主操作员会话：仅允许调用 agent_os 提供的操作工具（Bash(frago desktop:*)）。
     desktop_operator: bool = False
+    #: 交互载体（如 "webui"）：仅 WebUI 发起/续接的会话设为 "webui"，注入 FRAGO_SURFACE=webui。
+    surface: str | None = None
     #: 模型或角色绑定已切换：若当前正忙，在本轮交卷回到 idle 时立即回收旧进程，让下一轮按新模型重起。
     reload_on_idle: bool = False
 
@@ -186,8 +190,10 @@ def _session_for(
     profile_id: str | None = None,
     unattended: bool = False,
     desktop_operator: bool = False,
+    surface: str | None = None,
 ) -> _Session:
     """取这一场的常驻条目，没有就建一个（此时还没起进程）。"""
+    clean_surface = surface.strip() if isinstance(surface, str) and surface.strip() else None
     with _sessions_lock:
         got = _sessions.get(session_id)
         if got is None:
@@ -198,6 +204,7 @@ def _session_for(
                 profile_id=profile_id,
                 unattended=unattended or desktop_operator,
                 desktop_operator=desktop_operator,
+                surface=clean_surface,
             )
             _sessions[session_id] = got
         else:
@@ -210,6 +217,8 @@ def _session_for(
                 got.unattended = True
             if desktop_operator:
                 got.desktop_operator = True
+            if clean_surface:
+                got.surface = clean_surface
         return got
 
 
@@ -463,6 +472,8 @@ def _spawn(sess: _Session) -> None:
             profile_id=sess.profile_id,
         )
     env = get_utf8_env()
+    if sess.surface:
+        env["FRAGO_SURFACE"] = sess.surface
     if sess.unattended:
         env["FRAGO_REVIEW"] = "off"
         env["FRAGO_STOP_CHECK"] = "off"
@@ -629,7 +640,58 @@ def _read_loop(sess: _Session) -> None:
                 elif sess.state in ("busy", "starting"):
                     sess.state = "idle"
             if not still_running:
-                sess.turn_done.set()
+                with contextlib.suppress(Exception):
+                    import os
+
+                    from frago.session.service import get_default_session_service
+                    from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+                    onto_svc = get_default_session_service()
+                    if (
+                        onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+                        or not os.environ.get("PYTEST_CURRENT_TEST")
+                    ):
+                        with sess.lock:
+                            can_close_onto = (
+                                sess.turn_seq == completed_seq
+                                and sess.state != "busy"
+                                and sess.in_flight == 0
+                                and sess.pending.qsize() == 0
+                            )
+                            onto_turn_seq = (
+                                sess.onto_turn_seqs.pop(completed_seq, None)
+                                if can_close_onto
+                                else None
+                            )
+                        if can_close_onto:
+                            if found.get("is_error") or found.get("error"):
+                                onto_svc.reconcile_session_lifecycle(
+                                    sess.session_id,
+                                    agent_kernel_id="coreagent",
+                                    origin="web",
+                                    is_alive=False,
+                                    observed_error=str(found.get("error") or "session_error"),
+                                    turn_seq=onto_turn_seq,
+                                )
+                            else:
+                                cur_rec = onto_svc.ensure_managed_session(
+                                    sess.session_id,
+                                    agent_kernel_id="coreagent",
+                                    origin="web",
+                                )
+                                if cur_rec.lifecycle_state == "running":
+                                    if onto_turn_seq is not None:
+                                        onto_svc.complete_turn_if_current(
+                                            sess.session_id,
+                                            turn_seq=onto_turn_seq,
+                                            target_state="awaiting_input",
+                                            waiting_reason="end_turn",
+                                        )
+                                    else:
+                                        onto_svc.yield_awaiting_input(
+                                            session_id=sess.session_id,
+                                            waiting_reason="end_turn",
+                                        )
                 try:
                     import inspect
 
@@ -650,6 +712,7 @@ def _read_loop(sess: _Session) -> None:
                         sess.session_id,
                         exc_info=True,
                     )
+                sess.turn_done.set()
     except Exception:  # noqa: BLE001 — 读线程崩了不该静默
         logger.warning("读 coreagent stdout 时出错（session=%s）", sess.session_id, exc_info=True)
     finally:
@@ -847,16 +910,37 @@ def _enqueue(sess: _Session, prompt: str) -> None:
             ) from None
         sess.touched_at = time.time()
         sess.turn_seq += 1
-        sess.pending_turns.append(sess.turn_seq)
+        enqueued_turn_seq = sess.turn_seq
+        sess.pending_turns.append(enqueued_turn_seq)
         sess.last_result.clear()
         sess.turn_done.clear()
         with contextlib.suppress(Exception):
             from frago.server.services import workbench_queue
 
-            workbench_queue.sync_turn_seq(sess.session_id, sess.turn_seq)
+            workbench_queue.sync_turn_seq(sess.session_id, enqueued_turn_seq)
         if sess.proc is None:
             _spawn(sess)
         sess.state = "busy"
+    with contextlib.suppress(Exception):
+        import os
+
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if (
+            onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            started_rec = onto_svc.start_turn(
+                sess.session_id,
+                agent_kernel_id="coreagent",
+                origin="web",
+            )
+            with sess.lock:
+                sess.onto_turn_seqs[enqueued_turn_seq] = int(started_rec.turn_seq)
+                for stale_k in [k for k in sess.onto_turn_seqs if k < enqueued_turn_seq - 64]:
+                    sess.onto_turn_seqs.pop(stale_k, None)
 
 
 def _wait_for_turn(sess: _Session, wait_s: float) -> dict[str, object]:
@@ -882,6 +966,7 @@ def send(
     cwd: str,
     title: str | None = None,
     profile_id: str | None = None,
+    surface: str | None = None,
     wait_s: float = WAIT_S,
 ) -> SessionActivation:
     """把这句话排给这一场，最多等 ``wait_s``，到点先回「在跑」。
@@ -906,6 +991,7 @@ def send(
         profile_id=profile_id,
         unattended=_is_director_prompt(prompt) or is_op,
         desktop_operator=is_op,
+        surface=surface,
     )
     _enqueue(sess, prompt)
     got = _wait_for_turn(sess, wait_s)
@@ -938,6 +1024,7 @@ def send_queued(
     cwd: str,
     title: str | None = None,
     profile_id: str | None = None,
+    surface: str | None = None,
 ) -> str:
     """同 :func:`send`，但一步都不等：排上就返回，投喂在后台做。
 
@@ -959,6 +1046,7 @@ def send_queued(
         profile_id=profile_id,
         unattended=_is_director_prompt(prompt) or is_op,
         desktop_operator=is_op,
+        surface=surface,
     )
     _enqueue(sess, prompt)
     return sess.feeder.name if sess.feeder else f"coreagent-queue-{session_id[:16]}"

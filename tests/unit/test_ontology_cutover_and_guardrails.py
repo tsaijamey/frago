@@ -754,3 +754,600 @@ class TestReviewBlockingRegressions:
         on_disk = json.loads(c_path.read_text(encoding="utf-8"))
         assert "webui_sessions" in on_disk
 
+
+class TestResumedErrorSessionTurnsRunning:
+    """回归：前序轮次曾为 error 的会话重新启动/运行新一轮时，必须干净切回 running 而非残留旧 Error。"""
+
+    def test_prior_error_followed_by_new_turn_transitions_to_running_across_store_stream_and_api(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from frago.server.routes import workbench as wb_route
+        from frago.server.services import coreagent_runner, tmux_sessions_service, workbench_groups
+        from frago.session import coreagent_store, record_reader, session_index, storage
+        from frago.session.models import AgentType, SessionStatus
+        from frago.session.opencode_stream import OpencodeStream
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+        from frago.session.stream import SessionStream
+        from frago.session.unified_record import UnifiedRecord
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setattr(coreagent_store, "sessions_root", lambda: tmp_path / "coreagent_projects")
+        monkeypatch.setattr(
+            session_index, "COREAGENT_CACHE_FILE", tmp_path / "coreagent-session-index.json"
+        )
+        monkeypatch.setattr(
+            session_index, "CACHE_FILE", tmp_path / "claude-session-index.json"
+        )
+        monkeypatch.setattr(storage, "_live_tmux_session_ids", lambda: set())
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr("frago.session.store.get_default_session_store", lambda: store)
+
+        # 1) 转录层：前序轮次为 informational+warning / api_error，随后发起新 user + tool_use（或仅 thinking）
+        proj = tmp_path / "coreagent_projects" / "-tmp-resumed"
+        proj.mkdir(parents=True)
+        sid = "core_resumed_after_err_001"
+        jsonl = proj / f"{sid}.jsonl"
+        now_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        jsonl_content = (
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": "2026-11-20T08:00:00Z",
+                            "message": {"role": "user", "content": "turn 1"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "informational",
+                            "level": "warning",
+                            "content": "empty_answer: prior failure",
+                            "timestamp": "2026-11-20T08:00:05Z",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": now_iso,
+                            "message": {"role": "user", "content": "turn 2 retry"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "timestamp": now_iso,
+                            "message": {
+                                "role": "assistant",
+                                "content": [{"type": "thinking", "thinking": "analyzing..."}],
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        jsonl.write_text(jsonl_content, encoding="utf-8")
+        mirror_dir = tmp_path / "sessions" / "coreagent" / sid
+        mirror_dir.mkdir(parents=True)
+        (mirror_dir / "raw.jsonl").write_text(jsonl_content, encoding="utf-8")
+
+        inspected = coreagent_store.inspect_session_file(jsonl)
+        assert inspected is not None
+        assert inspected.status == SessionStatus.RUNNING
+
+        # 2) 本体此前停留在 error（且带旧 session_error 摘要），随后新轮次写入转录（mtime 晚于旧 error）
+        store.save(
+            SessionOntologyRecord(
+                session_id=sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="session_error",
+                step_count=10,
+                turn_seq=0,
+            )
+        )
+        new_mtime = datetime.now().timestamp() + 5.0
+        os.utime(mirror_dir / "raw.jsonl", (new_mtime, new_mtime))
+        os.utime(jsonl, (new_mtime, new_mtime))
+
+        # storage.list_sessions 与 record_reader.list_sessions 都必须判为 running 并把本体从 error 恢复
+        running_core = storage.list_sessions(
+            agent_type=AgentType.COREAGENT, status=SessionStatus.RUNNING, limit=50
+        )
+        assert any(s.session_id == sid for s in running_core)
+        cards = record_reader.list_sessions(liveness={sid: True})
+        resumed_card = next(c for c in cards if c.session_id == sid)
+        assert resumed_card.status == "running"
+        assert resumed_card.lifecycle_state == "running"
+        assert resumed_card.digest_stuck is None
+        healed = store.get(sid)
+        assert healed is not None
+        assert healed.lifecycle_state == "running"
+        assert healed.summary == ""
+
+        # 3) SessionStream / OpencodeStream 观察到终态(error)会话有新活跃步骤时，必须先 start_turn 再记步
+        stream_sid = "core_stream_resume_002"
+        store.save(
+            SessionOntologyRecord(
+                session_id=stream_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="api_error",
+                step_count=5,
+                turn_seq=1,
+            )
+        )
+        stream_file = proj / f"{stream_sid}.jsonl"
+        stream_file.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": now_iso,
+                    "message": {"role": "user", "content": "resume from stream"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        stream = SessionStream(
+            project_path=str(proj),
+            watch_dir=proj,
+            ontology_service=svc,
+            family="coreagent",
+            origin="web",
+        )
+        stream.watch_session(stream_sid, watch_file=stream_file)
+        stream._file_seqs[str(stream_file)] = -1
+        stream._process_file(str(stream_file))
+        stream_rec = store.get(stream_sid)
+        assert stream_rec is not None
+        assert stream_rec.lifecycle_state == "running"
+        assert stream_rec.summary == ""
+        assert stream_rec.turn_seq == 2
+        assert stream_rec.step_count == 6
+
+        oc_sid = "ses_opencode_resume_003"
+        store.save(
+            SessionOntologyRecord(
+                session_id=oc_sid,
+                agent_kernel="opencode",
+                lifecycle_state="error",
+                summary="model_error",
+                step_count=3,
+                turn_seq=1,
+            )
+        )
+        oc_stream = OpencodeStream(ontology_service=svc, origin="web")
+        oc_rec1 = UnifiedRecord(
+            id="m1:0",
+            session_id=oc_sid,
+            group_id="m1",
+            seq=0,
+            ts=1000,
+            kind="error",
+            agent_path=[],
+            payload={"message": "boom"},
+            raw_available=False,
+        )
+        oc_rec2 = UnifiedRecord(
+            id="m2:0",
+            session_id=oc_sid,
+            group_id="m2",
+            seq=1,
+            ts=2000,
+            kind="user.say",
+            agent_path=[],
+            payload={"text": "retry"},
+        )
+        oc_stream._session_seqs[oc_sid] = 0
+        oc_stream._session_done[oc_sid] = True
+        monkeypatch.setattr("frago.session.opencode_stream._safe_translate", lambda _s: [oc_rec1, oc_rec2])
+        monkeypatch.setattr("frago.session.opencode_stream.latest_turn", lambda _s: SimpleNamespace(done=False))
+        monkeypatch.setattr(
+            "frago.session.session_origin.load_origin_index",
+            lambda: SimpleNamespace(is_worker=lambda _s: False),
+        )
+        oc_stream._process_session(oc_sid)
+        oc_onto = store.get(oc_sid)
+        assert oc_onto is not None
+        assert oc_onto.lifecycle_state == "running"
+        assert oc_onto.turn_seq == 2
+        assert oc_onto.step_count == 4
+
+        # 4) /api/workbench/sessions：即使转录尚停在前序 error，但 start_turn 已启动或 coreagent_runner 正忙，
+        #    返回前端的必须是 status="running", lifecycle_state="running", digest_stuck=None；
+        #    而真正以错误停下且未在跑的会话仍返回 status="error", lifecycle_state="error"。
+        busy_after_err_sid = "core_busy_just_started"
+        real_err_sid = "core_7ef20ab9e7e2437bbc0cf58b890ef435"
+        store.save(
+            SessionOntologyRecord(
+                session_id=busy_after_err_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="old error",
+                turn_seq=1,
+            )
+        )
+        svc.start_turn(busy_after_err_sid, agent_kernel_id="coreagent", origin="web")
+        store.save(
+            SessionOntologyRecord(
+                session_id=real_err_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="empty_answer",
+                turn_seq=1,
+            )
+        )
+        mock_cards = [
+            record_reader.SessionCard(
+                session_id=busy_after_err_sid,
+                family="coreagent",
+                title="Retrying after error",
+                directory="/tmp",
+                created_at=1000,
+                last_active_at=int((datetime.now().timestamp() - 30) * 1000),
+                status="error",
+                digest_stuck="old error",
+                last_kind="error",
+                lifecycle_state="error",
+            ),
+            record_reader.SessionCard(
+                session_id=real_err_sid,
+                family="coreagent",
+                title="Real failed session",
+                directory="/tmp",
+                created_at=1000,
+                last_active_at=int((datetime.now().timestamp() - 30) * 1000),
+                status="error",
+                digest_stuck="empty_answer",
+                last_kind="error",
+                lifecycle_state="error",
+            ),
+        ]
+        monkeypatch.setattr(record_reader, "list_sessions", lambda **_k: list(mock_cards))
+        monkeypatch.setattr(tmux_sessions_service, "open_session_names", lambda: set())
+        monkeypatch.setattr(
+            coreagent_runner, "live_states", lambda: {busy_after_err_sid: True}
+        )
+        monkeypatch.setattr(workbench_groups, "local_ops_session_ids", lambda: set())
+        monkeypatch.setattr(wb_route, "list_posts", lambda: [])
+        monkeypatch.setattr(wb_route, "_dispatch_states_by_caller", lambda **_k: (set(), set()))
+        monkeypatch.setattr(wb_route, "_observer_slots_state", lambda *_a: (False, False))
+        monkeypatch.setattr(wb_route, "_keep_watching_only", lambda _sids: None)
+
+        rows = asyncio.run(wb_route.list_workbench_sessions())
+        by_id = {r["session_id"]: r for r in rows}
+        assert by_id[busy_after_err_sid]["status"] == "running"
+        assert by_id[busy_after_err_sid]["lifecycle_state"] == "running"
+        assert by_id[busy_after_err_sid]["digest_stuck"] is None
+
+        assert by_id[real_err_sid]["status"] == "error"
+        assert by_id[real_err_sid]["lifecycle_state"] == "error"
+        assert by_id[real_err_sid]["digest_stuck"] == "empty_answer"
+
+    def test_tmux_fresh_start_turn_and_dead_90s_runner_error_via_real_record_reader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """端到端不打桩 record_reader.list_sessions：
+        1) tmux 会话刚 start_turn()、旧转录末尾仍是 error 且新 user 尚未落盘时，
+           调 /api/workbench/sessions 不得反手把本体写回 error，且必须返回 running；
+        2) 外围运行器写入 error 且末尾无独立 error 行、距最后写入 < 90s 且 is_alive=False 时，
+           不得被 90 秒窗口洗白成 running 或 completed。
+        """
+        import asyncio
+
+        from frago.agent_driver.tmux_session import tmux_name_for
+        from frago.server.routes import workbench as wb_route
+        from frago.server.services import coreagent_runner, tmux_sessions_service, workbench_groups
+        from frago.session import coreagent_store, record_reader, session_index
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setattr(coreagent_store, "sessions_root", lambda: tmp_path / "coreagent_projects")
+        monkeypatch.setattr(
+            session_index, "COREAGENT_CACHE_FILE", tmp_path / "coreagent-session-index.json"
+        )
+        # 不 monkeypatch record_reader.list_sessions，仅隔离其余四家扫描以避免扫描宿主机真实家目录
+        monkeypatch.setattr(record_reader, "_claude_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_opencode_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_codex_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_agy_cards", lambda *_a, **_k: [])
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr("frago.session.store.get_default_session_store", lambda: store)
+
+        proj = tmp_path / "coreagent_projects" / "-tmp-real-chain"
+        proj.mkdir(parents=True)
+        now_s = datetime.now().timestamp()
+
+        # 场景 1：tmux 常驻会话刚 start_turn()，但新 user 尚未落盘，旧转录末尾仍是 error
+        tmux_sid = "core_tmux_fresh_turn_001"
+        tmux_jsonl = proj / f"{tmux_sid}.jsonl"
+        old_err_content = (
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "2026-11-20T09:00:00Z",
+                    "message": {"role": "user", "content": "turn 1"},
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "informational",
+                    "level": "warning",
+                    "content": "empty_answer",
+                    "timestamp": "2026-11-20T09:00:05Z",
+                }
+            )
+            + "\n"
+        )
+        tmux_jsonl.write_text(old_err_content, encoding="utf-8")
+        os.utime(tmux_jsonl, (now_s - 30.0, now_s - 30.0))
+        store.save(
+            SessionOntologyRecord(
+                session_id=tmux_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="session_error",
+                turn_seq=0,
+                updated_at=int(now_s - 30),
+            )
+        )
+        svc.start_turn(tmux_sid, agent_kernel_id="coreagent", origin="web")
+
+        # 场景 2：外围运行器捕获错误写入 ontology=error，转录末条为 agent.say 且距今 < 90s（> rec.updated_at + 2s），已死亡
+        dead_err_sid = "core_dead_runner_err_002"
+        dead_jsonl = proj / f"{dead_err_sid}.jsonl"
+        dead_content = (
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "2026-11-20T09:01:00Z",
+                    "message": {"role": "user", "content": "turn 1"},
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-11-20T09:01:05Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "partial"}]},
+                }
+            )
+            + "\n"
+        )
+        dead_jsonl.write_text(dead_content, encoding="utf-8")
+        os.utime(dead_jsonl, (now_s - 5.0, now_s - 5.0))
+        store.save(
+            SessionOntologyRecord(
+                session_id=dead_err_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="runner_exit_nonzero",
+                turn_seq=1,
+                updated_at=int(now_s - 20),
+            )
+        )
+
+        # 即使无参数调用 record_reader.list_sessions()（liveness=None），也不得把 tmux_sid 反写回 error，
+        # 也不得把 dead_err_sid 洗白成 running 或 completed
+        direct_cards = {c.session_id: c for c in record_reader.list_sessions()}
+        assert direct_cards[tmux_sid].status == "running"
+        assert direct_cards[tmux_sid].lifecycle_state == "running"
+        assert store.get(tmux_sid).lifecycle_state == "running"
+        assert direct_cards[dead_err_sid].status == "error"
+        assert direct_cards[dead_err_sid].lifecycle_state == "error"
+        assert store.get(dead_err_sid).lifecycle_state == "error"
+
+        monkeypatch.setattr(
+            tmux_sessions_service, "open_session_names", lambda: {tmux_name_for(tmux_sid)}
+        )
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+        monkeypatch.setattr(workbench_groups, "local_ops_session_ids", lambda: set())
+        monkeypatch.setattr(wb_route, "list_posts", lambda: [])
+        monkeypatch.setattr(wb_route, "_dispatch_states_by_caller", lambda **_k: (set(), set()))
+        monkeypatch.setattr(wb_route, "_observer_slots_state", lambda *_a: (False, False))
+        monkeypatch.setattr(wb_route, "_keep_watching_only", lambda _sids: None)
+
+        rows = asyncio.run(wb_route.list_workbench_sessions())
+        by_id = {r["session_id"]: r for r in rows}
+
+        assert by_id[tmux_sid]["status"] == "running"
+        assert by_id[tmux_sid]["lifecycle_state"] == "running"
+        assert by_id[tmux_sid]["in_tmux"] is True
+        assert by_id[tmux_sid]["digest_stuck"] is None
+        assert store.get(tmux_sid).lifecycle_state == "running"
+
+        assert by_id[dead_err_sid]["status"] == "error"
+        assert by_id[dead_err_sid]["lifecycle_state"] == "error"
+        assert by_id[dead_err_sid]["alive"] is False
+        assert store.get(dead_err_sid).lifecycle_state == "error"
+
+    def test_send_when_idle_not_now_preserves_error_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from frago.server.services import session_send, ui_session_runner
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+
+        cc_sid = "11111111-2222-3333-4444-555555555555"
+        store.save(
+            SessionOntologyRecord(
+                session_id=cc_sid,
+                agent_kernel="claude",
+                lifecycle_state="error",
+                summary="previous_failure",
+                turn_seq=2,
+            )
+        )
+        monkeypatch.setattr(
+            session_send,
+            "resolve_target",
+            lambda _sid, **_k: session_send.SendTarget(
+                session_id=cc_sid,
+                family="claude-code",
+                agent_type="claude",
+                cwd=str(tmp_path),
+                is_new=False,
+            ),
+        )
+        fake_runner = SimpleNamespace(submit_when_idle=lambda *_a, **_k: "not_now")
+        monkeypatch.setattr(ui_session_runner, "get_runner", lambda: fake_runner)
+
+        verdict = session_send.send_when_idle(cc_sid, "callback ping", landed=lambda: False)
+        assert verdict == "not_now"
+        rec_after = store.get(cc_sid)
+        assert rec_after is not None
+        assert rec_after.lifecycle_state == "error"
+        assert rec_after.summary == "previous_failure"
+        assert rec_after.turn_seq == 2
+
+        # 确认真正 landed 时才推进为 running
+        fake_runner_ok = SimpleNamespace(submit_when_idle=lambda *_a, **_k: "landed")
+        monkeypatch.setattr(ui_session_runner, "get_runner", lambda: fake_runner_ok)
+        verdict_ok = session_send.send_when_idle(cc_sid, "callback ok", landed=lambda: True)
+        assert verdict_ok == "landed"
+        rec_landed = store.get(cc_sid)
+        assert rec_landed is not None
+        assert rec_landed.lifecycle_state == "running"
+        assert rec_landed.summary == ""
+        assert rec_landed.turn_seq == 3
+
+    def test_coreagent_runner_late_turn1_closeout_does_not_overwrite_turn2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import io
+        from types import SimpleNamespace
+
+        from frago.server.services import coreagent_runner, workbench_queue
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr(workbench_queue, "schedule_auto_inject_after_settle", lambda *_a, **_k: None)
+
+        # 场景 A：Turn 1 刚释放 sess.lock 后 Turn 2 已入队（sess.turn_seq 推进、state=busy），
+        # Turn 1 二次锁检查必须放弃收口，不得覆盖 Turn 2 的 running
+        sid_a = "core_race_guard_001"
+        started_t1 = svc.start_turn(sid_a, agent_kernel_id="coreagent", origin="web")
+        fake_stdout_a = io.StringIO(
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "turn1_err",
+                }
+            )
+            + "\n"
+        )
+        sess_a = coreagent_runner._Session(
+            session_id=sid_a,
+            cwd=str(tmp_path),
+            state="busy",
+            proc=SimpleNamespace(stdout=fake_stdout_a),
+            in_flight=1,
+            turn_seq=1,
+            in_flight_turns=[1],
+            onto_turn_seqs={1: started_t1.turn_seq},
+        )
+        t2_fired = False
+        reconcile_calls_a = 0
+        orig_reconcile_a = svc.reconcile_session_lifecycle
+
+        def _count_reconcile_a(*args: object, **kwargs: object):
+            nonlocal reconcile_calls_a
+            reconcile_calls_a += 1
+            return orig_reconcile_a(*args, **kwargs)
+
+        monkeypatch.setattr(svc, "reconcile_session_lifecycle", _count_reconcile_a)
+
+        def _get_svc_and_enqueue_t2():
+            nonlocal t2_fired
+            if not t2_fired:
+                t2_fired = True
+                with sess_a.lock:
+                    sess_a.turn_seq = 2
+                    sess_a.state = "busy"
+                svc.start_turn(sid_a, agent_kernel_id="coreagent", origin="web")
+            return svc
+
+        monkeypatch.setattr("frago.session.service.get_default_session_service", _get_svc_and_enqueue_t2)
+        coreagent_runner._read_loop(sess_a)
+        assert reconcile_calls_a == 0
+        rec_a = store.get(sid_a)
+        assert rec_a is not None
+        assert rec_a.lifecycle_state == "running"
+        assert rec_a.turn_seq == 2
+
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr(svc, "reconcile_session_lifecycle", orig_reconcile_a)
+
+        # 场景 B：Turn 1 通过 sess.lock 检查后、写本体前 Turn 2 启动，
+        # 单调 turn_seq 栅栏必须拦截 Turn 1 迟到的 error 收口
+        sid_b = "core_race_fence_002"
+        started_b1 = svc.start_turn(sid_b, agent_kernel_id="coreagent", origin="web")
+        fake_stdout_b = io.StringIO(
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "turn1_err",
+                }
+            )
+            + "\n"
+        )
+        sess_b = coreagent_runner._Session(
+            session_id=sid_b,
+            cwd=str(tmp_path),
+            state="busy",
+            proc=SimpleNamespace(stdout=fake_stdout_b),
+            in_flight=1,
+            turn_seq=1,
+            in_flight_turns=[1],
+            onto_turn_seqs={1: started_b1.turn_seq},
+        )
+        orig_reconcile = svc.reconcile_session_lifecycle
+        reconcile_called = False
+
+        def _turn2_starts_before_reconcile(*args: object, **kwargs: object):
+            nonlocal reconcile_called
+            reconcile_called = True
+            svc.start_turn(sid_b, agent_kernel_id="coreagent", origin="web")
+            return orig_reconcile(*args, **kwargs)
+
+        monkeypatch.setattr(svc, "reconcile_session_lifecycle", _turn2_starts_before_reconcile)
+        coreagent_runner._read_loop(sess_b)
+        assert reconcile_called is True
+        rec_b = store.get(sid_b)
+        assert rec_b is not None
+        assert rec_b.lifecycle_state == "running"
+        assert rec_b.turn_seq == 2
+
+
+

@@ -516,6 +516,7 @@ class SessionOntologyService:
         last_activity_ts: float | None = None,
         observed_error: str | None = None,
         observed_terminal_state: str | None = None,
+        observed_active: bool = False,
         turn_seq: int | None = None,
         stale_after_seconds: float = ZOMBIE_IDLE_TIMEOUT_SECONDS,
         now_ts: float | None = None,
@@ -569,7 +570,13 @@ class SessionOntologyService:
             else None
         )
 
-        if clean_error:
+        if observed_active and not clean_error:
+            # Active turn observed (e.g., new user prompt / tool call / live runner) supersedes
+            # any stale error/completed state from a previous turn.
+            target = "running"
+            if current == "error":
+                new_summary = ""
+        elif clean_error:
             # Error MUST remain explicitly exposed and NEVER folded into completed
             if is_alive is not True or current in {"running", "queued", "completed"}:
                 target = "error"
@@ -585,11 +592,10 @@ class SessionOntologyService:
             # When caller has no live signal and inactivity exceeded stale threshold, converge zombie running/queued/awaiting_input
             target = "completed"
 
-        if target != current or (clean_error and new_summary != rec.summary):
+        if target != current or (new_summary != rec.summary):
             if not persist:
                 rec.lifecycle_state = target
-                if new_summary:
-                    rec.summary = new_summary
+                rec.summary = new_summary
                 return rec
             try:
                 updated = self._store.update_lifecycle_state(

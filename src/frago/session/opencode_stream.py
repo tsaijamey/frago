@@ -193,23 +193,72 @@ class OpencodeStream:
 
             if not first_sight and self._ontology_service is not None:
                 try:
-                    self._ontology_service.ensure_managed_session(
-                        session_id=session_id,
-                        agent_kernel_id="opencode",
-                        origin=self._observed_origin(session_id),
+                    from frago.session.service import TERMINAL_STATES
+
+                    _bk = {"call.envelope", "session.state", "context.inject", "todo.snapshot", "usage.tick"}
+                    _active_kinds = {
+                        "user.say",
+                        "tool.call",
+                        "tool.result",
+                        "agent.think",
+                        "subagent.dispatch",
+                        "agent.say",
+                    }
+                    tail_substantive = next(
+                        (r for r in reversed(new_records) if r.kind not in _bk),
+                        None,
                     )
-                    for r in new_records:
-                        step_type = self._map_record_to_step_type(r.kind)
-                        payload = r.payload if isinstance(r.payload, dict) else {}
-                        tool_name = (
-                            payload.get("tool_name") if isinstance(payload, dict) else None
+                    has_active_work = any(r.kind in _active_kinds for r in new_records)
+                    origin = self._observed_origin(session_id)
+                    existing_rec = self._ontology_service.get_session(session_id)
+                    if (
+                        existing_rec is not None
+                        and getattr(existing_rec, "lifecycle_state", None) in TERMINAL_STATES
+                        and has_active_work
+                        and (tail_substantive is None or tail_substantive.kind != "error")
+                    ):
+                        self._ontology_service.start_turn(
+                            session_id,
+                            agent_kernel_id="opencode",
+                            origin=origin,
                         )
-                        self._ontology_service.record_session_step(
+                    else:
+                        self._ontology_service.ensure_managed_session(
                             session_id=session_id,
-                            step_type=step_type,
-                            payload_dict=payload,
-                            tool_name=tool_name,
+                            agent_kernel_id="opencode",
+                            origin=origin,
                         )
+                    if tail_substantive is not None and tail_substantive.kind == "error":
+                        err_payload = (
+                            tail_substantive.payload
+                            if isinstance(tail_substantive.payload, dict)
+                            else {}
+                        )
+                        err_msg = str(
+                            err_payload.get("message")
+                            or err_payload.get("code")
+                            or "session_error"
+                        )
+                        self._ontology_service.reconcile_session_lifecycle(
+                            session_id,
+                            agent_kernel_id="opencode",
+                            origin=origin,
+                            is_alive=False,
+                            observed_error=err_msg,
+                        )
+                    else:
+                        for r in new_records:
+                            step_type = self._map_record_to_step_type(r.kind)
+                            payload = r.payload if isinstance(r.payload, dict) else {}
+                            tool_name = (
+                                payload.get("tool_name") if isinstance(payload, dict) else None
+                            )
+                            self._ontology_service.record_session_step(
+                                session_id=session_id,
+                                step_type=step_type,
+                                payload_dict=payload,
+                                tool_name=tool_name,
+                            )
                 except Exception:
                     logger.exception(
                         "OpencodeStream failed to record ontology steps for session %s",
@@ -230,15 +279,18 @@ class OpencodeStream:
             self._session_done[session_id] = True
             if self._ontology_service is not None:
                 try:
-                    self._ontology_service.ensure_managed_session(
+                    from frago.session.service import TERMINAL_STATES
+
+                    cur_rec = self._ontology_service.ensure_managed_session(
                         session_id=session_id,
                         agent_kernel_id="opencode",
                         origin=self._observed_origin(session_id),
                     )
-                    self._ontology_service.yield_awaiting_input(
-                        session_id=session_id,
-                        waiting_reason="end_turn",
-                    )
+                    if getattr(cur_rec, "lifecycle_state", None) not in TERMINAL_STATES:
+                        self._ontology_service.yield_awaiting_input(
+                            session_id=session_id,
+                            waiting_reason="end_turn",
+                        )
                 except Exception:
                     logger.exception(
                         "OpencodeStream failed to transition ontology awaiting_input for session %s",

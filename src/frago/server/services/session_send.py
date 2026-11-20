@@ -239,6 +239,26 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
     return SendTarget(session_id, family, agent_type, directory, is_new=False)
 
 
+def _mark_ontology_turn_started(session_id: str, family: RecordFamily, *, origin: str = "web") -> None:
+    """在投喂新一轮前同步推进本体状态机为 ``running``，清除前序遗留的 ``error``。"""
+    import os
+
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if (
+            onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            onto_svc.start_turn(
+                session_id,
+                agent_kernel_id=family,
+                origin=origin,
+            )
+
+
 def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s: float = 180.0):
     """把一段提示词投进这场会话，返回激活态（阻塞：tmux + 轮询，调用方丢线程里跑）。
 
@@ -265,8 +285,13 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
     )
     if target.family == "coreagent":
         from frago.server.services import coreagent_runner
+        from frago.server.services.ui_session_runner import _accepts_kw
 
-        return coreagent_runner.send(session_id, prompt, cwd=target.cwd or str(Path.home()))
+        core_kwargs: dict[str, object] = {"cwd": target.cwd or str(Path.home())}
+        if _accepts_kw(coreagent_runner.send, "surface"):
+            core_kwargs["surface"] = "webui"
+        return coreagent_runner.send(session_id, prompt, **core_kwargs)
+    _mark_ontology_turn_started(session_id, target.family)
     return get_runner().send(
         session_id,
         prompt,
@@ -300,10 +325,13 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
 
     if target.family == "coreagent":
         from frago.server.services import coreagent_runner
+        from frago.server.services.ui_session_runner import _accepts_kw
 
-        return coreagent_runner.send_queued(
-            session_id, prompt, cwd=target.cwd or str(Path.home())
-        )
+        core_kwargs: dict[str, object] = {"cwd": target.cwd or str(Path.home())}
+        if _accepts_kw(coreagent_runner.send_queued, "surface"):
+            core_kwargs["surface"] = "webui"
+        return coreagent_runner.send_queued(session_id, prompt, **core_kwargs)
+    _mark_ontology_turn_started(session_id, target.family)
 
     def _feed() -> None:
         try:
@@ -361,9 +389,12 @@ def send_when_idle(
         ):
             return "not_now"
         try:
-            coreagent_runner.send_queued(
-                session_id, prompt, cwd=target.cwd or str(Path.home())
-            )
+            from frago.server.services.ui_session_runner import _accepts_kw
+
+            core_kwargs: dict[str, object] = {"cwd": target.cwd or str(Path.home())}
+            if _accepts_kw(coreagent_runner.send_queued, "surface"):
+                core_kwargs["surface"] = "webui"
+            coreagent_runner.send_queued(session_id, prompt, **core_kwargs)
         except (coreagent_runner.CoreAgentBusy, coreagent_runner.CoreAgentUnavailable):
             return "not_now"
 
@@ -381,10 +412,13 @@ def send_when_idle(
             if clock() >= deadline:
                 return "not_now"
             sleep(poll_s)
-    return get_runner().submit_when_idle(
+    outcome = get_runner().submit_when_idle(
         session_id,
         prompt,
         landed=landed,
         agent_type=target.agent_type,
         cwd=target.cwd,
     )
+    if outcome == "landed":
+        _mark_ontology_turn_started(session_id, target.family)
+    return outcome
