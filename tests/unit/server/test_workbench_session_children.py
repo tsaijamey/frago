@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -114,7 +114,7 @@ class TestSessionChildrenProbe:
         assert by_id[CHILD_SID]["launched_by_label"] == "由当前会话派发"
         assert by_id[GRAND_SID]["launched_by_session_id"] == CHILD_SID
         assert by_id[GRAND_SID]["is_running"] is False
-        assert "由子会话「Worker 1：核实任务细节 附带多行长提示」派发" == by_id[GRAND_SID]["launched_by_label"]
+        assert by_id[GRAND_SID]["launched_by_label"] == "由子会话「Worker 1：核实任务细节 附带多行长提示」派发"
         assert by_id[BRANCH_SID]["relation_kind"] == "branch"
         assert by_id[BRANCH_SID]["launched_by_label"] == "由当前会话分出分支"
 
@@ -127,7 +127,7 @@ class TestSessionChildrenProbe:
         assert child_body["summary"]["total_children"] == 1
 
     def test_async_dispatch_pending_visible_before_transcript_flush(self, client, monkeypatch):
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         cards = [_card(PARENT_SID, title="主控会话", status="done")]
         _patch_clean_env(monkeypatch, cards)
         monkeypatch.setattr(session_origin, "load_origin_index", lambda: OriginIndex(parents={}, workers=frozenset()))
@@ -207,6 +207,8 @@ class TestSessionChildrenProbe:
         assert resp.status_code == 200
         body = resp.json()
         assert body["summary"]["host_alive"] is True
+        assert body["summary"]["host_mode"] == "external_cli"
+        assert body["summary"]["external_host_alive"] is True
         assert body["summary"]["running_processes"] == 2
         assert body["summary"]["has_running"] is True
 
@@ -243,6 +245,8 @@ class TestSessionChildrenProbe:
         assert resp.status_code == 200
         body = resp.json()
         assert body["summary"]["host_alive"] is True
+        assert body["summary"]["host_mode"] == "managed_tmux"
+        assert body["summary"]["external_host_alive"] is False
         assert body["summary"]["running_processes"] == 1
         p = body["child_processes"][0]
         assert p["pid"] == 3002
@@ -306,7 +310,141 @@ class TestSessionChildrenProbe:
         assert resp.status_code == 200
         body = resp.json()
         assert body["summary"]["host_alive"] is False
+        assert body["summary"]["host_mode"] == "none"
+        assert body["summary"]["external_host_alive"] is False
         assert body["summary"]["running_children"] == 0
         assert body["summary"]["has_running"] is False
         assert body["child_sessions"][0]["status"] == "done"
         assert body["child_sessions"][0]["is_running"] is False
+
+    def test_running_managed_coreagent_not_flagged_as_external(self, client, monkeypatch):
+        """运行中的平台托管 CoreAgent 返回 managed_coreagent 且 external_host_alive 为 False。"""
+        core_parent = "core_33333333333333333333333333333333"
+        cards = [_card(core_parent, title="CoreAgent 运行中", status="running", family="coreagent")]
+        _patch_clean_env(monkeypatch, cards)
+        monkeypatch.setattr(session_origin, "load_origin_index", lambda: OriginIndex(parents={}, workers=frozenset()))
+        Proc = session_children._ProcInfo
+        procs = {
+            5001: Proc(5001, 1, "S", "00:30", "frago-core", f"frago-core --session-id {core_parent}"),
+        }
+        monkeypatch.setattr(session_children, "_snapshot_processes", lambda: (procs, {}))
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {core_parent: True})
+        monkeypatch.setattr(
+            coreagent_runner,
+            "live_snapshot",
+            lambda: [
+                coreagent_runner.LiveSessionSnapshot(
+                    session_id=core_parent,
+                    state="running",
+                    pid=5001,
+                    cwd="/tmp/work",
+                    title="CoreAgent 运行中",
+                    touched_at=1_700_000_000.0,
+                )
+            ],
+        )
+
+        resp = client.get(f"/api/workbench/sessions/{core_parent}/children")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["host_alive"] is True
+        assert body["summary"]["host_mode"] == "managed_coreagent"
+        assert body["summary"]["external_host_alive"] is False
+
+    def test_nested_tmux_wrapper_claude_resume_stays_managed_tmux(self, client, monkeypatch):
+        """tmux 窗格内经 wrapper shell 启动的 claude --resume 不误报为 external_cli。"""
+        cards = [_card(PARENT_SID, title="Tmux 嵌套会话", status="running")]
+        _patch_clean_env(monkeypatch, cards)
+        monkeypatch.setattr(session_origin, "load_origin_index", lambda: OriginIndex(parents={}, workers=frozenset()))
+        Proc = session_children._ProcInfo
+        Pane = session_children._PaneInfo
+        tname = session_children.tmux_name_for(PARENT_SID)
+        procs = {
+            6000: Proc(6000, 1, "Ss", "10:00", "zsh", "-zsh"),
+            6001: Proc(6001, 6000, "S", "09:59", "bash", "bash -lc run-agent.sh"),
+            6002: Proc(6002, 6001, "S+", "09:50", "claude", f"claude --resume {PARENT_SID}"),
+        }
+        children_by_pid = {6000: [6001], 6001: [6002]}
+        monkeypatch.setattr(
+            session_children,
+            "_tmux_panes",
+            lambda: {tname: [Pane(session_name=tname, pane_pid=6000, pane_command="bash")]},
+        )
+        monkeypatch.setattr(session_children, "_snapshot_processes", lambda: (procs, children_by_pid))
+
+        resp = client.get(f"/api/workbench/sessions/{PARENT_SID}/children")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["external_host_alive"] is False
+        assert body["summary"]["host_mode"] != "external_cli"
+
+    def test_depth_8_tree_and_ontology_error_awaiting_input_dedup(self, client, monkeypatch):
+        """校验 8 层 depth、本体五态 error/awaiting_input 透出以及 async_dispatch 同目标去重。"""
+        chain = [f"00000000-0000-4000-8000-{i:012x}" for i in range(1, 10)]  # 1..9 层后代
+        err_card = _card(chain[1], title="失败子会话", status="error")
+        err_card.lifecycle_state = "error"
+        err_card.last_kind = "agent.say"
+
+        wait_card = _card(chain[2], title="待拍板子会话", status="idle")
+        wait_card.lifecycle_state = "awaiting_input"
+
+        deliv_card = _card(chain[0], title="待回传子会话", status="done")
+        deliv_card.lifecycle_state = "completed"
+
+        cards = [_card(PARENT_SID, title="主控", status="done"), deliv_card, err_card, wait_card] + [
+            _card(sid, title=f"层级 {idx + 4}", status="done")
+            for idx, sid in enumerate(chain[3:])
+        ]
+        _patch_clean_env(monkeypatch, cards)
+        parents = {chain[0]: PARENT_SID}
+        relations = {chain[0]: SessionRelation(kind="dispatch", closed=False)}
+        for idx in range(1, len(chain)):
+            parents[chain[idx]] = chain[idx - 1]
+            relations[chain[idx]] = SessionRelation(kind="dispatch", closed=False)
+
+        monkeypatch.setattr(
+            session_origin,
+            "load_origin_index",
+            lambda: OriginIndex(workers=frozenset(chain), parents=parents, relations=relations),
+        )
+        now_iso = datetime.now(UTC).isoformat()
+        monkeypatch.setattr(
+            async_dispatch,
+            "list_dispatch_jobs",
+            lambda active_only=False: [
+                AsyncDispatchJob(
+                    job_id="job-dup",
+                    kind="worker",
+                    mode="invoke",
+                    caller_session_id=PARENT_SID,
+                    caller_employee_id=None,
+                    caller_cwd="/tmp/work",
+                    target_session_id=chain[0],
+                    target_name=None,
+                    employee_id=None,
+                    agent="claude",
+                    cwd="/tmp/work",
+                    prompt="汇总结果",
+                    task_summary="汇总结果",
+                    status="delivering",
+                    delivery_state="queued",
+                    created_at=now_iso,
+                    updated_at=now_iso,
+                )
+            ],
+        )
+
+        resp = client.get(f"/api/workbench/sessions/{PARENT_SID}/children")
+        assert resp.status_code == 200
+        body = resp.json()
+        # 仅取到 8 层，第 9 层截断；chain[0] 不因 async_dispatch + session_origin 双源而重复
+        assert body["summary"]["total_children"] == 8
+        by_id = {c["session_id"]: c for c in body["child_sessions"]}
+        assert len(by_id) == 8
+        assert chain[8] not in by_id
+        for idx in range(8):
+            assert by_id[chain[idx]]["depth"] == idx + 1
+        assert by_id[chain[0]]["status"] == "delivering"
+        assert by_id[chain[1]]["status"] == "error"
+        assert by_id[chain[2]]["status"] == "awaiting_input"
+        assert by_id[chain[2]]["lifecycle_state"] == "awaiting_input"

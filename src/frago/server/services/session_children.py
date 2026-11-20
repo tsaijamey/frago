@@ -21,7 +21,7 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,6 @@ from frago.server.services import (
     workbench_titles,
 )
 from frago.session import record_reader, session_origin
-from frago.session.record_reader import UnknownSessionFamily
 from frago.session.session_index import IN_PROGRESS_KINDS
 
 logger = logging.getLogger(__name__)
@@ -262,21 +261,37 @@ def _collect_session_processes(
     panes_by_name: dict[str, list[_PaneInfo]],
     core_snaps: dict[str, coreagent_runner.LiveSessionSnapshot],
     resolved_tmux_name: str | None = None,
-) -> tuple[bool, list[dict[str, Any]], set[str]]:
+) -> tuple[bool, str, bool, list[dict[str, Any]], set[str]]:
     """探测某场会话此刻活着的宿主进程及其全部派生子进程。
 
-    返回 ``(host_alive, child_processes, linked_session_ids_found_in_args)``。
+    返回 ``(host_alive, host_mode, external_host_alive, child_processes, linked_session_ids_found_in_args)``。
+    其中 ``host_mode`` 区分平台托管与外部独立接入：
+    ``'none' | 'managed_tmux' | 'managed_coreagent' | 'external_cli'``；
+    ``external_host_alive`` 仅当探测到脱离平台托管的外部 CLI 进程时为 ``True``。
     """
     if not procs:
-        return False, [], set()
+        return False, "none", False, [], set()
 
     self_pid = os.getpid()
     host_alive = False
+    managed_tmux_alive = False
+    managed_coreagent_alive = False
+    external_host_alive = False
     agent_root_pids: list[int] = []
     extra_child_seeds: list[tuple[int, int, str]] = []  # (pid, launcher_pid, launcher_comm)
     seen_roots: set[int] = set()
+    managed_host_pids: set[int] = set()
 
-    # 1. Tmux 窗格：frago-agent-<sid> 或屏幕反查命中的 tmux 会话
+    def _mark_managed_subtree(root_pid: int) -> None:
+        stack = [root_pid]
+        while stack:
+            cur = stack.pop()
+            if cur in managed_host_pids:
+                continue
+            managed_host_pids.add(cur)
+            stack.extend(children_by_pid.get(cur, []))
+
+    # 1. Tmux 窗格：frago-agent-<sid> 或屏幕反查命中的 tmux 会话（平台自家托管）
     tmux_names: list[str] = []
     expected_tmux = tmux_name_for(target_sid)
     if expected_tmux in panes_by_name:
@@ -290,6 +305,7 @@ def _collect_session_processes(
             pane_proc = procs.get(ppid)
             if pane_proc is None or _is_zombie(pane_proc.state):
                 continue
+            _mark_managed_subtree(ppid)
 
             if _is_coreagent_pane_host(pane_proc):
                 for cid in children_by_pid.get(ppid, []):
@@ -298,6 +314,7 @@ def _collect_session_processes(
                         continue
                     if _is_agent_process(cproc):
                         host_alive = True
+                        managed_tmux_alive = True
                         if cid not in seen_roots:
                             seen_roots.add(cid)
                             agent_root_pids.append(cid)
@@ -321,6 +338,7 @@ def _collect_session_processes(
                         break
                 if main_agent_cid is not None:
                     host_alive = True
+                    managed_tmux_alive = True
                     if main_agent_cid not in seen_roots:
                         seen_roots.add(main_agent_cid)
                         agent_root_pids.append(main_agent_cid)
@@ -333,19 +351,22 @@ def _collect_session_processes(
                     extra_child_seeds.append((cid, ppid, pane_proc.comm))
             elif _is_agent_process(pane_proc):
                 host_alive = True
+                managed_tmux_alive = True
                 if ppid not in seen_roots:
                     seen_roots.add(ppid)
                     agent_root_pids.append(ppid)
 
-    # 2. CoreAgent 进程内常驻 runner PID
+    # 2. CoreAgent 进程内常驻 runner PID（平台自家托管）
     snap = core_snaps.get(target_sid)
     if snap is not None and snap.pid and snap.pid in procs and not _is_zombie(procs[snap.pid].state):
+        _mark_managed_subtree(snap.pid)
         host_alive = True
+        managed_coreagent_alive = True
         if snap.pid not in seen_roots:
             seen_roots.add(snap.pid)
             agent_root_pids.append(snap.pid)
 
-    # 3. 命令行直连（典型如外部终端执行的 `claude --resume <sid>` / `agy --conversation <sid>`）
+    # 3. 命令行直连（脱离平台托管的外部终端直连，如 `claude --resume <sid>` / `agy --conversation <sid>`）
     cli_matched_pids: list[int] = []
     for pid, proc in procs.items():
         if _is_zombie(proc.state):
@@ -354,7 +375,7 @@ def _collect_session_processes(
             cli_matched_pids.append(pid)
     cli_matched_set = set(cli_matched_pids)
     for pid in cli_matched_pids:
-        if pid in seen_roots:
+        if pid in seen_roots or pid in managed_host_pids:
             continue
         proc = procs[pid]
         # 若同 sid 下已有更内层的真实 agent 子进程匹配，则跳过外层 wrapper shell / python / uv
@@ -368,6 +389,7 @@ def _collect_session_processes(
         ):
             continue
         host_alive = True
+        external_host_alive = True
         seen_roots.add(pid)
         agent_root_pids.append(pid)
 
@@ -443,7 +465,16 @@ def _collect_session_processes(
     for cid, lpid, lcomm in extra_child_seeds:
         _walk(cid, lpid, True, lcomm)
 
-    return host_alive, collected, linked_sids
+    if external_host_alive:
+        host_mode = "external_cli"
+    elif managed_tmux_alive:
+        host_mode = "managed_tmux"
+    elif managed_coreagent_alive:
+        host_mode = "managed_coreagent"
+    else:
+        host_mode = "none"
+
+    return host_alive, host_mode, external_host_alive, collected, linked_sids
 
 
 def probe_session_children(sid: str) -> dict[str, Any]:
@@ -596,6 +627,7 @@ def probe_session_children(sid: str) -> dict[str, Any]:
     # 3. 向下收集全部派生子会话（支持多层嵌套派发）
     descendant_edges: list[tuple[str, str]] = []  # (parent_sid, child_sid)
     seen_descendants: set[str] = {clean_sid}
+    depth_by_sid: dict[str, int] = {clean_sid: 0}
     queue: list[tuple[str, int]] = [(clean_sid, 0)]
     while queue:
         cur_sid, depth = queue.pop(0)
@@ -605,11 +637,27 @@ def probe_session_children(sid: str) -> dict[str, Any]:
             if kid_sid in seen_descendants:
                 continue
             seen_descendants.add(kid_sid)
+            depth_by_sid[kid_sid] = depth + 1
             descendant_edges.append((cur_sid, kid_sid))
             queue.append((kid_sid, depth + 1))
 
     # 同时纳入以 clean_sid 或其后代为 caller 的 async_dispatch 任务（覆盖 send/resume 到已有员工会话）
     now_ms = int(time.time() * 1000)
+    added_via_dispatch = True
+    while added_via_dispatch:
+        added_via_dispatch = False
+        for job in dispatch_jobs:
+            cid = (job.caller_session_id or "").strip()
+            tid = (job.target_session_id or "").strip()
+            if not cid or not tid or cid not in seen_descendants or tid == clean_sid:
+                continue
+            caller_depth = depth_by_sid.get(cid, 0)
+            if tid not in seen_descendants and caller_depth < _MAX_DESCENDANT_DEPTH:
+                seen_descendants.add(tid)
+                depth_by_sid[tid] = caller_depth + 1
+                descendant_edges.append((cid, tid))
+                added_via_dispatch = True
+
     jobs_by_target: dict[str, list[Any]] = {}
     for job in dispatch_jobs:
         cid = (job.caller_session_id or "").strip()
@@ -617,9 +665,6 @@ def probe_session_children(sid: str) -> dict[str, Any]:
         if not cid or not tid or cid not in seen_descendants or tid == clean_sid:
             continue
         jobs_by_target.setdefault(tid, []).append(job)
-        if tid not in seen_descendants:
-            seen_descendants.add(tid)
-            descendant_edges.append((cid, tid))
 
     # 4. 探测主会话自身的宿主与子进程树
     resolved_own_tmux: str | None = None
@@ -629,7 +674,7 @@ def probe_session_children(sid: str) -> dict[str, Any]:
             if link is not None:
                 resolved_own_tmux = link.name
 
-    host_alive, main_procs, _ = _collect_session_processes(
+    host_alive, host_mode, external_host_alive, main_procs, _ = _collect_session_processes(
         clean_sid,
         host_title=_title_of(clean_sid),
         is_main_session=True,
@@ -640,9 +685,11 @@ def probe_session_children(sid: str) -> dict[str, Any]:
         resolved_tmux_name=resolved_own_tmux,
     )
     # 常驻 CoreAgent 进程答完一轮后会进入 20 分钟 idle 等待（core_alive[sid] is False），
-    # 若此时无任何活跃子进程，不应把常驻缓存误报为「外部进程运行中」。
-    if core_alive.get(clean_sid) is False and not main_procs:
+    # 若此时无任何活跃子进程且无外部终端接入，不应把常驻缓存误报为宿主存活。
+    if core_alive.get(clean_sid) is False and not main_procs and not external_host_alive:
         host_alive = False
+        if host_mode == "managed_coreagent":
+            host_mode = "none"
 
     # 5. 组装 child_sessions 并探测活跃子会话的进程树
     child_sessions: list[dict[str, Any]] = []
@@ -666,7 +713,7 @@ def probe_session_children(sid: str) -> dict[str, Any]:
         in_tmux = tname in open_names
         snap = core_snaps.get(child_sid)
         core_busy = core_alive.get(child_sid)
-        child_host_alive, child_procs, _ = _collect_session_processes(
+        child_host_alive, _, _, child_procs, _ = _collect_session_processes(
             child_sid,
             host_title=_title_of(child_sid),
             is_main_session=False,
@@ -687,8 +734,15 @@ def probe_session_children(sid: str) -> dict[str, Any]:
             or child_host_alive
         )
 
-        # 判子会话真实运行态：结合卡片、进程、tmux、async_dispatch 四方实况
+        # 判子会话真实运行态：结合卡片、本体五态、进程、tmux、async_dispatch 五方实况
         card_status = card.status if card is not None else "idle"
+        card_lifecycle = (
+            (getattr(card, "lifecycle_state", None) or "").strip().lower()
+            if card is not None
+            else ""
+        )
+        if card_lifecycle == "error":
+            card_status = "error"
         if card is not None and card_status != "error":
             if alive and card.last_kind in IN_PROGRESS_KINDS:
                 card_status = "running"
@@ -733,22 +787,35 @@ def probe_session_children(sid: str) -> dict[str, Any]:
         rel_kind = relation_of.get(child_sid) or (
             card.relation.kind if card and card.relation else "dispatch"
         )
+        # error 态优先保留，绝不折为 done 或因残余宿主句柄误判 running（除非有新派发单/活跃子进程）
+        is_explicit_error = card_status == "error" or card_lifecycle == "error"
         # 对一次性 worker（dispatch），只要承载进程或任务单还在跑就算运行中（排除已闲置的常驻 CoreAgent）；
         # 对 branch / handoff，则以实际回合忙碌或进程活跃为准
         is_running = bool(
             core_busy is True
             or job_live_running
-            or card_status == "running"
+            or (card_status == "running" and not is_explicit_error)
             or bool(child_procs)
-            or (rel_kind == "dispatch" and child_host_alive and core_busy is not False)
+            or (
+                rel_kind == "dispatch"
+                and child_host_alive
+                and core_busy is not False
+                and not is_explicit_error
+            )
         )
         if is_running:
             effective_status = "running"
         elif job_delivering:
             effective_status = "delivering"
-        elif card_status == "error" or job_status == "failed":
+        elif is_explicit_error or job_status == "failed":
             effective_status = "error"
-        elif card_status == "done" or job_status == "completed":
+        elif card_lifecycle == "awaiting_input":
+            effective_status = "awaiting_input"
+        elif (
+            card_lifecycle in ("completed", "cancelled")
+            or card_status == "done"
+            or job_status == "completed"
+        ):
             effective_status = "done"
         else:
             effective_status = "idle"
@@ -797,6 +864,8 @@ def probe_session_children(sid: str) -> dict[str, Any]:
                     else ("human" if rel_kind == "branch" else "worker")
                 ),
                 "status": effective_status,
+                "lifecycle_state": card_lifecycle or None,
+                "depth": depth_by_sid.get(child_sid, 1),
                 "is_running": is_running,
                 "alive": alive,
                 "in_tmux": in_tmux,
@@ -822,8 +891,15 @@ def probe_session_children(sid: str) -> dict[str, Any]:
             }
         )
 
-    # 运行中 / 待回传排在最前，其余按最近活动或开始时刻倒序
-    _status_order = {"running": 0, "delivering": 1, "error": 2, "idle": 3, "done": 4}
+    # 运行中 / 待回传 / 待拍板排在最前，其余按最近活动或开始时刻倒序
+    _status_order = {
+        "running": 0,
+        "delivering": 1,
+        "awaiting_input": 2,
+        "error": 3,
+        "idle": 4,
+        "done": 5,
+    }
     child_sessions.sort(
         key=lambda item: (
             _status_order.get(item["status"], 9),
@@ -845,7 +921,10 @@ def probe_session_children(sid: str) -> dict[str, Any]:
             "total_processes": len(all_processes),
             "running_processes": running_processes,
             "has_running": bool(running_children > 0 or delivering_children > 0 or running_processes > 0),
+            # host_alive 保留向下兼容（含平台托管宿主存活）；外部独立接入请认 external_host_alive / host_mode
             "host_alive": host_alive,
+            "host_mode": host_mode,
+            "external_host_alive": external_host_alive,
         },
         "child_sessions": child_sessions,
         "child_processes": all_processes,
