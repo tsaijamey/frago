@@ -1114,11 +1114,14 @@ class TestResumedErrorSessionTurnsRunning:
         # 场景 2：外围运行器捕获错误写入 ontology=error，转录末条为 agent.say 且距今 < 90s（> rec.updated_at + 2s），已死亡
         dead_err_sid = "core_dead_runner_err_002"
         dead_jsonl = proj / f"{dead_err_sid}.jsonl"
+        from datetime import UTC
+
+        dead_msg_iso = datetime.fromtimestamp(now_s - 10.0, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         dead_content = (
             json.dumps(
                 {
                     "type": "user",
-                    "timestamp": "2026-11-20T09:01:00Z",
+                    "timestamp": dead_msg_iso,
                     "message": {"role": "user", "content": "turn 1"},
                 }
             )
@@ -1126,7 +1129,7 @@ class TestResumedErrorSessionTurnsRunning:
             + json.dumps(
                 {
                     "type": "assistant",
-                    "timestamp": "2026-11-20T09:01:05Z",
+                    "timestamp": dead_msg_iso,
                     "message": {"role": "assistant", "content": [{"type": "text", "text": "partial"}]},
                 }
             )
@@ -1348,6 +1351,234 @@ class TestResumedErrorSessionTurnsRunning:
         assert rec_b is not None
         assert rec_b.lifecycle_state == "running"
         assert rec_b.turn_seq == 2
+
+    def test_stale_error_heals_after_newer_agent_reply_while_runner_error_stays_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """对照验证陈旧 error 自愈与运行器后发 error 保留：
+        - 用例 A：本体 error 停在 T0，后续于 T0+60s 产出正常 agent.say（last_reply_at=T0+60s）→
+          record_reader / storage / workbench 自愈为 completed / 非 error 并清空 session_error；
+        - 用例 B：agent.say 停在 T0，运行器于 T0+1s 写入本体 error（last_reply_at <= updated_at+5s）→
+          三层全部严格保留 error，绝不洗白。
+        """
+        import asyncio
+        from datetime import UTC
+
+        from frago.server.routes import workbench as wb_route
+        from frago.server.services import coreagent_runner, tmux_sessions_service, workbench_groups
+        from frago.session import coreagent_store, record_reader, session_index, storage
+        from frago.session.models import AgentType, SessionStatus
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setattr(coreagent_store, "sessions_root", lambda: tmp_path / "coreagent_projects")
+        monkeypatch.setattr(
+            session_index, "COREAGENT_CACHE_FILE", tmp_path / "coreagent-session-index.json"
+        )
+        monkeypatch.setattr(storage, "_live_tmux_session_ids", lambda: set())
+        monkeypatch.setattr(record_reader, "_claude_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_opencode_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_codex_cards", lambda *_a, **_k: [])
+        monkeypatch.setattr(record_reader, "_agy_cards", lambda *_a, **_k: [])
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr("frago.session.store.get_default_session_store", lambda: store)
+
+        proj = tmp_path / "coreagent_projects" / "-tmp-heal-compare"
+        proj.mkdir(parents=True)
+        now_s = datetime.now().timestamp()
+
+        # 用例 A：T0 = now - 120s 记入 error，T0 + 60s = now - 60s 完成新一轮正常 agent.say
+        t0_a = int(now_s - 120)
+        reply_a_s = float(t0_a + 60)
+        reply_a_iso = datetime.fromtimestamp(reply_a_s, tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        sid_a = "core_healed_after_reply_001"
+        content_a = (
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": "2026-11-20T06:00:00Z",
+                            "message": {"role": "user", "content": "turn 1"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "informational",
+                            "level": "warning",
+                            "content": "empty_answer",
+                            "timestamp": "2026-11-20T06:00:05Z",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": reply_a_iso,
+                            "message": {"role": "user", "content": "turn 2"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "timestamp": reply_a_iso,
+                            "message": {
+                                "role": "assistant",
+                                "content": [{"type": "text", "text": "正常完成新回复。"}],
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        (proj / f"{sid_a}.jsonl").write_text(content_a, encoding="utf-8")
+        os.utime(proj / f"{sid_a}.jsonl", (reply_a_s, reply_a_s))
+        mirror_a = tmp_path / "sessions" / "coreagent" / sid_a
+        mirror_a.mkdir(parents=True)
+        (mirror_a / "raw.jsonl").write_text(content_a, encoding="utf-8")
+        os.utime(mirror_a / "raw.jsonl", (reply_a_s, reply_a_s))
+        from frago.session import store as onto_store_mod
+
+        def _save_at(rec: SessionOntologyRecord, ts: float) -> None:
+            with monkeypatch.context() as mp:
+                mp.setattr(onto_store_mod.time, "time", lambda: ts)
+                store.save(rec)
+
+        _save_at(
+            SessionOntologyRecord(
+                session_id=sid_a,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="session_error",
+                turn_seq=0,
+                updated_at=t0_a,
+            ),
+            float(t0_a),
+        )
+
+        # 用例 B：T0 = now - 120s 产出 agent.say，随后 T0 + 1s 运行器写入本体 error
+        t0_b = int(now_s - 120)
+        reply_b_iso = datetime.fromtimestamp(float(t0_b), tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        sid_b = "core_runner_err_after_reply_002"
+        content_b = (
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": reply_b_iso,
+                            "message": {"role": "user", "content": "turn 1"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "timestamp": reply_b_iso,
+                            "message": {
+                                "role": "assistant",
+                                "content": [{"type": "text", "text": "partial reply"}],
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        (proj / f"{sid_b}.jsonl").write_text(content_b, encoding="utf-8")
+        os.utime(proj / f"{sid_b}.jsonl", (float(t0_b), float(t0_b)))
+        mirror_b = tmp_path / "sessions" / "coreagent" / sid_b
+        mirror_b.mkdir(parents=True)
+        (mirror_b / "raw.jsonl").write_text(content_b, encoding="utf-8")
+        os.utime(mirror_b / "raw.jsonl", (float(t0_b), float(t0_b)))
+        _save_at(
+            SessionOntologyRecord(
+                session_id=sid_b,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="runner_failed_after_reply",
+                turn_seq=1,
+                updated_at=t0_b + 1,
+            ),
+            float(t0_b + 1),
+        )
+
+        # storage.list_sessions 在尚未被 record_reader 自愈前，也能正确区分 A 与 B
+        storage_by_id = {
+            s.session_id: s
+            for s in storage.list_sessions(agent_type=AgentType.COREAGENT, limit=50)
+        }
+        assert storage_by_id[sid_a].status == SessionStatus.COMPLETED
+        assert storage_by_id[sid_b].status == SessionStatus.ERROR
+
+        # 复位 sid_a 本体回 error 以独立验证 record_reader + /api/workbench/sessions 自愈链路
+        _save_at(
+            SessionOntologyRecord(
+                session_id=sid_a,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="session_error",
+                turn_seq=0,
+                updated_at=t0_a,
+            ),
+            float(t0_a),
+        )
+        cards = {c.session_id: c for c in record_reader.list_sessions(liveness={sid_a: False, sid_b: False})}
+        assert cards[sid_a].status == "done"
+        assert cards[sid_a].lifecycle_state == "completed"
+        assert cards[sid_a].digest_stuck is None
+        healed_a = store.get(sid_a)
+        assert healed_a is not None
+        assert healed_a.lifecycle_state == "completed"
+        assert healed_a.summary == ""
+
+        assert cards[sid_b].status == "error"
+        assert cards[sid_b].lifecycle_state == "error"
+        preserved_b = store.get(sid_b)
+        assert preserved_b is not None
+        assert preserved_b.lifecycle_state == "error"
+        assert preserved_b.summary == "runner_failed_after_reply"
+
+        # 再次复位 sid_a 本体回 error，验证 /api/workbench/sessions 端到端返回与自愈
+        _save_at(
+            SessionOntologyRecord(
+                session_id=sid_a,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+                summary="session_error",
+                turn_seq=0,
+                updated_at=t0_a,
+            ),
+            float(t0_a),
+        )
+        monkeypatch.setattr(tmux_sessions_service, "open_session_names", lambda: set())
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+        monkeypatch.setattr(workbench_groups, "local_ops_session_ids", lambda: set())
+        monkeypatch.setattr(wb_route, "list_posts", lambda: [])
+        monkeypatch.setattr(wb_route, "_dispatch_states_by_caller", lambda **_k: (set(), set()))
+        monkeypatch.setattr(wb_route, "_observer_slots_state", lambda *_a: (False, False))
+        monkeypatch.setattr(wb_route, "_keep_watching_only", lambda _sids: None)
+
+        rows = {r["session_id"]: r for r in asyncio.run(wb_route.list_workbench_sessions())}
+        assert rows[sid_a]["status"] == "done"
+        assert rows[sid_a]["lifecycle_state"] == "completed"
+        assert rows[sid_a]["digest_stuck"] is None
+        assert store.get(sid_a).lifecycle_state == "completed"
+        assert store.get(sid_a).summary == ""
+
+        assert rows[sid_b]["status"] == "error"
+        assert rows[sid_b]["lifecycle_state"] == "error"
+        assert store.get(sid_b).lifecycle_state == "error"
+
 
 
 

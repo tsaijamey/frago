@@ -628,8 +628,27 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
                 card.lifecycle_state = "error"
                 continue
             if rec is not None and rec.lifecycle_state == "error":
-                card.status = "error"
-                card.lifecycle_state = "error"
+                last_reply_s = (
+                    (card.last_reply_at / 1000.0)
+                    if isinstance(card.last_reply_at, int | float) and card.last_reply_at > 0
+                    else None
+                )
+                onto_updated_s = float(getattr(rec, "updated_at", 0) or 0)
+                if (
+                    card.status != "error"
+                    and card.last_kind == "agent.say"
+                    and last_reply_s is not None
+                    and last_reply_s > onto_updated_s + 5.0
+                ):
+                    # 前序 error 之后明确产出了新一轮正常助手回复（> updated_at + 5s），自愈收敛为 completed
+                    if card.status == "running":
+                        card.status = "done"
+                    card.lifecycle_state = "completed"
+                    card.digest_stuck = None
+                    pending_heals.append((card.session_id, "completed", ""))
+                else:
+                    card.status = "error"
+                    card.lifecycle_state = "error"
                 continue
             if rec is not None:
                 lstate = str(rec.lifecycle_state or "").lower()

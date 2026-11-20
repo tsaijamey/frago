@@ -344,6 +344,33 @@ def _reconcile_monitored_status(
                         persist=True,
                     )
             return SessionStatus.RUNNING
+        if onto_state == "error" and session.status == SessionStatus.COMPLETED:
+            healed_completed = False
+            if session.agent_type == AgentType.COREAGENT and session.source_file:
+                src_path = Path(str(session.source_file))
+                if src_path.is_file():
+                    with contextlib.suppress(Exception):
+                        from frago.session import coreagent_store
+
+                        stats = coreagent_store.inspect_session_file(src_path, now=now)
+                        onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
+                        if (
+                            stats is not None
+                            and stats.status == SessionStatus.COMPLETED
+                            and stats.last_event_kind in ("assistant_text", "turn_end")
+                            and stats.last_reply_at is not None
+                            and stats.last_reply_at.timestamp() > onto_updated + 5.0
+                        ):
+                            healed_completed = True
+            if healed_completed:
+                if persist_reconciliation:
+                    with contextlib.suppress(Exception):
+                        from frago.session.service import get_default_session_service
+
+                        get_default_session_service().store.batch_reconcile_states(
+                            [(session.session_id, "completed", "")]
+                        )
+                return SessionStatus.COMPLETED
         if onto_state in {"error", "cancelled", "completed"}:
             return _status_from_ontology_state(onto_state)
         if onto_state in {"running", "queued", "awaiting_input"}:
@@ -425,7 +452,16 @@ def _derive_session_from_raw(
         resolved_status = stats.status
         if resolved_status not in (SessionStatus.ERROR, SessionStatus.RUNNING) and onto_rec is not None:
             onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
-            if onto_state in {"error", "cancelled", "completed", "awaiting_input"}:
+            if onto_state == "error":
+                onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
+                if not (
+                    resolved_status == SessionStatus.COMPLETED
+                    and getattr(stats, "last_event_kind", None) in ("assistant_text", "turn_end")
+                    and getattr(stats, "last_reply_at", None) is not None
+                    and stats.last_reply_at.timestamp() > onto_updated + 5.0
+                ):
+                    resolved_status = SessionStatus.ERROR
+            elif onto_state in {"cancelled", "completed", "awaiting_input"}:
                 resolved_status = _status_from_ontology_state(onto_state)
         if status_filter is not None and resolved_status != status_filter:
             return None

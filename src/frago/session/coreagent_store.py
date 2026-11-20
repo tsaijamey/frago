@@ -143,6 +143,8 @@ class CoreAgentSessionStats:
     tool_call_count: int
     project_path: str
     name: str | None
+    last_event_kind: str | None = None
+    last_reply_at: datetime | None = None
 
 
 def _parse_iso_to_local_dt(value: Any) -> datetime | None:
@@ -198,6 +200,7 @@ def inspect_session_file(
 
     first_dt: datetime | None = None
     last_dt: datetime | None = None
+    last_reply_dt: datetime | None = None
     project_path = ""
     custom_title: str | None = None
     ai_title: str | None = None
@@ -286,6 +289,7 @@ def inspect_session_file(
                 last_event_kind = "assistant_tool"
             elif has_text:
                 last_event_kind = "assistant_text"
+                last_reply_dt = rec_dt or last_dt
             elif has_thinking:
                 last_event_kind = "assistant_think"
         elif rec_type == "system":
@@ -369,6 +373,8 @@ def inspect_session_file(
         tool_call_count=tool_call_count,
         project_path=project_path,
         name=name,
+        last_event_kind=last_event_kind,
+        last_reply_at=last_reply_dt,
     )
 
 
