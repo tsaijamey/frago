@@ -15,6 +15,7 @@ Design:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from pathlib import Path
@@ -73,6 +74,8 @@ class WorkbenchStreamBridge:
         # 凑不够成组数量但会话已停下时的时间维度兜底定时器（session_id → Timer）。
         self._settle_timers: dict[str, threading.Timer] = {}
         self._settle_timeout_s: float = 10.0
+        # 会话单调轮次序号（session_id -> turn_seq），防止迟到 turn_complete 误触发旧轮结算。
+        self._turn_seq_by_session: dict[str, int] = {}
 
     # ---- singleton --------------------------------------------------------
 
@@ -347,6 +350,15 @@ class WorkbenchStreamBridge:
         """Called by SessionStream when new records arrive."""
         if not records:
             return
+        if any(isinstance(r, dict) and r.get("kind") == "user.say" for r in records):
+            with self._lock:
+                self._turn_seq_by_session[session_id] = (
+                    self._turn_seq_by_session.get(session_id, 0) + 1
+                )
+            with contextlib.suppress(Exception):
+                from frago.server.services import workbench_queue
+
+                workbench_queue.bump_turn_seq(session_id)
         self._trigger_the_observer(session_id, records)
         try:
             loop = self._loop or asyncio.get_event_loop()
@@ -358,8 +370,19 @@ class WorkbenchStreamBridge:
         asyncio.run_coroutine_threadsafe(manager.broadcast(msg), loop)
 
     def _on_turn_complete(self, session_id: str, done: bool,
-                          stop_reason: str | None) -> None:
+                          stop_reason: str | None,
+                          turn_seq: int | None = None) -> None:
         """Called by SessionStream when a turn flips to complete."""
+        with self._lock:
+            current_seq = self._turn_seq_by_session.get(session_id, 0)
+        if turn_seq is not None and int(turn_seq) < current_seq:
+            logger.info(
+                "WorkbenchStreamBridge: dropped late _on_turn_complete (session=%s event_seq=%s current=%s)",
+                session_id,
+                turn_seq,
+                current_seq,
+            )
+            return
         if done:
             from frago.server.services.session_observer import BATCH_BLOCK_COUNT
 
@@ -374,9 +397,18 @@ class WorkbenchStreamBridge:
                 # 凑不齐 BATCH_BLOCK_COUNT 个已发生块，但会话已经停下了：启动时间维度兜底
                 self._schedule_settle(session_id)
             try:
+                import inspect
                 from frago.server.services import workbench_queue
 
-                workbench_queue.schedule_auto_inject_after_settle(session_id)
+                fn = workbench_queue.schedule_auto_inject_after_settle
+                sig = inspect.signature(fn)
+                if "turn_seq" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                ):
+                    fn(session_id, turn_seq=current_seq if current_seq > 0 else None)
+                else:
+                    fn(session_id)
             except Exception:
                 logger.debug(
                     "WorkbenchStreamBridge: queue auto-inject schedule failed (session=%s)",

@@ -134,6 +134,10 @@ class _Session:
     #: 手里没被读到；叫停时要把它们一并算作作废，不然「人刚发的话不见了」在返回值里
     #: 一个数都没有。每收到一条 result 归零，所以不会越攒越多。
     in_flight: int = 0
+    #: 单调递增轮次序号与在途轮次 FIFO，拦截旧轮次迟到的 result/timeout 误重置新轮次。
+    turn_seq: int = 0
+    in_flight_turns: list[int] = field(default_factory=list)
+    pending_turns: list[int] = field(default_factory=list)
     #: 这一场被叫停了（或服务要停了）。置上之后喂料线程不再往下走，自己退出去。
     closed: bool = False
     #: 虚拟桌面导演等无人值守会话：人看的是桌面画面而不是工作台聊天页，关闭轻量审阅与拍板卡强拦。
@@ -600,10 +604,21 @@ def _read_loop(sess: _Session) -> None:
                         sess.touched_at = time.time()
                 continue  # system / assistant / hook 回执那些行：与本轮结论无关
             with sess.lock:
+                completed_seq = (
+                    sess.in_flight_turns.pop(0) if sess.in_flight_turns else sess.turn_seq
+                )
+                sess.in_flight = max(0, sess.in_flight - 1)
+                if completed_seq < sess.turn_seq:
+                    logger.warning(
+                        "coreagent 忽略旧轮次迟到 result（session=%s completed_seq=%s current_seq=%s）",
+                        sess.session_id,
+                        completed_seq,
+                        sess.turn_seq,
+                    )
+                    continue
                 sess.last_result.clear()
                 sess.last_result.update(found)
                 sess.touched_at = time.time()
-                sess.in_flight = max(0, sess.in_flight - 1)
                 still_running = sess.in_flight > 0 or sess.pending.qsize() > 0
                 if still_running:
                     # 管道或队列里还有后续已投喂/排队轮次：保持 busy，防止协调器误判 idle 强杀
@@ -616,9 +631,18 @@ def _read_loop(sess: _Session) -> None:
             if not still_running:
                 sess.turn_done.set()
                 try:
+                    import inspect
                     from frago.server.services import workbench_queue
 
-                    workbench_queue.schedule_auto_inject_after_settle(sess.session_id)
+                    fn = workbench_queue.schedule_auto_inject_after_settle
+                    sig = inspect.signature(fn)
+                    if "turn_seq" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig.parameters.values()
+                    ):
+                        fn(sess.session_id, turn_seq=completed_seq)
+                    else:
+                        fn(sess.session_id)
                 except Exception:  # noqa: BLE001
                     logger.debug(
                         "coreagent 轮次结束触发队列注入失败（session=%s）",
@@ -696,7 +720,7 @@ def _sweep(sess: _Session) -> None:
             if now - sess.touched_at <= TURN_TIMEOUT_S:
                 return
             # 一轮跑得太久还没交卷：别把这一场锁死，让下一句还能发。
-            logger.warning("这一轮等不到结论，按超时处理（session=%s）", sess.session_id)
+            logger.warning("这一轮等不到结论，按超时处理（session=%s turn_seq=%s）", sess.session_id, sess.turn_seq)
             sess.state = "idle"
             sess.turn_done.set()
             return
@@ -726,13 +750,19 @@ def _feed_one(sess: _Session, prompt: str) -> None:
             sess.last_result.clear()
             sess.turn_done.clear()
         sess.touched_at = time.time()
+        seq = sess.pending_turns.pop(0) if sess.pending_turns else sess.turn_seq
+        if seq <= 0:
+            sess.turn_seq += 1
+            seq = sess.turn_seq
         try:
             proc.stdin.write(_user_line(prompt) + "\n")
             proc.stdin.flush()
             sess.in_flight += 1
+            sess.in_flight_turns.append(seq)
         except (BrokenPipeError, ValueError, OSError):
             logger.warning("往这一场写话失败，进程多半已经没了（session=%s）", sess.session_id)
             sess.pending.put(prompt)
+            sess.pending_turns.append(seq)
             _reclaim(sess)
 
 
@@ -815,8 +845,14 @@ def _enqueue(sess: _Session, prompt: str) -> None:
                 "不丢你已经发出去的话）"
             ) from None
         sess.touched_at = time.time()
+        sess.turn_seq += 1
+        sess.pending_turns.append(sess.turn_seq)
         sess.last_result.clear()
         sess.turn_done.clear()
+        with contextlib.suppress(Exception):
+            from frago.server.services import workbench_queue
+
+            workbench_queue.bump_turn_seq(sess.session_id)
         if sess.proc is None:
             _spawn(sess)
         sess.state = "busy"

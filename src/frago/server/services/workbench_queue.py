@@ -92,6 +92,9 @@ _injecting_sessions: set[str] = set()
 #: 记录每场会话上一次触发自动注入时的末尾 stop 轮次记录 ID，防止同一轮 stop 连续弹出多条消息。
 _last_injected_turn: dict[str, str] = {}
 
+#: 单调递增的轮次序号（session_id -> current turn_seq），用于拦截旧轮次迟到的完成/定时回调。
+_active_turn_seq: dict[str, int] = {}
+
 #: 当前队列非空的会话编号集合（由内存态直接维护，避免每次巡检全盘扫描）。
 _queued_sessions: set[str] = set()
 _seeded_from_disk: bool = False
@@ -1452,16 +1455,54 @@ def _send_prompt(session_id: str, prompt: str, cwd_hint: str | None) -> bool:
     return status == "landed"
 
 
+def bump_turn_seq(session_id: str) -> int:
+    """Increment and return the monotonic ``turn_seq`` for ``session_id`` and cancel stale settle timers."""
+    clean_sid = str(session_id or "").strip()
+    if not clean_sid:
+        return 0
+    with _locks_guard:
+        next_seq = _active_turn_seq.get(clean_sid, 0) + 1
+        _active_turn_seq[clean_sid] = next_seq
+        timer = _settle_timers.pop(clean_sid, None)
+    if timer is not None:
+        timer.cancel()
+    return next_seq
+
+
+def current_turn_seq(session_id: str) -> int:
+    """Return the latest active ``turn_seq`` observed for ``session_id``."""
+    clean_sid = str(session_id or "").strip()
+    if not clean_sid:
+        return 0
+    with _locks_guard:
+        return _active_turn_seq.get(clean_sid, 0)
+
+
 def try_auto_inject(
     session_id: str,
     records: Sequence[UnifiedRecord | dict[str, Any]] | None = None,
     *,
     sync: bool = False,
+    expected_turn_seq: int | None = None,
 ) -> dict[str, Any]:
     """若满足自动注入条件且队列非空，弹出最早的一条消息并注入会话。
 
     ``sync=True`` 时在当前线程直接完成投喂（秒级返回确认，不等待整轮回答）；默认在后台线程投喂。
     """
+    if expected_turn_seq is not None and int(expected_turn_seq) < current_turn_seq(session_id):
+        logger.info(
+            "拦截旧轮次迟到的自动注入回调（session=%s event_turn_seq=%s current_turn_seq=%s）",
+            session_id,
+            expected_turn_seq,
+            current_turn_seq(session_id),
+        )
+        return {
+            "injected": False,
+            "reason": "stale_turn_seq",
+            "item": None,
+            "session_stopped": False,
+            "can_inject": False,
+        }
     inject_fd: int | None = None
     with _lock_for(session_id):
         raw_items = list_raw_queue(session_id)
@@ -1691,10 +1732,20 @@ def schedule_auto_inject_after_settle(
     delay_s: float = 0.8,
     max_retries: int | None = None,
     retry_delay_s: float | None = None,
+    turn_seq: int | None = None,
 ) -> None:
     """在轮次完成信号到达后静置并检查自动注入；若 Stop hook 仍在运行（``not_stopped``），
     按退避节拍持续重试直到会话真正停稳后自动注入，无需等待前端切回该会话。
     """
+    if turn_seq is not None and int(turn_seq) < current_turn_seq(session_id):
+        logger.info(
+            "丢弃旧轮次的迟到静置调度（session=%s event_turn_seq=%s current=%s）",
+            session_id,
+            turn_seq,
+            current_turn_seq(session_id),
+        )
+        return
+    captured_seq = int(turn_seq) if turn_seq is not None else current_turn_seq(session_id)
     try:
         raw_items = list_raw_queue(session_id)
     except Exception:  # noqa: BLE001
@@ -1723,13 +1774,18 @@ def schedule_auto_inject_after_settle(
     def _run_step(attempt: int) -> None:
         with _locks_guard:
             _settle_timers.pop(session_id, None)
+        if captured_seq > 0 and captured_seq < current_turn_seq(session_id):
+            return
         try:
             remaining = list_raw_queue(session_id)
             if not remaining:
                 with _locks_guard:
                     _queued_sessions.discard(session_id)
                 return
-            outcome = try_auto_inject(session_id)
+            outcome = try_auto_inject(
+                session_id,
+                expected_turn_seq=captured_seq if captured_seq > 0 else None,
+            )
             if outcome.get("injected"):
                 return
             if outcome.get("reason") == "not_stopped" and attempt < limit:

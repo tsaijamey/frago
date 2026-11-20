@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from frago.employee.store import frago_home
+from frago.file_guard import atomic_write_text
 from frago.ontology import (
     ActionContractError,
     build_finalize_dispatch_job_contract,
@@ -86,6 +87,7 @@ class AsyncDispatchJob:
     timeout: int | None = None
     env_list: list[str] = dataclasses.field(default_factory=list)
     status: str = "pending"  # "pending" | "running" | "delivering" | "completed" | "failed" | "superseded"
+    turn_seq: int = 0
     superseded_by: str | None = None
     exit_code: int = 0
     output: str = ""
@@ -117,15 +119,14 @@ class AsyncDispatchJob:
 
 
 def save_dispatch_job(job: AsyncDispatchJob) -> Path:
-    """持久化异步派发任务单。"""
+    """持久化异步派发任务单（fsync 原子写盘）。"""
     job.updated_at = _utc_now()
     path = dispatch_store_dir() / f"{job.job_id}.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(
+    atomic_write_text(
+        path,
         json.dumps(job.to_dict(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+        save_lkg=False,
     )
-    os.replace(tmp, path)
     return path
 
 
@@ -328,13 +329,39 @@ def supersede_active_jobs_for_target(
     return superseded_ids
 
 
+def _next_turn_seq_for_target(target_session_id: str) -> int:
+    """Allocate a strictly monotonic ``turn_seq`` for ``target_session_id``."""
+    clean_sid = str(target_session_id or "").strip()
+    max_seq = 0
+    if clean_sid:
+        for existing in list_dispatch_jobs(target_session_id=clean_sid, active_only=False):
+            max_seq = max(max_seq, int(getattr(existing, "turn_seq", 0) or 0))
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            svc = get_default_session_service()
+            rec = svc.get_session(clean_sid)
+            if rec is not None:
+                updated = svc.start_turn(clean_sid, agent_kernel_id=rec.agent_kernel, origin=rec.origin)
+                max_seq = max(max_seq, int(updated.turn_seq) - 1)
+    return max_seq + 1
+
+
 def is_job_superseded(job: AsyncDispatchJob) -> tuple[bool, str | None]:
-    """检查当前派发单是否已被同一目标会话的后续派发单抢占取代。"""
+    """检查当前派发单是否已被同一目标会话的后续派发单或更新轮次 (`turn_seq`) 抢占取代。"""
     on_disk = load_dispatch_job(job.job_id)
     if on_disk is not None and (on_disk.status == "superseded" or on_disk.superseded_by):
         return True, on_disk.superseded_by
     if not job.target_session_id:
         return False, None
+    job_seq = int(getattr(job, "turn_seq", 0) or 0)
+    if job_seq > 0:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            rec = get_default_session_service().get_session(job.target_session_id)
+            if rec is not None and int(rec.turn_seq) > job_seq:
+                return True, f"turn_seq:{rec.turn_seq}"
     for other in list_dispatch_jobs(
         caller_session_id=job.caller_session_id,
         target_session_id=job.target_session_id,
@@ -342,7 +369,8 @@ def is_job_superseded(job: AsyncDispatchJob) -> tuple[bool, str | None]:
     ):
         if other.job_id == job.job_id:
             continue
-        if other.created_at >= job.created_at:
+        other_seq = int(getattr(other, "turn_seq", 0) or 0)
+        if (job_seq > 0 and other_seq > job_seq) or (other.created_at >= job.created_at and other_seq >= job_seq):
             return True, other.job_id
     return False, None
 
@@ -948,6 +976,7 @@ def dispatch_employee_turn_async(
         resume=resume,
         model=model,
         status="running",
+        turn_seq=_next_turn_seq_for_target(target_session_id),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
@@ -1001,6 +1030,7 @@ def dispatch_worker_turn_async(
         timeout=timeout,
         env_list=list(env_list or []),
         status="running",
+        turn_seq=_next_turn_seq_for_target(target_session_id),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
@@ -1045,6 +1075,7 @@ def dispatch_drive_send_async(
         task_summary=prompt[:240],
         timeout=int(timeout),
         status="running",
+        turn_seq=_next_turn_seq_for_target(target_session_id),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
