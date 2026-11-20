@@ -1341,6 +1341,23 @@ class TestFivePillarShadowProjectors:
         assert "hook:builtin-session-start-brief-index@1.0.0" in norm_ids
 
     def test_projector_guardrails_reject_invalid_desktop_and_todo_dicts(self) -> None:
+        # New desktop instance JSON without clips_dir projects cleanly
+        clean_proj = project_desktop_instance_dict(
+            {
+                "id": "default",
+                "content_id": compute_desktop_content_id("default"),
+                "desktop_url": "http://127.0.0.1:8094/app/agent_os",
+                "tmux_session": "frago-stage",
+                "created_at": "2026-10-01T00:00:00",
+                "pid": None,
+                "port": 8770,
+                "status": "stopped",
+                "started_at": "2026-10-23T08:00:00",
+                "heartbeat_at": "2026-10-23T08:00:00",
+            }
+        )
+        assert clean_proj.runtime_state.value == "stopped"
+
         # Mismatched desktop content_id (e.g., port-hashed instead of id-hashed) is rejected
         with pytest.raises(IdentityCriterionError, match="content_id mismatch"):
             project_desktop_instance_dict(

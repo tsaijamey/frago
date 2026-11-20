@@ -516,8 +516,13 @@ def report(instance: dict, status: dict | None = None,
     """
     if cdp_ports is None and isinstance(status, dict):
         cdp_ports = status.get("cdp_ports")
+    clips_path = instance.get("clips_dir")
+    if not clips_path:
+        from . import registry
+
+        clips_path = str(registry.clips_dir())
     checks = [
-        _guard(lambda: check_clips(instance.get("clips_dir")), "clips"),
+        _guard(lambda: check_clips(clips_path), "clips"),
         _guard(lambda: check_cdp_ports(cdp_ports), "cdp_ports"),
         _guard(check_orphan_profiles, "orphan_profiles"),
         _guard(lambda: check_desktop_url(instance), "desktop_url"),

@@ -139,8 +139,9 @@ def data_dir() -> Path:
 
 
 def clips_dir() -> Path:
-    """录屏片段落在哪。从前写作 ``self.store.path("clips")``。"""
-    return data_dir() / "clips"
+    """录屏片段落在哪。从前写作 ``self.store.path("clips")``，真源在 registry.clips_dir()。"""
+    data_dir()
+    return registry.clips_dir()
 
 
 # ── up ────────────────────────────────────────────────────────────────────
@@ -197,7 +198,6 @@ def up(params: dict | None = None) -> dict:
     identity = registry.ensure_identity(
         cfg["id"],
         desktop_url=url,
-        clips_dir=cfg["clips_dir"],
         tmux_session=cfg["tmux_session"],
     )
     _launch_broker(cfg)
@@ -216,7 +216,6 @@ def up(params: dict | None = None) -> dict:
             cfg["id"], int(broker_status["pid"]), int(cfg["port"])
         )
     report = health.report(_for_health(runtime), status=broker_status)
-    _warn_stale_clips(runtime)
     _warn_from(report)
 
     return {
@@ -256,7 +255,6 @@ def status() -> dict:
     也不肯抄的那份判据。
     """
     record = registry.read_instance(registry.DEFAULT_ID) or {}
-    _warn_stale_clips(record)
     port = record.get("port")
     st = _fetch_status(port) if port else None
     return {
@@ -579,58 +577,13 @@ def _open_desktop_page(url: str) -> bool:
 # ── 自检 ──────────────────────────────────────────────────────────────────
 
 def _for_health(record: dict) -> dict:
-    """交给自检的那份实例记录：clips_dir 换成本次运行算出来的落点。
+    """交给自检的那份实例记录：clips_dir 始终使用本次运行时算出来的落点。
 
-    registry.ensure_identity 对已存在的记录一个字段都不重算（身份的价值就在于
-    它不变），所以老记录里的 clips_dir 可能指着一个早就不存在的目录，而 broker
-    实际把片子写在算出来的落点下。自检的 clips 那一项读注册表那条，就会在查
-    一个空气目录，报「尚未创建（还没录过）」并标 ok——一句错话，而且是自检最不该
-    说的那种错话。
-
-    up 与 status 都走这条：自检两处共用同一份实现，一处修好另一处照旧，
-    就等于没修。
-
-    **注册表文件不动**：身份层永不重算是 registry 的设计，不在这一层推翻。
-    回执里那份 instance 也照旧是台账原文的忠实回声——它回答的是「登记时是什么」，
-    与「这次片子写在哪」是两个问题，混成一个字段两边都说不清。
+    clips_dir 已迁出 registry.IDENTITY_FIELDS，不再存进身份层；
+    无论台账里是否有历史遗留字段，自检的 clips 项都必须以当前运行时真源为准。
+    up 与 status 都走这条。
     """
     return {**record, "clips_dir": str(clips_dir())}
-
-
-def _warn_stale_clips(record: dict) -> None:
-    """台账里登记的录屏落点跟本次运行的落点不是一个地方时，喊一声。
-
-    不致命：片子照录，落点由本次运行的 cfg 交给 broker，一直是对的。
-    但**回执里那份 instance 是台账原文的忠实回声**，它照旧报着登记那天的路径。
-    人照它去找素材会扑空，而自检那一项报的是真落点、数得出真文件数——
-    同一份回执里两个字段各说一个地方，是最难查的形状。
-
-    2026-08-27 实测过：台账里写着 ~/.frago/data/agent_os/clips（2026-07-22 登记，
-    那个目录如今根本不存在），真落点在算出来的落点底下，116 个文件。
-
-    所以这儿不去改那份回声——身份层永不重算是 registry 的设计，不在这一层推翻——
-    而是把「这两条对不上」这件事本身说出来。悄悄换成对的再假装没事，
-    下一个人还会踩同一脚。
-
-    病根记在这儿：**录屏落点根本不该待在身份层**。身份层装的是门牌号
-    （桌面页地址、荧幕归属），价值就在于永不变；而落点是每次运行现算的。
-    两者同层，就必然出现「登记时是对的、后来落点变了、而记录按设计不许重算」
-    这个死结。搬它要动 registry.IDENTITY_FIELDS，得单独一轮，连着守护一起验。
-    """
-    registered = str(record.get("clips_dir") or "").strip()
-    if not registered:
-        return
-    live = str(clips_dir())
-    if registered == live:
-        return
-    gone = not Path(registered).expanduser().exists()
-    _warn(
-        f"台账里登记的录屏落点是 {registered}"
-        f"{'（这个目录已经不存在）' if gone else ''}，"
-        f"而本次运行的落点是 {live}。回执里 instance.clips_dir 报的是前者"
-        f"——那是登记那天的值，身份层按设计不重算。**找素材去后者**，"
-        f"自检的 clips 那一项数的也是后者。"
-    )
 
 
 def _warn_from(report: dict) -> None:

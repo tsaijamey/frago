@@ -544,70 +544,92 @@ def test_health_guard_covers_every_check(st, monkeypatch):
     assert item(out["health"], "orphan_profiles")["level"] == "unavailable"
 
 
-def test_health_reads_this_runs_clips_dir_not_the_ledgers(st):
-    """老记录里的 clips_dir 可能指着一个早就不存在的目录。
+def test_health_reads_this_runs_clips_dir_not_the_ledgers(st, monkeypatch):
+    """旧登记文件残留的死路径 clips_dir 不得出现在回执里，自检必须用运行时落点。"""
+    import os
 
-    自检读注册表那条的话，它在查一个空气目录，报「尚未创建（还没录过）」并标 ok
-    ——一句错话，而且是自检最不该说的那种错话。
-    """
+    from frago.desktop import aos
+
     st.net.serve(LIVE_BROKER)
-    registry.ensure_identity("default", desktop_url=DESKTOP_URL,
-                             clips_dir="/nowhere/agent-os/clips",
-                             tmux_session="frago-stage")
+    monkeypatch.setattr(aos, "urllib", st.net)
+    legacy_record = {
+        "id": "default",
+        "content_id": CONTENT_ID,
+        "desktop_url": DESKTOP_URL,
+        "clips_dir": "/nowhere/agent-os/clips",
+        "tmux_session": "frago-stage",
+        "created_at": "2026-07-22T13:20:47+0800",
+        "pid": os.getpid(),
+        "port": 8770,
+        "status": "running",
+        "started_at": "2026-07-22T13:20:47+0800",
+        "heartbeat_at": "2026-07-22T13:20:47+0800",
+        "desired": "running",
+    }
+    (st.data / "default.json").write_text(json.dumps(legacy_record, ensure_ascii=False))
     (st.data / "clips").mkdir()
     (st.data / "clips" / "demo.mp4").write_bytes(b"x" * 10)
-    out = stage.up()
-    # 身份层永不重算：回执里那份 instance 照旧是台账原文的忠实回声。
-    assert out["instance"]["clips_dir"] == "/nowhere/agent-os/clips"
-    clips = item(out["health"], "clips")
-    assert clips["path"] == str(st.data / "clips")
-    assert clips["files"] == 1, "数到的是真片子，不是对着空气报「还没录过」"
+
+    for receipt in (
+        stage.status(),
+        aos.cmd_status(registry.read_instance("default")),
+        stage.up(),
+    ):
+        assert "clips_dir" not in receipt["instance"]
+        assert set(receipt["instance"]) == set(registry.IDENTITY_FIELDS)
+        assert "/nowhere/agent-os/clips" not in json.dumps(receipt, ensure_ascii=False)
+        assert receipt["instance"]["created_at"] == "2026-07-22T13:20:47+0800"
+        assert receipt["instance"]["content_id"] == CONTENT_ID
+        assert receipt["instance"]["desktop_url"] == DESKTOP_URL
+        clips = item(receipt["health"], "clips")
+        assert clips["path"] == str(st.data / "clips")
+        assert clips["files"] == 1, "数到的是真片子，不是对着空气报「还没录过」"
 
 
-def test_mismatched_clips_dir_is_said_out_loud(st, caplog):
-    """两条对不上时 MUST 喊出来。
-
-    悄悄换成对的再假装没事，是这条断裂当初能藏三个多月的原因：回执里 instance
-    报着登记那天的路径、自检报着真落点，两个字段各说一个地方，而没有任何一层
-    说「它俩对不上」。
-    """
+def test_legacy_registry_file_status_is_read_only_and_up_strips_stale_clips_dir(st):
+    """status 只读不改旧台账文件；up 剥离残留 clips_dir 且保留原有门牌号。"""
     st.net.serve(LIVE_BROKER)
-    registry.ensure_identity("default", desktop_url=DESKTOP_URL,
-                             clips_dir="/nowhere/agent-os/clips",
-                             tmux_session="frago-stage")
-    with caplog.at_level("WARNING", logger="frago.desktop.stage"):
-        stage.up()
-    warns = " ".join(r.getMessage() for r in caplog.records)
-    assert "台账里登记的录屏落点" in warns
-    assert "/nowhere/agent-os/clips" in warns
-    assert str(st.data / "clips") in warns
-    assert "找素材去后者" in warns
-    assert "这个目录已经不存在" in warns
+    legacy_raw = json.dumps({
+        "id": "default",
+        "content_id": CONTENT_ID,
+        "desktop_url": DESKTOP_URL,
+        "clips_dir": "/nowhere/agent-os/clips",
+        "tmux_session": "frago-stage",
+        "created_at": "2026-07-22T13:20:47+0800",
+        "pid": None,
+        "port": 8770,
+        "status": "stopped",
+        "started_at": None,
+        "heartbeat_at": None,
+        "desired": "stopped",
+    }, ensure_ascii=False)
+    (st.data / "default.json").write_text(legacy_raw)
+
+    status_out = stage.status()
+    assert (st.data / "default.json").read_text() == legacy_raw
+    assert "clips_dir" not in status_out["instance"]
+    assert "clips_dir" not in (registry.read_instance("default") or {})
+
+    up_out = stage.up()
+    assert "clips_dir" not in up_out["instance"]
+    assert up_out["instance"]["created_at"] == "2026-07-22T13:20:47+0800"
+    persisted = json.loads((st.data / "default.json").read_text())
+    assert "clips_dir" not in persisted
+    assert persisted["created_at"] == "2026-07-22T13:20:47+0800"
 
 
-def test_matching_clips_dir_stays_quiet(st, caplog):
-    """两条一致时不该喊——狼来了的告警报几次就没人看了。"""
-    st.net.serve(LIVE_BROKER)
-    (st.data / "clips").mkdir()
-    registry.ensure_identity("default", desktop_url=DESKTOP_URL,
-                             clips_dir=str(st.data / "clips"),
-                             tmux_session="frago-stage")
-    with caplog.at_level("WARNING", logger="frago.desktop.stage"):
-        stage.up()
-    warns = " ".join(r.getMessage() for r in caplog.records)
-    assert "台账里登记的录屏落点" not in warns
-
-
-def test_status_path_warns_too(st, caplog):
-    """up 与 status 各调一次，只守住一处等于没守。"""
-    st.net.serve(LIVE_BROKER)
-    registry.ensure_identity("default", desktop_url=DESKTOP_URL,
-                             clips_dir="/nowhere/agent-os/clips",
-                             tmux_session="frago-stage")
-    with caplog.at_level("WARNING", logger="frago.desktop.stage"):
-        stage.status()
-    warns = " ".join(r.getMessage() for r in caplog.records)
-    assert "台账里登记的录屏落点" in warns
+def test_new_registry_identity_excludes_clips_dir(st):
+    """clips_dir 已移出 IDENTITY_FIELDS，新建实例不再写入该字段。"""
+    assert "clips_dir" not in registry.IDENTITY_FIELDS
+    rec = registry.ensure_identity(
+        "default",
+        desktop_url=DESKTOP_URL,
+        tmux_session="frago-stage",
+        clips_dir="/should/be/ignored",
+    )
+    assert "clips_dir" not in rec
+    persisted = json.loads((st.data / "default.json").read_text())
+    assert "clips_dir" not in persisted
 
 
 def test_no_desktop_page_is_warned_but_not_fatal(st, caplog):

@@ -1290,7 +1290,7 @@
           "Stopping the broker transitions DesktopInstanceRuntimeState to 'stopped' while preserving the instance registry file intact."
         ],
         "invariants": [
-          "VirtualDesktopStage identity fields (id, content_id, desktop_url, clips_dir, created_at) remain immutable across broker restarts."
+          "VirtualDesktopStage identity fields (id, content_id, desktop_url, tmux_session, created_at) remain immutable across broker restarts."
         ],
         "side_effects": {
           "mutates": ["VirtualDesktopStage"],

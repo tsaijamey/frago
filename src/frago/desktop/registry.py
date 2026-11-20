@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """agent_os 实例注册表：身份层与运行态层分离。
 
-一个实例的"物质载体"——人浏览器里那个标签页、viewer 内容目录、clips 目录、
+一个实例的"物质载体"——人浏览器里那个标签页、viewer 内容目录、
 tmux 会话——不会因为 broker 进程退出而消失。v1 把身份和运行态混在一起，
 broker 一退出实例身份就没了，于是桌面页还开着却永远收不到画面，
 系统也无从知道"那里还有一台等着被喂画面的显示器"。
 
 所以拆成两层：
 
-  身份层（id / content_id / desktop_url / clips_dir / tmux_session / created_at）
+  身份层（id / content_id / desktop_url / tmux_session / created_at）
       首次创建后不再变动，实例永不自动删除。
+      clips_dir 是运行时录屏落点，由 clips_dir() 按当前台账根目录动态计算，
+      不属于身份层（平台迁过落点，写进身份层只会永远指着死路径）。
 
   运行态层（pid / port / status / started_at / heartbeat_at）
       分钟级，每次启动覆写。
@@ -62,9 +64,14 @@ def _instances_dir() -> Path:
     return recipe_data_dir(default_identity(), DATA_NAME)
 
 IDENTITY_FIELDS = (
-    "id", "content_id", "desktop_url", "clips_dir", "tmux_session", "created_at",
+    "id", "content_id", "desktop_url", "tmux_session", "created_at",
 )
 RUNTIME_FIELDS = ("pid", "port", "status", "started_at", "heartbeat_at")
+
+
+def clips_dir() -> Path:
+    """运行时录屏落点，由台账根目录动态计算，不属于身份层。"""
+    return _instances_dir() / "clips"
 
 # 人希不希望它跑，跟它现在跑没跑是两回事。守护只看得见"进程不在了"，而这有
 # 两种截然相反的原因：崩了（该拉起）和人关的（不该动）。没有这个字段就分不开，
@@ -134,29 +141,43 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
 
 
+def _strip_legacy_fields(record: dict) -> dict:
+    """剥离旧登记文件里残留的过时身份字段（例如已迁出身份层的 clips_dir）。"""
+    record.pop("clips_dir", None)
+    return record
+
+
 def ensure_identity(
     instance_id: str,
     *,
     desktop_url: str,
-    clips_dir: str,
     tmux_session: str,
+    clips_dir: str | None = None,
 ) -> dict:
     """确保身份层存在并返回完整记录。
 
     已存在则**原样返回身份层，不重算、不覆盖**——身份的全部价值就在于它不变。
     传进来的 desktop_url 等参数在这种情况下被忽略。
+
+    兼容旧台账文件：若磁盘上的旧记录仍残留 ``clips_dir``，会就地剥离该字段并
+    保留全部既有身份字段（``created_at`` / ``content_id`` / ``desktop_url`` 等）。
+    ``clips_dir`` 参数已退役，仅保留兼容签名，不再写入身份层。
     """
+    del clips_dir
     validate_id(instance_id)
     existing = _read_raw(instance_id)
     if existing and all(existing.get(f) for f in IDENTITY_FIELDS):
+        if "clips_dir" in existing:
+            cleaned = _strip_legacy_fields(dict(existing))
+            _write_raw(instance_id, cleaned)
+            return cleaned
         return existing
 
-    record = dict(existing or {})
+    record = _strip_legacy_fields(dict(existing or {}))
     record.update({
         "id": instance_id,
         "content_id": content_id_for(instance_id),
         "desktop_url": desktop_url,
-        "clips_dir": clips_dir,
         "tmux_session": tmux_session,
         "created_at": record.get("created_at") or _now(),
     })
@@ -173,7 +194,7 @@ def mark_running(instance_id: str, pid: int, port: int) -> dict:
     起来了就意味着人想让它跑——不管这次是人敲的还是守护拉的，都把意愿改回
     running。否则一次关闭会永久压住它，人再敲 up 也起不来。
     """
-    record = _read_raw(instance_id) or {}
+    record = _strip_legacy_fields(_read_raw(instance_id) or {})
     now = _now()
     record.update({
         "id": record.get("id") or instance_id,
@@ -192,7 +213,7 @@ def set_desired(instance_id: str, desired: str) -> None:
     """记下人希不希望它跑。这条意愿跨进程、跨重启都算数。"""
     if desired not in (DESIRED_RUNNING, DESIRED_STOPPED):
         raise ValueError(f"desired 只能是 running / stopped，收到 {desired!r}")
-    record = _read_raw(instance_id) or {"id": instance_id}
+    record = _strip_legacy_fields(_read_raw(instance_id) or {"id": instance_id})
     record[DESIRED_FIELD] = desired
     _write_raw(instance_id, record)
 
@@ -218,6 +239,7 @@ def touch_heartbeat(
     record = _read_raw(instance_id)
     if not record:
         return
+    _strip_legacy_fields(record)
     if record.get("status") != "running":
         if (
             pid
@@ -248,6 +270,7 @@ def mark_stopped(instance_id: str, owner_pid: int | None = None) -> None:
     record = _read_raw(instance_id)
     if not record:
         return
+    _strip_legacy_fields(record)
     if owner_pid is not None and record.get("pid") not in (None, owner_pid):
         return
     record["status"] = "stopped"
@@ -289,6 +312,7 @@ def read_instance(instance_id: str = DEFAULT_ID) -> dict | None:
     record = _read_raw(instance_id)
     if not record:
         return None
+    _strip_legacy_fields(record)
     if record.get("status") != "running":
         return record
     if _pid_alive(record.get("pid")) and _port_alive(record.get("port")):

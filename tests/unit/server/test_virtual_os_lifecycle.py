@@ -143,3 +143,65 @@ class TestLoopSurvival:
         await asyncio.sleep(0.05)
         assert starts == []
         await svc.stop()
+
+
+class TestReadStateWithRegistry:
+    def test_recognizes_running_and_stopped_with_legacy_clips_dir(self, tmp_path, monkeypatch):
+        """Legacy default.json containing a dead clips_dir still reports exact running/wanted state."""
+        import json
+        import os
+
+        from frago.desktop import registry
+
+        monkeypatch.setattr(registry, "_instances_dir", lambda: tmp_path)
+        monkeypatch.setattr(registry, "_port_alive", lambda port: port == 8770)
+
+        cid = registry.content_id_for("default")
+        legacy = {
+            "id": "default",
+            "content_id": cid,
+            "desktop_url": "http://127.0.0.1:8093/app/agent_os",
+            "clips_dir": "/nowhere/dead/agent_os/clips",
+            "tmux_session": "frago-stage",
+            "created_at": "2026-07-22T13:20:47+0800",
+            "pid": os.getpid(),
+            "port": 8770,
+            "status": "running",
+            "started_at": "2026-11-18T06:16:05+0800",
+            "heartbeat_at": "2026-11-18T10:10:48+0800",
+            "desired": "running",
+        }
+        (tmp_path / "default.json").write_text(json.dumps(legacy))
+        assert vol.VirtualOsLifecycleService._read_state() == (True, True)
+
+        legacy["status"] = "stopped"
+        legacy["pid"] = None
+        (tmp_path / "default.json").write_text(json.dumps(legacy))
+        assert vol.VirtualOsLifecycleService._read_state() == (True, False)
+
+        legacy["desired"] = "stopped"
+        (tmp_path / "default.json").write_text(json.dumps(legacy))
+        assert vol.VirtualOsLifecycleService._read_state() == (False, False)
+
+    def test_recognizes_new_registry_without_clips_dir(self, tmp_path, monkeypatch):
+        """New default.json without clips_dir works identically for keepalive."""
+        import os
+
+        from frago.desktop import registry
+
+        monkeypatch.setattr(registry, "_instances_dir", lambda: tmp_path)
+        monkeypatch.setattr(registry, "_port_alive", lambda port: port == 8770)
+
+        registry.ensure_identity(
+            "default",
+            desktop_url="http://127.0.0.1:8093/app/agent_os",
+            tmux_session="frago-stage",
+        )
+        assert vol.VirtualOsLifecycleService._read_state() == (True, False)
+
+        registry.mark_running("default", pid=os.getpid(), port=8770)
+        assert vol.VirtualOsLifecycleService._read_state() == (True, True)
+
+        registry.set_desired("default", registry.DESIRED_STOPPED)
+        registry.mark_stopped("default")
+        assert vol.VirtualOsLifecycleService._read_state() == (False, False)

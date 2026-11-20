@@ -1577,7 +1577,10 @@ def cmd_status(rec: dict) -> dict:
         # runtime_state 是原有的即时快照，保留——它答的是"现在是什么样"，
         # checks 答的是"哪里不对劲"，两个问题不同。
         "health": {
-            **health.report(rec, status=st),
+            **health.report(
+                {**rec, "clips_dir": str(registry.clips_dir())},
+                status=st,
+            ),
             "runtime_state": {
                 # ui_ready 是"现在画面活不活"，判据是最近一帧多久之前收到的。
                 "ui_ready": st.get("ui_ready"),

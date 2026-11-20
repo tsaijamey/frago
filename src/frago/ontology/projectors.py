@@ -10,7 +10,7 @@ without importing any business subsystem modules:
    binding rules to governed `AgentSessionProcess` instances.
 2. **Pillar 2 (Hand & Eye — `project_desktop_instance_dict`)**:
    Projects `agent_os` instance registry JSON (`IDENTITY_FIELDS`: `id`, `content_id`,
-   `desktop_url`, `clips_dir`, `tmux_session`, `created_at`; `RUNTIME_FIELDS`: `pid`,
+   `desktop_url`, `tmux_session`, `created_at`; `RUNTIME_FIELDS`: `pid`,
    `port`, `status`, `started_at`, `heartbeat_at`, `desired`) into `VirtualDesktopStage`
    (`Resource`) and `DesktopInstanceRuntimeState` (`QualityState`), verifying that
    `content_id == sha256(id)[:12]`.
@@ -79,7 +79,6 @@ DESKTOP_IDENTITY_FIELDS: tuple[str, ...] = (
     "id",
     "content_id",
     "desktop_url",
-    "clips_dir",
     "tmux_session",
     "created_at",
 )
