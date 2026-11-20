@@ -380,9 +380,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             elif not is_alive and status == "running":
                 status = "done" if card.last_kind == "agent.say" else "idle"
                 lifecycle_state = "completed"
-            elif status == "done":
-                lifecycle_state = lifecycle_state or "completed"
-            elif status == "idle":
+            elif status in ("done", "idle"):
                 lifecycle_state = lifecycle_state or "completed"
             if (
                 onto_rec is not None

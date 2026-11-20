@@ -581,8 +581,8 @@ class SessionOntologyService:
                 target = clean_obs_terminal
         elif current in {"running", "queued", "awaiting_input"} and is_alive is False and age >= float(stale_after_seconds):
             target = "completed"
-        elif current in {"running", "awaiting_input"} and is_alive is None and age >= float(stale_after_seconds):
-            # When caller has no live signal and inactivity exceeded stale threshold, converge zombie running/awaiting_input
+        elif current in {"running", "queued", "awaiting_input"} and is_alive is None and age >= float(stale_after_seconds):
+            # When caller has no live signal and inactivity exceeded stale threshold, converge zombie running/queued/awaiting_input
             target = "completed"
 
         if target != current or (clean_error and new_summary != rec.summary):

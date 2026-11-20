@@ -340,9 +340,8 @@ def _reconcile_monitored_status(
 
     # 3. Fallback when session is not yet in SessionOntologyStore:
     #    disconnected tmux:// sessions or >6h stale running sessions must converge.
-    if session.status == SessionStatus.RUNNING:
-        if is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS:
-            return SessionStatus.COMPLETED
+    if session.status == SessionStatus.RUNNING and is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS:
+        return SessionStatus.COMPLETED
     return _live_status(session.status, session.last_activity, now)
 
 
@@ -1144,10 +1143,15 @@ def count_sessions(
                 if running_cutoff is not None and mtime < running_cutoff:
                     continue
 
+                effective_filter = (
+                    None
+                    if (status is not None and entry.name in onto_map)
+                    else status
+                )
                 session = _load_session_from_dir(
                     Path(entry.path),
                     now,
-                    status_filter=status,
+                    status_filter=effective_filter,
                 )
                 if session is None:
                     continue
@@ -1230,7 +1234,7 @@ def list_sessions(
                         onto_rec is not None
                         and str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
                         in {"running", "queued", "awaiting_input"}
-                        and entry.name not in live_tmux_ids
+                        and (live_tmux_ids is None or entry.name not in live_tmux_ids)
                     ):
                         stale_onto_heals.append((entry.name, "completed", None))
                     continue
@@ -1258,10 +1262,15 @@ def list_sessions(
     def _extend_to(target: int) -> None:
         nonlocal scanned
         for _mtime, session_dir in candidates[scanned:target]:
+            effective_filter = (
+                None
+                if (status is not None and session_dir.name in onto_map)
+                else status
+            )
             session = _load_session_from_dir(
                 session_dir,
                 now,
-                status_filter=status,
+                status_filter=effective_filter,
             )
             if session is None:
                 continue

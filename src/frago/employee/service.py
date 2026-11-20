@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from frago.employee.store import (
+    VALID_AGENT_KERNELS,
     EmployeeLedger,
     EmployeePostRecord,
     apply_resource_exclusions,
@@ -1369,10 +1370,14 @@ def ensure_builtin_desktop_operator_employee(
         drivers = registered_drivers()
         for candidate in ("coreagent", "claude", "codex", "agy", "opencode"):
             drv = drivers.get(candidate)
-            if drv is not None and drv.locate is not None and drv.locate():
-                if candidate in VALID_AGENT_KERNELS:
-                    resolved_kernel = candidate
-                    break
+            if (
+                drv is not None
+                and drv.locate is not None
+                and drv.locate()
+                and candidate in VALID_AGENT_KERNELS
+            ):
+                resolved_kernel = candidate
+                break
     except Exception:
         pass
 

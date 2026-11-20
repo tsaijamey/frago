@@ -2119,7 +2119,6 @@ def _resolve_bloodline_lifecycle(
 def _collect_bloodline_session_ids(
     record: EmployeePostRecord,
     *,
-    onto_svc: Any,
     onto_map: dict[str, Any],
     existing_ledger: EmployeeLedger | None = None,
 ) -> set[str]:
@@ -2217,7 +2216,6 @@ def _scan_sessions(
     live_tmux_ids = session_storage._live_tmux_session_ids()
     bloodline_ids = _collect_bloodline_session_ids(
         record,
-        onto_svc=onto_svc,
         onto_map=onto_map,
         existing_ledger=existing_ledger,
     )
@@ -2237,7 +2235,7 @@ def _scan_sessions(
             with contextlib.suppress(Exception):
                 from frago.session import record_reader
 
-                liveness_hint = {sid: True for sid in (live_tmux_ids or set())}
+                liveness_hint = dict.fromkeys(live_tmux_ids or (), True)
                 cards_by_sid = {
                     c.session_id: c for c in record_reader.list_sessions(liveness=liveness_hint)
                 }

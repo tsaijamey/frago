@@ -283,10 +283,25 @@ def inspect_session_file(
         elif rec_type == "system":
             step_count += 1
             subtype = str(record.get("subtype") or "").strip().lower()
+            level = str(record.get("level") or "").strip().lower()
+            content = str(record.get("content") or "")
+            is_lifecycle_stop = (
+                subtype == "informational"
+                and "这一场由" in content
+                and "停下：" in content
+            )
             has_err = bool(
                 record.get("error")
-                or subtype in ("empty_answer", "api_error", "error")
-                or str(record.get("level") or "").strip().lower() == "error"
+                or subtype
+                in (
+                    "empty_answer",
+                    "api_error",
+                    "error",
+                    "model_refusal_fallback",
+                    "model_consent_fallback",
+                )
+                or level == "error"
+                or (subtype == "informational" and level == "warning" and not is_lifecycle_stop)
             )
             if has_err:
                 last_event_kind = "error"
