@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
-import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -29,6 +29,17 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from frago.file_guard import (
+    ProtectedFileReadError,
+    atomic_write_text,
+    backup_corrupted_file,
+    has_nonempty_file,
+    lkg_path_for,
+    locked_file,
+)
+
+_logger = logging.getLogger(__name__)
 
 VALID_AGENT_KERNELS: tuple[str, ...] = (
     "claude",
@@ -348,22 +359,30 @@ def save_post(
     target_dir.mkdir(parents=True, exist_ok=True)
     record.updated_at = _now_iso()
     target_path = target_dir / f"{record.member_post_id}.json"
-
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(target_dir),
-        prefix=f".{record.member_post_id}.",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        os.replace(tmp_name, target_path)
-    except Exception:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
-        raise
+    content = json.dumps(record.to_dict(), ensure_ascii=False, indent=2) + "\n"
+    with locked_file(target_path):
+        atomic_write_text(target_path, content, save_lkg=True)
     return target_path
+
+
+def _read_post_json_with_lkg(target_path: Path) -> dict[str, Any]:
+    try:
+        raw = json.loads(target_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"Malformed employee post file: {target_path}")
+        return raw
+    except Exception as exc:
+        lkg = lkg_path_for(target_path)
+        if lkg.is_file():
+            try:
+                lkg_raw = json.loads(lkg.read_text(encoding="utf-8"))
+                if isinstance(lkg_raw, dict):
+                    backup_corrupted_file(target_path, reason="post_read_lkg")
+                    _logger.warning("Recovered employee post %s from LKG backup (%s)", target_path, exc)
+                    return lkg_raw
+            except Exception:
+                pass
+        raise ProtectedFileReadError(f"Failed to read employee post {target_path}: {exc}") from exc
 
 
 def get_post(
@@ -376,9 +395,10 @@ def get_post(
     target_path = employees_dir(base_dir) / f"{post_id}.json"
     if not target_path.is_file():
         return None
-    raw = json.loads(target_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError(f"Malformed employee post file: {target_path}")
+    with locked_file(target_path, exclusive=False):
+        if not target_path.is_file():
+            return None
+        raw = _read_post_json_with_lkg(target_path)
     return EmployeePostRecord.from_dict(raw)
 
 
@@ -395,9 +415,11 @@ def list_posts(*, base_dir: Path | None = None) -> list[EmployeePostRecord]:
         # 这一句是给将来留的：谁把账本改成别的后缀，岗位清单也不会被它撑破。
         if path.name.endswith(EMPLOYEE_LEDGER_SUFFIX):
             continue
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            records.append(EmployeePostRecord.from_dict(raw))
+        with locked_file(path, exclusive=False):
+            if not path.is_file():
+                continue
+            raw = _read_post_json_with_lkg(path)
+        records.append(EmployeePostRecord.from_dict(raw))
     return records
 
 
@@ -410,12 +432,17 @@ def delete_post(
     post_id = validate_post_id(member_post_id)
     target_path = employees_dir(base_dir) / f"{post_id}.json"
     ledger_path = employee_ledger_path(post_id, base_dir)
-    if not target_path.is_file():
+    with locked_file(target_path):
+        if not target_path.is_file():
+            ledger_path.unlink(missing_ok=True)
+            lkg_path_for(target_path).unlink(missing_ok=True)
+            lkg_path_for(ledger_path).unlink(missing_ok=True)
+            return False
+        target_path.unlink()
+        lkg_path_for(target_path).unlink(missing_ok=True)
         ledger_path.unlink(missing_ok=True)
-        return False
-    target_path.unlink()
-    ledger_path.unlink(missing_ok=True)
-    return True
+        lkg_path_for(ledger_path).unlink(missing_ok=True)
+        return True
 
 
 # --- DataSlot territory: reading and archiving what an employee owns under ~/.frago/data ---
@@ -921,11 +948,32 @@ def load_ledger(
     path = employee_ledger_path(member_post_id, base_dir)
     if not path.is_file():
         return None
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        return None
-    raw.setdefault("member_post_id", member_post_id)
-    return EmployeeLedger.from_dict(raw)
+    with locked_file(path, exclusive=False):
+        if not path.is_file():
+            return None
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                raw.setdefault("member_post_id", member_post_id)
+                return EmployeeLedger.from_dict(raw)
+            raise ValueError(f"Expected YAML mapping in {path}")
+        except Exception as exc:
+            lkg = lkg_path_for(path)
+            if lkg.is_file():
+                try:
+                    lkg_raw = yaml.safe_load(lkg.read_text(encoding="utf-8"))
+                    if isinstance(lkg_raw, dict):
+                        backup_corrupted_file(path, reason="ledger_read_lkg")
+                        _logger.warning("Recovered employee ledger %s from LKG backup (%s)", path, exc)
+                        lkg_raw.setdefault("member_post_id", member_post_id)
+                        return EmployeeLedger.from_dict(lkg_raw)
+                except Exception:
+                    pass
+            if has_nonempty_file(path):
+                raise ProtectedFileReadError(
+                    f"Refusing to fall back to empty ledger for unreadable non-empty file {path}: {exc}"
+                ) from exc
+            return None
 
 
 def save_ledger(
@@ -938,26 +986,14 @@ def save_ledger(
     target_dir.mkdir(parents=True, exist_ok=True)
     ledger.updated_at = _now_iso()
     target_path = employee_ledger_path(ledger.member_post_id, base_dir)
-
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(target_dir),
-        prefix=f".{ledger.member_post_id}.",
-        suffix=".ledger.tmp",
+    content = yaml.safe_dump(
+        ledger.to_dict(),
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
     )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            yaml.safe_dump(
-                ledger.to_dict(),
-                handle,
-                allow_unicode=True,
-                sort_keys=False,
-                default_flow_style=False,
-            )
-        os.replace(tmp_name, target_path)
-    except Exception:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
-        raise
+    with locked_file(target_path):
+        atomic_write_text(target_path, content, save_lkg=True)
     return target_path
 
 

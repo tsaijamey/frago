@@ -14,6 +14,13 @@ from typing import Any, Dict
 
 from pydantic import ValidationError
 
+from frago.file_guard import (
+    ProtectedFileReadError,
+    atomic_write_text,
+    has_nonempty_file,
+    lkg_path_for,
+    locked_file,
+)
 from frago.init.models import Config
 
 logger = logging.getLogger(__name__)
@@ -38,7 +45,13 @@ def _drop_legacy_fields(data: Dict[str, Any]) -> None:
             data.pop(field)
 
 
-def load_config() -> Config:
+def _parse_config_data(data: Dict[str, Any]) -> Config:
+    _migrate_api_endpoint_if_needed(data)
+    _drop_legacy_fields(data)
+    return Config(**data)
+
+
+def load_config(*, raise_on_error: bool = False) -> Config:
     """Load main configuration file
 
     Returns:
@@ -46,47 +59,80 @@ def load_config() -> Config:
 
     Notes:
         - If file does not exist, return default configuration
-        - If file is corrupted, backup and try to recover valid fields
+        - If file is corrupted or locked, tries LKG backup first and NEVER overwrites
+          existing config with blank defaults on transient read failure
         - Performs one-time migration of api_endpoint to settings.json
     """
-    if not CONFIG_PATH.exists():
-        return Config()
+    with locked_file(CONFIG_PATH, exclusive=False):
+        if not CONFIG_PATH.exists():
+            return Config()
 
-    try:
-        data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
-
-        # Perform one-time migration if needed
-        _migrate_api_endpoint_if_needed(data)
-
-        # Drop fields removed from the schema (warns on stderr)
-        _drop_legacy_fields(data)
-
-        config = Config(**data)
-
-        # 缺省自愈：旧 config.json 缺 webui_sessions 段时补默认并回写，
-        # 让 server 启动期生效（spec 20260625-webui-session-lifecycle-mediator）。
-        if "webui_sessions" not in data:
-            save_config(config)
-
-        return config
-    except json.JSONDecodeError as e:
-        # JSON parsing failed, backup corrupted file
-        _backup_corrupted_config(f"json_error_{e}")
-        return Config()
-    except ValidationError as e:
-        # Pydantic validation failed, backup and try to recover valid fields
-        _backup_corrupted_config("validation_error")
-        logger.warning("Config validation failed: %s. Attempting recovery.", e)
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
-            _drop_legacy_fields(data)
-            return _recover_config_from_data(data)
-        except Exception:
-            return Config()
-    except Exception as e:
-        # Other errors
-        _backup_corrupted_config("unknown_error")
-        return Config()
+            if not isinstance(data, dict):
+                raise ValueError("config.json root must be a JSON object")
+
+            config = _parse_config_data(data)
+
+            # 缺省自愈：旧 config.json 缺 webui_sessions 段时补默认并回写，
+            # 让 server 启动期生效（spec 20260625-webui-session-lifecycle-mediator）。
+            if "webui_sessions" not in data:
+                with locked_file(CONFIG_PATH, exclusive=True):
+                    save_config(config)
+
+            return config
+        except json.JSONDecodeError as e:
+            lkg = lkg_path_for(CONFIG_PATH)
+            if lkg.is_file():
+                try:
+                    lkg_data = json.loads(lkg.read_text(encoding='utf-8'))
+                    if isinstance(lkg_data, dict):
+                        _backup_corrupted_config(f"json_error_lkg_{e}")
+                        logger.warning("config.json JSON error (%s); recovered from LKG backup", e)
+                        return _parse_config_data(lkg_data)
+                except Exception:
+                    pass
+            _backup_corrupted_config(f"json_error_{e}")
+            if raise_on_error and has_nonempty_file(CONFIG_PATH):
+                raise ProtectedFileReadError(
+                    f"Refusing to overwrite unreadable existing {CONFIG_PATH}: {e}"
+                ) from e
+            fallback = Config()
+            fallback._from_corrupted_read = True
+            return fallback
+        except ValidationError as e:
+            _backup_corrupted_config("validation_error")
+            logger.warning("Config validation failed: %s. Attempting recovery.", e)
+            try:
+                data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+                _drop_legacy_fields(data)
+                return _recover_config_from_data(data)
+            except Exception as rec_exc:
+                if raise_on_error and has_nonempty_file(CONFIG_PATH):
+                    raise ProtectedFileReadError(
+                        f"Refusing to overwrite invalid existing {CONFIG_PATH}: {rec_exc}"
+                    ) from rec_exc
+                fallback = Config()
+                fallback._from_corrupted_read = True
+                return fallback
+        except Exception as e:
+            lkg = lkg_path_for(CONFIG_PATH)
+            if lkg.is_file():
+                try:
+                    lkg_data = json.loads(lkg.read_text(encoding='utf-8'))
+                    if isinstance(lkg_data, dict):
+                        _backup_corrupted_config("unknown_error_lkg")
+                        return _parse_config_data(lkg_data)
+                except Exception:
+                    pass
+            _backup_corrupted_config("unknown_error")
+            if raise_on_error and has_nonempty_file(CONFIG_PATH):
+                raise ProtectedFileReadError(
+                    f"Refusing to overwrite unreadable existing {CONFIG_PATH}: {e}"
+                ) from e
+            fallback = Config()
+            fallback._from_corrupted_read = True
+            return fallback
 
 
 def get_agent_core() -> str:
@@ -104,60 +150,30 @@ def get_agent_core() -> str:
 
 
 def save_config(config: Config) -> None:
-    """Save configuration file
-
-    Args:
-        config: Config instance
-
-    Notes:
-        - Automatically creates parent directory
-        - Uses JSON formatted output (indent=2)
-        - Automatically updates updated_at field
-    """
-    # Ensure directory exists
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    # Update timestamp
-    config.updated_at = datetime.now()
-
-    # Serialize to JSON
-    config_dict = config.model_dump(mode='json')
-
-    # Write to file
-    CONFIG_PATH.write_text(
-        json.dumps(config_dict, indent=2, ensure_ascii=False) + '\n',
-        encoding='utf-8'
-    )
+    """Save configuration file atomically under an advisory file lock."""
+    with locked_file(CONFIG_PATH, exclusive=True):
+        if getattr(config, "_from_corrupted_read", False) and has_nonempty_file(CONFIG_PATH):
+            raise ProtectedFileReadError(
+                f"Refusing to overwrite existing {CONFIG_PATH} with fallback defaults after read failure."
+            )
+        config.updated_at = datetime.now()
+        config_dict = config.model_dump(mode='json')
+        content = json.dumps(config_dict, indent=2, ensure_ascii=False) + '\n'
+        atomic_write_text(CONFIG_PATH, content, save_lkg=True)
+        config._from_corrupted_read = False
 
 
 def update_config(updates: Dict[str, Any]) -> Config:
-    """Partially update configuration file
+    """Partially update configuration file atomically under lock."""
+    with locked_file(CONFIG_PATH, exclusive=True):
+        config = load_config(raise_on_error=True)
 
-    Args:
-        updates: Dictionary of fields to update, e.g. {"auth_method": "custom"}
+        for key, value in updates.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
 
-    Returns:
-        Updated Config instance
-
-    Raises:
-        ValidationError: If the updated configuration is invalid
-
-    Examples:
-        >>> config = update_config({"auth_method": "custom"})
-        >>> config = update_config({"ccr_enabled": True})
-    """
-    # Load existing configuration
-    config = load_config()
-
-    # Apply updates
-    for key, value in updates.items():
-        if hasattr(config, key):
-            setattr(config, key, value)
-
-    # Save configuration (triggers Pydantic validation)
-    save_config(config)
-
-    return config
+        save_config(config)
+        return config
 
 
 def _backup_corrupted_config(reason: str) -> None:

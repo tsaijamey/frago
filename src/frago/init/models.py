@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 
 def known_agent_cores() -> set[str]:
@@ -213,6 +213,8 @@ class Config(BaseModel):
     """
 
     model_config = ConfigDict(extra="allow")
+
+    _from_corrupted_read: bool = PrivateAttr(default=False)
 
     schema_version: str = "1.0"
 

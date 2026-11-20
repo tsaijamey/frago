@@ -50,8 +50,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
+from frago.file_guard import (
+    ProtectedFileReadError,
+    atomic_write_text,
+    backup_corrupted_file,
+    has_nonempty_file,
+    lkg_path_for,
+    locked_file,
+)
 from frago.init.profile_targets import DEFAULT_TARGETS, is_native_kernel
 
 logger = logging.getLogger(__name__)
@@ -172,6 +180,8 @@ class APIProfile(BaseModel):
 class ProfileStore(BaseModel):
     """Container for all saved profiles."""
 
+    _from_corrupted_read: bool = PrivateAttr(default=False)
+
     schema_version: str = "1.0"
     # What the main role is bound to: the profile written into the agent CLIs'
     # own configuration. None means nothing was written, which is the plain
@@ -204,29 +214,56 @@ class ProfileStore(BaseModel):
     profiles: list[APIProfile] = Field(default_factory=list)
 
 
-def load_profiles() -> ProfileStore:
-    """Load profiles from ~/.frago/profiles.json.
+def load_profiles(*, raise_on_error: bool = False) -> ProfileStore:
+    """Load profiles from ~/.frago/profiles.json under advisory file lock.
 
-    Returns empty ProfileStore if file doesn't exist or is corrupted.
-
-    A store saved before activation had targets records an active profile with
-    no target list. That profile is in force in Claude Code right now, so the
-    missing list is read as ``["claude"]`` rather than "nowhere" — otherwise the
-    first deactivation after upgrading would decide there was nothing to undo
-    and leave the endpoint in settings.json forever.
+    When an existing non-empty ``profiles.json`` fails to read or parse:
+    - Tries LKG backup first (preserving a timestamped copy of the damaged file).
+    - If ``raise_on_error=True`` (mutating operations), raises ``ProtectedFileReadError``
+      rather than returning an empty store that could later overwrite user profiles.
+    - If ``raise_on_error=False`` (read-only queries), returns an empty fallback marked
+      ``_from_corrupted_read=True`` which ``save_profiles`` refuses to persist over disk.
     """
-    if not PROFILES_PATH.exists():
-        return ProfileStore()
+    with locked_file(PROFILES_PATH, exclusive=False):
+        if not PROFILES_PATH.exists():
+            return ProfileStore()
 
-    try:
-        data = json.loads(PROFILES_PATH.read_text(encoding="utf-8"))
-        store = ProfileStore(**data)
-        if data.get("active_profile_id") and "active_targets" not in data:
-            store.active_targets = list(DEFAULT_TARGETS)
-        return store
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("Failed to load profiles.json: %s. Using empty store.", e)
-        return ProfileStore()
+        try:
+            data = json.loads(PROFILES_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("profiles.json root must be a JSON object")
+            store = ProfileStore(**data)
+            if data.get("active_profile_id") and "active_targets" not in data:
+                store.active_targets = list(DEFAULT_TARGETS)
+            return store
+        except Exception as e:
+            lkg = lkg_path_for(PROFILES_PATH)
+            if lkg.is_file():
+                try:
+                    lkg_data = json.loads(lkg.read_text(encoding="utf-8"))
+                    if isinstance(lkg_data, dict):
+                        backup_corrupted_file(PROFILES_PATH, reason="profiles_lkg")
+                        logger.warning(
+                            "profiles.json unreadable (%s); recovered from LKG backup %s",
+                            e,
+                            lkg,
+                        )
+                        store = ProfileStore(**lkg_data)
+                        if lkg_data.get("active_profile_id") and "active_targets" not in lkg_data:
+                            store.active_targets = list(DEFAULT_TARGETS)
+                        return store
+                except Exception:
+                    pass
+            if has_nonempty_file(PROFILES_PATH):
+                backup_corrupted_file(PROFILES_PATH, reason="profiles_corrupt")
+            if raise_on_error and has_nonempty_file(PROFILES_PATH):
+                raise ProtectedFileReadError(
+                    f"Refusing to fall back to empty ProfileStore for unreadable {PROFILES_PATH}: {e}"
+                ) from e
+            logger.warning("Failed to load profiles.json: %s. Using empty store.", e)
+            fallback = ProfileStore()
+            fallback._from_corrupted_read = True
+            return fallback
 
 
 def _materialize_anthropic_url(profile: APIProfile) -> None:
@@ -252,17 +289,31 @@ def _materialize_anthropic_url(profile: APIProfile) -> None:
 
 
 def save_profiles(store: ProfileStore) -> None:
-    """Save profiles to ~/.frago/profiles.json with 0o600 permissions on Unix."""
+    """Atomically save profiles to ~/.frago/profiles.json under exclusive lock with 0o600 permissions."""
     for profile in store.profiles:
         _materialize_anthropic_url(profile)
-    PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with locked_file(PROFILES_PATH, exclusive=True):
+        if getattr(store, "_from_corrupted_read", False) and has_nonempty_file(PROFILES_PATH):
+            raise ProtectedFileReadError(
+                f"Refusing to overwrite existing {PROFILES_PATH} with fallback empty ProfileStore."
+            )
+        if not store.profiles and has_nonempty_file(PROFILES_PATH):
+            try:
+                existing_raw = json.loads(PROFILES_PATH.read_text(encoding="utf-8"))
+                if not isinstance(existing_raw, dict):
+                    raise ValueError("profiles.json root is not a JSON object")
+            except Exception as exc:
+                raise ProtectedFileReadError(
+                    f"Refusing to overwrite unreadable existing {PROFILES_PATH} with empty ProfileStore: {exc}"
+                ) from exc
 
-    content = json.dumps(store.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
-    PROFILES_PATH.write_text(content, encoding="utf-8")
+        content = json.dumps(store.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
+        atomic_write_text(PROFILES_PATH, content, save_lkg=True)
+        store._from_corrupted_read = False
 
-    # Set file permissions on Unix
-    if platform.system() != "Windows":
-        os.chmod(PROFILES_PATH, 0o600)
+        # Set file permissions on Unix
+        if platform.system() != "Windows":
+            os.chmod(PROFILES_PATH, 0o600)
 
     with contextlib.suppress(Exception):
         from frago.server.services import coreagent_runner
@@ -548,9 +599,10 @@ def add_profile(profile: APIProfile) -> ProfileStore:
         profile.context_window,
         profile.agy_context_window,
     )
-    store = load_profiles()
-    store.profiles.append(profile)
-    save_profiles(store)
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        store.profiles.append(profile)
+        save_profiles(store)
     if profile.agy_context_window and (
         (profile.kind == KIND_VENDOR_CLI and profile.agent_type == "agy")
         or store.active_profile_id is None
@@ -578,56 +630,52 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
     Raises:
         ValueError: If profile not found, or the result would be unusable.
     """
-    store = load_profiles()
-
     if "channels" in updates:
         updates = {**updates, "channels": _coerce_channels(updates["channels"])}
 
-    for profile in store.profiles:
-        if profile.id == profile_id:
-            previous_agy_window = profile.agy_context_window
-            _validate_profile(
-                updates.get("name", profile.name),
-                updates.get("endpoint_type") or profile.endpoint_type,
-                updates.get("url", profile.url),
-                updates.get("kind") or profile.kind,
-                updates.get("agent_type", profile.agent_type),
-                updates.get("channels", profile.channels),
-                updates.get("context_window", profile.context_window),
-                updates.get("agy_context_window", profile.agy_context_window),
-            )
-            for key, value in updates.items():
-                if key == "api_key" and not value:
-                    continue  # Preserve existing key
-                if hasattr(profile, key) and key not in ("id", "created_at"):
-                    setattr(profile, key, value)
-            profile.updated_at = datetime.now()
-            save_profiles(store)
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        for profile in store.profiles:
+            if profile.id == profile_id:
+                previous_agy_window = profile.agy_context_window
+                _validate_profile(
+                    updates.get("name", profile.name),
+                    updates.get("endpoint_type") or profile.endpoint_type,
+                    updates.get("url", profile.url),
+                    updates.get("kind") or profile.kind,
+                    updates.get("agent_type", profile.agent_type),
+                    updates.get("channels", profile.channels),
+                    updates.get("context_window", profile.context_window),
+                    updates.get("agy_context_window", profile.agy_context_window),
+                )
+                for key, value in updates.items():
+                    if key == "api_key" and not value:
+                        continue  # Preserve existing key
+                    if hasattr(profile, key) and key not in ("id", "created_at"):
+                        setattr(profile, key, value)
+                profile.updated_at = datetime.now()
+                save_profiles(store)
 
-            if store.active_profile_id == profile_id:
-                activate_profile(profile_id, store.active_targets or None)
-                if previous_agy_window and profile.agy_context_window is None:
-                    _sync_agy_context_window(profile, force_clear=True)
-            else:
-                from frago.init.profile_targets import apply_profile
+                if store.active_profile_id == profile_id:
+                    activate_profile(profile_id, store.active_targets or None)
+                    if previous_agy_window and profile.agy_context_window is None:
+                        _sync_agy_context_window(profile, force_clear=True)
+                else:
+                    from frago.init.profile_targets import apply_profile
 
-                # Every harness this profile is bound to, native kernel included:
-                # it has no file to rewrite, and the store it reads was saved a
-                # few lines up, so the re-apply is a no-op for it rather than
-                # something to filter out by name here.
-                bound_harnesses = [
-                    t for t, pid in store.harness_profiles.items() if pid == profile_id
-                ]
-                if bound_harnesses:
-                    apply_profile(profile, bound_harnesses)
-                if "agy_context_window" in updates and (
-                    profile.agy_context_window != previous_agy_window
-                ):
-                    _sync_agy_context_window(
-                        profile,
-                        force_clear=bool(previous_agy_window and profile.agy_context_window is None),
-                    )
-            return store
+                    bound_harnesses = [
+                        t for t, pid in store.harness_profiles.items() if pid == profile_id
+                    ]
+                    if bound_harnesses:
+                        apply_profile(profile, bound_harnesses)
+                    if "agy_context_window" in updates and (
+                        profile.agy_context_window != previous_agy_window
+                    ):
+                        _sync_agy_context_window(
+                            profile,
+                            force_clear=bool(previous_agy_window and profile.agy_context_window is None),
+                        )
+                return store
 
     raise ValueError(f"Profile not found: {profile_id}")
 
@@ -639,41 +687,38 @@ def delete_profile(profile_id: str) -> ProfileStore:
     Raises:
         ValueError: If profile not found.
     """
-    store = load_profiles()
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
 
-    original_len = len(store.profiles)
-    store.profiles = [p for p in store.profiles if p.id != profile_id]
+        original_len = len(store.profiles)
+        store.profiles = [p for p in store.profiles if p.id != profile_id]
 
-    if len(store.profiles) == original_len:
-        raise ValueError(f"Profile not found: {profile_id}")
+        if len(store.profiles) == original_len:
+            raise ValueError(f"Profile not found: {profile_id}")
 
-    if store.active_profile_id == profile_id:
-        store.active_profile_id = None
-        store.active_targets = []
+        if store.active_profile_id == profile_id:
+            store.active_profile_id = None
+            store.active_targets = []
 
-    # A worker binding that outlives the profile it names is worse than no
-    # binding: `frago agent` would resolve it to nothing and silently fall back
-    # to the subscription, while the settings page still showed the deleted
-    # profile's name as the worker's connection.
-    if store.worker_profile_id == profile_id:
-        store.worker_profile_id = None
-    if store.lightagent_profile_id == profile_id:
-        store.lightagent_profile_id = None
-    if store.observer_profile_id == profile_id:
-        store.observer_profile_id = None
-    if store.coreagent_profile_id == profile_id:
-        store.coreagent_profile_id = None
-    if store.asr_profile_id == profile_id:
-        store.asr_profile_id = None
-    for k, v in list(store.harness_profiles.items()):
-        if v == profile_id:
-            store.harness_profiles[k] = OFFICIAL_ID
-    for k, v in list(store.worker_harness_profiles.items()):
-        if v == profile_id:
-            store.worker_harness_profiles[k] = "follow"
+        if store.worker_profile_id == profile_id:
+            store.worker_profile_id = None
+        if store.lightagent_profile_id == profile_id:
+            store.lightagent_profile_id = None
+        if store.observer_profile_id == profile_id:
+            store.observer_profile_id = None
+        if store.coreagent_profile_id == profile_id:
+            store.coreagent_profile_id = None
+        if store.asr_profile_id == profile_id:
+            store.asr_profile_id = None
+        for k, v in list(store.harness_profiles.items()):
+            if v == profile_id:
+                store.harness_profiles[k] = OFFICIAL_ID
+        for k, v in list(store.worker_harness_profiles.items()):
+            if v == profile_id:
+                store.worker_harness_profiles[k] = "follow"
 
-    save_profiles(store)
-    return store
+        save_profiles(store)
+        return store
 
 
 def get_profile(profile_id: str) -> APIProfile | None:
@@ -734,97 +779,76 @@ def activate_profile(
     # half went through.
     resolved = resolve_targets(targets)
 
-    store = load_profiles()
-    profile = None
-    for p in store.profiles:
-        if p.id == profile_id:
-            profile = p
-            break
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        profile = None
+        for p in store.profiles:
+            if p.id == profile_id:
+                profile = p
+                break
 
-    if not profile:
-        raise ValueError(f"Profile not found: {profile_id}")
+        if not profile:
+            raise ValueError(f"Profile not found: {profile_id}")
 
-    # Checked here and not only in bind_role because this is also reachable
-    # directly (the activate endpoint, the older API clients). Letting it
-    # through would write a profile with no endpoint and no key into Claude
-    # Code's settings and leave it unable to reach anything.
-    if profile.kind == KIND_VENDOR_CLI:
-        raise ValueError(
-            f"'{profile.name}' runs on {profile.agent_type}'s own account, so frago has "
-            "nothing to write into another CLI's configuration. It can be bound to the "
-            "worker role, or started directly as your own agent."
+        if profile.kind == KIND_VENDOR_CLI:
+            raise ValueError(
+                f"'{profile.name}' runs on {profile.agent_type}'s own account, so frago has "
+                "nothing to write into another CLI's configuration. It can be bound to the "
+                "worker role, or started directly as your own agent."
+            )
+        if profile.kind == KIND_WORKBUDDY:
+            raise ValueError(
+                "WorkBuddy 借登录这条连接已下线，不能写进任何 CLI 的配置。"
+            )
+
+        from frago.init.profile_targets import missing_channel_reason
+
+        for target in resolved:
+            reason = missing_channel_reason(profile, target)
+            if reason:
+                raise ValueError(reason)
+
+        previous_active_profile = next(
+            (p for p in store.profiles if p.id == store.active_profile_id), None
         )
-    if profile.kind == KIND_WORKBUDDY:
-        raise ValueError(
-            "WorkBuddy 借登录这条连接已下线，不能写进任何 CLI 的配置。"
+        previous = list(store.active_targets)
+        apply_profile(profile, resolved)
+        _sync_agy_context_window(
+            profile,
+            force_clear=bool(
+                previous_active_profile
+                and previous_active_profile.agy_context_window
+                and profile.agy_context_window is None
+            ),
         )
 
-    # Each CLI speaks one protocol; a profile without a channel on it would be
-    # written in as a provider with no address. Refused before anything is written.
-    from frago.init.profile_targets import missing_channel_reason
+        dropped = [t for t in previous if t not in resolved]
+        if dropped:
+            revert_targets(dropped)
 
-    for target in resolved:
-        reason = missing_channel_reason(profile, target)
-        if reason:
-            raise ValueError(reason)
+        if "claude" in resolved:
+            config = load_config()
+            config.auth_method = "custom"
+            config.api_endpoint = None
+            save_config(config)
+        elif "claude" in dropped:
+            config = load_config()
+            config.auth_method = "official"
+            config.api_endpoint = None
+            save_config(config)
 
-    previous_active_profile = next(
-        (p for p in store.profiles if p.id == store.active_profile_id), None
-    )
-    previous = list(store.active_targets)
-    apply_profile(profile, resolved)
-    _sync_agy_context_window(
-        profile,
-        force_clear=bool(
-            previous_active_profile
-            and previous_active_profile.agy_context_window
-            and profile.agy_context_window is None
-        ),
-    )
-
-    # Targets that were in force and are not chosen this time have to be handed
-    # back. Skipping this is the silent-stale-config bug: unchecking opencode
-    # would leave it running the old profile while the UI showed it as off.
-    dropped = [t for t in previous if t not in resolved]
-    if dropped:
-        revert_targets(dropped)
-
-    # frago's own auth_method describes Claude Code specifically — it is what
-    # the init flow and the WebUI status card read. It only moves when claude's
-    # own state moves.
-    if "claude" in resolved:
-        config = load_config()
-        config.auth_method = "custom"
-        config.api_endpoint = None
-        save_config(config)
-    elif "claude" in dropped:
-        config = load_config()
-        config.auth_method = "official"
-        config.api_endpoint = None
-        save_config(config)
-
-    store.active_profile_id = profile_id
-    store.active_targets = resolved
-    for t in resolved:
-        store.harness_profiles[t] = profile_id
-    for t in dropped:
-        store.harness_profiles[t] = OFFICIAL_ID
-    # The built-in kernel has no file to write — the store is its configuration,
-    # and frago-core reads the role field. Activating on it therefore means
-    # binding that field, which is also what makes its declared context window
-    # reachable: the kernel reads the window off whichever connection the role
-    # resolves to, and until now nothing kept that connection in step with the
-    # person's switch.
-    #
-    # 「哪个内核是内建内核」这件事问本体（``profile_mode == "native_kernel"``），
-    # 不在这里列名字：同一个问题在 `profile_targets` 那边已经用 `is_native_kernel()`
-    # 回答过一遍，两套判据并存的话，加第二个内建内核时必然漏改一处。
-    if any(is_native_kernel(t) for t in resolved):
-        store.coreagent_profile_id = profile_id
-    elif any(is_native_kernel(t) for t in dropped):
-        store.coreagent_profile_id = None
-    save_profiles(store)
-    return resolved
+        store.active_profile_id = profile_id
+        store.active_targets = resolved
+        for t in resolved:
+            store.harness_profiles[t] = profile_id
+        for t in dropped:
+            store.harness_profiles[t] = OFFICIAL_ID
+        if any(is_native_kernel(t) for t in resolved):
+            store.coreagent_profile_id = profile_id
+        elif any(is_native_kernel(t) for t in dropped):
+            store.coreagent_profile_id = None
+        save_profiles(store)
+        return resolved
 
 
 def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
@@ -840,43 +864,34 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     from frago.init.config_manager import load_config, save_config
     from frago.init.profile_targets import DEFAULT_TARGETS, revert_targets
 
-    store = load_profiles()
-    # An empty stored list on a store that predates targets still means Claude
-    # Code — see load_profiles. Falling back here as well covers a store whose
-    # active id was set directly rather than through activate_profile.
-    active = list(store.active_targets) or list(DEFAULT_TARGETS)
-    for t, pid in store.harness_profiles.items():
-        # coreagent stays out of this materialization: its harness row is also
-        # written by the Settings -> General matrix, which binds it without
-        # activating anything. Dragging it in here would make deactivating one
-        # profile undo a matrix choice the person made separately.
-        if is_native_kernel(t):
-            continue
-        if pid and pid != OFFICIAL_ID and t not in active:
-            active.append(t)
-    handing_back = [t for t in active if t in targets] if targets is not None else active
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        active = list(store.active_targets) or list(DEFAULT_TARGETS)
+        for t, pid in store.harness_profiles.items():
+            if is_native_kernel(t):
+                continue
+            if pid and pid != OFFICIAL_ID and t not in active:
+                active.append(t)
+        handing_back = [t for t in active if t in targets] if targets is not None else active
 
-    revert_targets(handing_back)
+        revert_targets(handing_back)
 
-    if "claude" in handing_back:
-        config = load_config()
-        config.auth_method = "official"
-        config.api_endpoint = None
-        save_config(config)
+        if "claude" in handing_back:
+            config = load_config()
+            config.auth_method = "official"
+            config.api_endpoint = None
+            save_config(config)
 
-    for t in handing_back:
-        store.harness_profiles[t] = OFFICIAL_ID
-    remaining = [t for t in active if t not in handing_back]
-    store.active_targets = remaining
-    if not remaining:
-        store.active_profile_id = None
-    # Handing the built-in kernel back means clearing its role binding, the same
-    # field activation writes. Nothing on disk was written for it, so this is
-    # the whole of the revert.
-    if any(is_native_kernel(t) for t in handing_back):
-        store.coreagent_profile_id = None
-    save_profiles(store)
-    return handing_back
+        for t in handing_back:
+            store.harness_profiles[t] = OFFICIAL_ID
+        remaining = [t for t in active if t not in handing_back]
+        store.active_targets = remaining
+        if not remaining:
+            store.active_profile_id = None
+        if any(is_native_kernel(t) for t in handing_back):
+            store.coreagent_profile_id = None
+        save_profiles(store)
+        return handing_back
 
 
 def get_harness_main_binding(store: ProfileStore, agent_type: str) -> str:
@@ -950,6 +965,20 @@ def resolve_worker_profile(agent_type: str | None = None) -> APIProfile:
 
 def bind_harness(agent_type: str, role: str, profile_id: str) -> APIProfile | None:
     """Bind a specific harness CLI's ``main`` (daily session) or ``worker`` role independently."""
+    from frago.init.profile_targets import HARNESS_TARGETS
+
+    if agent_type not in HARNESS_TARGETS:
+        raise ValueError(
+            f"Unknown harness '{agent_type}' (expected one of: {', '.join(HARNESS_TARGETS)})"
+        )
+    if role not in (MAIN_ROLE, WORKER_ROLE):
+        raise ValueError(f"Unknown harness role '{role}' (expected 'main' or 'worker')")
+
+    with locked_file(PROFILES_PATH, exclusive=True):
+        return _bind_harness_locked(agent_type, role, profile_id)
+
+
+def _bind_harness_locked(agent_type: str, role: str, profile_id: str) -> APIProfile | None:
     from frago.init.config_manager import load_config, save_config
     from frago.init.profile_targets import (
         HARNESS_TARGETS,
@@ -959,14 +988,7 @@ def bind_harness(agent_type: str, role: str, profile_id: str) -> APIProfile | No
         revert_targets,
     )
 
-    if agent_type not in HARNESS_TARGETS:
-        raise ValueError(
-            f"Unknown harness '{agent_type}' (expected one of: {', '.join(HARNESS_TARGETS)})"
-        )
-    if role not in (MAIN_ROLE, WORKER_ROLE):
-        raise ValueError(f"Unknown harness role '{role}' (expected 'main' or 'worker')")
-
-    store = load_profiles()
+    store = load_profiles(raise_on_error=True)
     by_id = {p.id: p for p in store.profiles}
 
     if agent_type == "coreagent":
@@ -1234,17 +1256,18 @@ def bind_role(
 
     from frago.init.profile_targets import can_apply_to
 
-    store = load_profiles()
-    store.worker_profile_id = None if connection.kind == KIND_OFFICIAL else connection.id
-    store.worker_harness_profiles["claude"] = (
-        "follow" if connection.kind == KIND_OFFICIAL else connection.id
-    )
-    store.worker_harness_profiles["coreagent"] = (
-        connection.id
-        if connection.kind == KIND_ENDPOINT and can_apply_to(connection, "claude")
-        else "follow"
-    )
-    save_profiles(store)
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        store.worker_profile_id = None if connection.kind == KIND_OFFICIAL else connection.id
+        store.worker_harness_profiles["claude"] = (
+            "follow" if connection.kind == KIND_OFFICIAL else connection.id
+        )
+        store.worker_harness_profiles["coreagent"] = (
+            connection.id
+            if connection.kind == KIND_ENDPOINT and can_apply_to(connection, "claude")
+            else "follow"
+        )
+        save_profiles(store)
     return connection
 
 
@@ -1270,31 +1293,32 @@ def get_role_bindings() -> list[dict[str, Any]]:
 
 
 def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
-    store = load_profiles()
-    field = _FRAGO_CORE_FIELDS[role]
-    if not profile_id or profile_id == OFFICIAL_ID:
-        setattr(store, field, None)
+    with locked_file(PROFILES_PATH, exclusive=True):
+        store = load_profiles(raise_on_error=True)
+        field = _FRAGO_CORE_FIELDS[role]
+        if not profile_id or profile_id == OFFICIAL_ID:
+            setattr(store, field, None)
+            if role == COREAGENT_ROLE:
+                store.harness_profiles["coreagent"] = OFFICIAL_ID
+            save_profiles(store)
+            return None
+        connection = next((p for p in store.profiles if p.id == profile_id), None)
+        if connection is None:
+            raise ValueError(f"Profile not found: {profile_id}")
+        if connection.kind == KIND_WORKBUDDY:
+            raise ValueError(
+                "WorkBuddy 借登录这条连接已下线，frago-core 读不到它的凭据。"
+            )
+        if connection.kind not in _FRAGO_CORE_KINDS:
+            raise ValueError(
+                f"'{connection.name}' runs on its own CLI's login, which frago-core cannot call. "
+                "The light agent, the session observer and CoreAgent take a connection with its own key."
+            )
+        setattr(store, field, connection.id)
         if role == COREAGENT_ROLE:
-            store.harness_profiles["coreagent"] = OFFICIAL_ID
+            store.harness_profiles["coreagent"] = connection.id
         save_profiles(store)
-        return None
-    connection = get_profile(profile_id)
-    if connection is None:
-        raise ValueError(f"Profile not found: {profile_id}")
-    if connection.kind == KIND_WORKBUDDY:
-        raise ValueError(
-            "WorkBuddy 借登录这条连接已下线，frago-core 读不到它的凭据。"
-        )
-    if connection.kind not in _FRAGO_CORE_KINDS:
-        raise ValueError(
-            f"'{connection.name}' runs on its own CLI's login, which frago-core cannot call. "
-            "The light agent, the session observer and CoreAgent take a connection with its own key."
-        )
-    setattr(store, field, connection.id)
-    if role == COREAGENT_ROLE:
-        store.harness_profiles["coreagent"] = connection.id
-    save_profiles(store)
-    return connection
+        return connection
 
 
 def create_profile_from_current(name: str) -> APIProfile | None:
