@@ -632,6 +632,7 @@ def _read_loop(sess: _Session) -> None:
                 sess.turn_done.set()
                 try:
                     import inspect
+
                     from frago.server.services import workbench_queue
 
                     fn = workbench_queue.schedule_auto_inject_after_settle
@@ -714,7 +715,7 @@ def _sweep(sess: _Session) -> None:
     """
     now = time.time()
     with sess.lock:
-        if sess.pending.qsize() > 0:
+        if sess.pending.qsize() > 0 or sess.pending_turns:
             return  # 刚有新话：马上就去取，不在这儿动状态
         if sess.state == "busy":
             if now - sess.touched_at <= TURN_TIMEOUT_S:
@@ -852,7 +853,7 @@ def _enqueue(sess: _Session, prompt: str) -> None:
         with contextlib.suppress(Exception):
             from frago.server.services import workbench_queue
 
-            workbench_queue.bump_turn_seq(sess.session_id)
+            workbench_queue.sync_turn_seq(sess.session_id, sess.turn_seq)
         if sess.proc is None:
             _spawn(sess)
         sess.state = "busy"

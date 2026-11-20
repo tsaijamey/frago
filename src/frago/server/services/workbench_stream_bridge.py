@@ -350,15 +350,17 @@ class WorkbenchStreamBridge:
         """Called by SessionStream when new records arrive."""
         if not records:
             return
-        if any(isinstance(r, dict) and r.get("kind") == "user.say" for r in records):
+        user_say_count = sum(
+            1 for r in records if isinstance(r, dict) and r.get("kind") == "user.say"
+        )
+        if user_say_count > 0:
             with self._lock:
-                self._turn_seq_by_session[session_id] = (
-                    self._turn_seq_by_session.get(session_id, 0) + 1
-                )
+                next_seq = self._turn_seq_by_session.get(session_id, 0) + user_say_count
+                self._turn_seq_by_session[session_id] = next_seq
             with contextlib.suppress(Exception):
                 from frago.server.services import workbench_queue
 
-                workbench_queue.bump_turn_seq(session_id)
+                workbench_queue.sync_turn_seq(session_id, next_seq)
         self._trigger_the_observer(session_id, records)
         try:
             loop = self._loop or asyncio.get_event_loop()
@@ -398,6 +400,7 @@ class WorkbenchStreamBridge:
                 self._schedule_settle(session_id)
             try:
                 import inspect
+
                 from frago.server.services import workbench_queue
 
                 fn = workbench_queue.schedule_auto_inject_after_settle

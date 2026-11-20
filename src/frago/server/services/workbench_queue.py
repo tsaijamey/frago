@@ -1469,6 +1469,24 @@ def bump_turn_seq(session_id: str) -> int:
     return next_seq
 
 
+def sync_turn_seq(session_id: str, seq: int) -> int:
+    """Idempotently advance ``turn_seq`` to at least ``seq`` and cancel stale settle timers if advanced."""
+    clean_sid = str(session_id or "").strip()
+    target_seq = max(0, int(seq))
+    if not clean_sid or target_seq <= 0:
+        return current_turn_seq(clean_sid)
+    timer = None
+    with _locks_guard:
+        cur = _active_turn_seq.get(clean_sid, 0)
+        if target_seq > cur:
+            _active_turn_seq[clean_sid] = target_seq
+            cur = target_seq
+            timer = _settle_timers.pop(clean_sid, None)
+    if timer is not None:
+        timer.cancel()
+    return cur
+
+
 def current_turn_seq(session_id: str) -> int:
     """Return the latest active ``turn_seq`` observed for ``session_id``."""
     clean_sid = str(session_id or "").strip()
