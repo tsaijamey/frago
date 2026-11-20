@@ -17,6 +17,7 @@ NEVER imports `frago.server` or `frago.cli`.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -869,6 +870,14 @@ class EmployeeOntologyService:
         if updated != record.active_session_ids:
             record.active_session_ids = updated
             save_post(record, base_dir=self._base_dir)
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            onto_svc = get_default_session_service()
+            rec = onto_svc.get_session(clean_sid)
+            if rec is not None and not rec.employee_id and not rec.is_worker:
+                rec.employee_id = post_id
+                onto_svc.store.save(rec)
         return record
 
     def unregister_session(
@@ -1160,6 +1169,28 @@ def resolve_session_employee_id(
     def _direct_employee_of(sid: str) -> str | None:
         if sid in active_by_sid:
             return active_by_sid[sid]
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            rec = get_default_session_service().get_session(sid)
+            if rec is not None and not rec.is_worker:
+                emp = str(rec.employee_id or rec.extra.get("employee_id") or "").strip()
+                if emp and (not valid_post_ids or emp in valid_post_ids):
+                    return emp
+        with contextlib.suppress(Exception):
+            from frago.employee.store import load_ledger
+
+            for p in posts:
+                led = load_ledger(p.member_post_id, base_dir=base_dir)
+                if led is None:
+                    continue
+                for item in led.claimed_resources.get("matched_sessions") or []:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("bound_to_post")
+                        and str(item.get("session_id") or "").strip() == sid
+                    ):
+                        return p.member_post_id
         with contextlib.suppress(Exception):
             from frago.session.adapters.agy_records import detect_employee_id
 

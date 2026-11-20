@@ -1330,7 +1330,7 @@ def _scan_domains(
 
 
 _SESSION_EMPLOYEE_BLOCK_RE = re.compile(
-    r'<frago-employee\s+id="([^"]+)"[^>]*>[\s\S]*?</frago-employee>\s*',
+    r'<frago-employee\s+id="([^"]+)"[^>]*(?:/>|>[\s\S]*?</frago-employee>)\s*',
     re.IGNORECASE,
 )
 _SESSION_SKILL_BLOCK_RE = re.compile(
@@ -2017,141 +2017,356 @@ def resolve_employee_worker_sessions(
     return workers
 
 
+def _resolve_bloodline_lifecycle(
+    sid: str,
+    *,
+    session_dir: Path | None,
+    onto_svc: Any,
+    onto_map: dict[str, Any],
+    live_tmux_ids: set[str] | None,
+    cards_by_sid: dict[str, Any] | None,
+    member_post_id: str | None = None,
+) -> str:
+    """Resolve and reconcile a bloodline session's canonical five-state lifecycle."""
+    import contextlib
+    from datetime import datetime as _dt
+
+    from frago.session import storage as session_storage
+
+    onto_rec = onto_map.get(sid)
+    if onto_rec is not None and member_post_id and not onto_rec.employee_id:
+        onto_rec.employee_id = member_post_id
+        with contextlib.suppress(Exception):
+            onto_svc.store.save(onto_rec)
+
+    now = _dt.now()
+    if session_dir is not None:
+        monitored = session_storage._load_session_from_dir(
+            session_dir,
+            now,
+        )
+        if monitored is not None:
+            resolved = session_storage._reconcile_monitored_status(
+                monitored,
+                now,
+                onto_map=onto_map,
+                live_tmux_ids=live_tmux_ids,
+                persist_reconciliation=True,
+            )
+            return resolved.value
+
+    if cards_by_sid is not None and sid in cards_by_sid:
+        card = cards_by_sid[sid]
+        c_status = str(getattr(card, "status", "") or "").lower()
+        c_last_active_s = float(getattr(card, "last_active_at", 0) or 0) / 1000.0
+        if c_status == "error":
+            if onto_rec is not None:
+                with contextlib.suppress(Exception):
+                    onto_svc.reconcile_session_lifecycle(
+                        sid,
+                        agent_kernel_id=str(getattr(card, "family", "claude") or "claude"),
+                        is_alive=False,
+                        last_activity_ts=c_last_active_s or None,
+                        observed_error=getattr(card, "digest_stuck", None) or "session_error",
+                        persist=True,
+                    )
+            return "error"
+        if c_status in {"done", "idle"}:
+            if onto_rec is not None:
+                with contextlib.suppress(Exception):
+                    onto_svc.reconcile_session_lifecycle(
+                        sid,
+                        agent_kernel_id=str(getattr(card, "family", "claude") or "claude"),
+                        is_alive=False,
+                        last_activity_ts=c_last_active_s or None,
+                        observed_terminal_state="completed",
+                        persist=True,
+                    )
+            return "completed"
+        if c_status == "running":
+            if onto_rec is not None:
+                reconciled = None
+                with contextlib.suppress(Exception):
+                    reconciled = onto_svc.reconcile_session_lifecycle(
+                        sid,
+                        agent_kernel_id=str(getattr(card, "family", "claude") or "claude"),
+                        is_alive=(live_tmux_ids is not None and sid in live_tmux_ids) or None,
+                        last_activity_ts=c_last_active_s or None,
+                        persist=True,
+                    )
+                if reconciled is not None:
+                    return str(reconciled.lifecycle_state)
+            return "running"
+
+    if onto_rec is not None:
+        is_alive = (sid in live_tmux_ids) if (live_tmux_ids is not None and sid in live_tmux_ids) else None
+        reconciled = None
+        with contextlib.suppress(Exception):
+            reconciled = onto_svc.reconcile_session_lifecycle(
+                sid,
+                agent_kernel_id=onto_rec.agent_kernel,
+                is_alive=is_alive,
+                persist=True,
+            )
+        if reconciled is not None:
+            return str(reconciled.lifecycle_state)
+        return str(onto_rec.lifecycle_state or "running")
+
+    # Neither on-disk session directory nor ontology record exists (e.g. pending handle).
+    return "running"
+
+
+def _collect_bloodline_session_ids(
+    record: EmployeePostRecord,
+    *,
+    onto_svc: Any,
+    onto_map: dict[str, Any],
+    existing_ledger: EmployeeLedger | None = None,
+) -> set[str]:
+    """Collect all session IDs belonging strictly to ``record.member_post_id``'s ontology bloodline.
+
+    Bloodline sources (zero keyword/token guessing):
+    1. Post's ``active_session_ids``.
+    2. ``SessionOntologyService`` records bearing ``employee_id == record.member_post_id``.
+    3. Previously verified ``bound_to_post=True`` entries in ``existing_ledger``.
+    4. ``branch`` / ``handoff`` descendants of confirmed bloodline sessions (excluding ``dispatch`` workers).
+    """
+    import contextlib
+
+    post_id = record.member_post_id
+    roots: set[str] = {
+        str(sid).strip() for sid in record.active_session_ids if str(sid or "").strip()
+    }
+    for rec in onto_map.values():
+        emp = getattr(rec, "employee_id", None) or (getattr(rec, "extra", None) or {}).get("employee_id")
+        if emp == post_id and not getattr(rec, "is_worker", False):
+            roots.add(rec.session_id)
+
+    if existing_ledger is not None:
+        for item in existing_ledger.claimed_resources.get("matched_sessions") or []:
+            if isinstance(item, dict) and item.get("bound_to_post"):
+                sid = str(item.get("session_id") or "").strip()
+                if sid:
+                    roots.add(sid)
+
+    # Expand non-worker branch/handoff children from SessionOntologyStore & session_origin
+    bloodline = set(roots)
+    children_map: dict[str, list[str]] = {}
+    for rec in onto_map.values():
+        if rec.parent_session_id and not rec.is_worker and rec.relation_kind in {"branch", "handoff"}:
+            children_map.setdefault(rec.parent_session_id, []).append(rec.session_id)
+
+    with contextlib.suppress(Exception):
+        from frago.session import session_origin
+
+        idx = session_origin.load_origin_index()
+        for child_sid, parent_sid in idx.parents.items():
+            if idx.origin_of(child_sid) == "worker":
+                continue
+            rel = idx.relation_of(child_sid)
+            if rel is not None and rel.kind in {"branch", "handoff"}:
+                children_map.setdefault(parent_sid, []).append(child_sid)
+
+    frontier = list(roots)
+    while frontier:
+        cur = frontier.pop()
+        for child in children_map.get(cur, ()):
+            if child not in bloodline:
+                bloodline.add(child)
+                frontier.append(child)
+    return bloodline
+
+
 def _scan_sessions(
     keywords: set[str],
     cursor: LedgerCursor,
     *,
     limit: int = 200,
     record: EmployeePostRecord | None = None,
+    existing_ledger: EmployeeLedger | None = None,
+    base_dir: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
-    """扫会话目录，认领本岗绑定会话（`active_session_ids`）及与职责相关的会话。
+    """基于本体血缘归属认领本岗会话并收敛五态生命周期（废除无血缘的关键词分词全表扫表）。
 
-    时间口径一律取 ``metadata.json`` 或记录自带的 ``started_at`` / ``last_activity``，NEVER 用
-    目录 mtime：mtime 会被同步、备份、保活触碰改掉，按它判「有没有新会话」等于按文件的
-    最后触碰时刻判内容，两边不是一回事。
+    准入血缘仅认四类确定性证据：
+    1. 岗位编制 ``active_session_ids``；
+    2. ``SessionOntologyService`` 中显式登记 ``employee_id == record.member_post_id`` 的会话；
+    3. 会话记录/目录内携带显式 ``<frago-employee id="<post>">`` 标签的自有会话；
+    4. 上述自有会话沿 ``branch`` / ``handoff`` 血缘链分出的非 Worker 子会话。
     """
+    del keywords  # 严禁再按关键词分词扫表乱认陌生会话
+    import contextlib
+
+    from frago.session import storage as session_storage
+    from frago.session.service import get_default_session_service
+
     sessions_root = frago_home() / "sessions"
     matched: list[dict[str, Any]] = []
     topics: list[dict[str, Any]] = []
     watermark = ""
-    if not sessions_root.is_dir():
+
+    if record is None:
+        cursor.processed_session_ids = []
         return matched, topics, watermark
 
-    processed = set(cursor.processed_session_ids)
-    seen_in_batch: set[str] = set()
+    onto_svc = get_default_session_service()
+    onto_map: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        onto_map = {rec.session_id: rec for rec in onto_svc.list_sessions() if rec.session_id}
 
-    # 1. 优先认领本岗自己的 active_session_ids（含 agy / claude / codex / opencode / coreagent）
-    if record is not None:
-        for own_sid in reversed(record.active_session_ids):
-            clean_sid = str(own_sid or "").strip()
-            if not clean_sid or clean_sid in processed or clean_sid in seen_in_batch:
+    live_tmux_ids = session_storage._live_tmux_session_ids()
+    bloodline_ids = _collect_bloodline_session_ids(
+        record,
+        onto_svc=onto_svc,
+        onto_map=onto_map,
+        existing_ledger=existing_ledger,
+    )
+    cards_by_sid: dict[str, Any] | None = None
+    if frago_home().resolve() == (Path.home() / ".frago").resolve():
+        needs_cards = any(
+            (sessions_root / "claude" / s).is_dir() is False
+            and _locate_session_dir_by_id(sessions_root, s) is None
+            or (
+                s in onto_map
+                and str(getattr(onto_map[s], "lifecycle_state", "") or "").lower()
+                in {"running", "queued", "awaiting_input"}
+            )
+            for s in bloodline_ids
+        )
+        if needs_cards:
+            with contextlib.suppress(Exception):
+                from frago.session import record_reader
+
+                liveness_hint = {sid: True for sid in (live_tmux_ids or set())}
+                cards_by_sid = {
+                    c.session_id: c for c in record_reader.list_sessions(liveness=liveness_hint)
+                }
+
+    # 额外增量检查新出现的会话目录（只认显式 <frago-employee id="..."> 标记，绝不关键词扫表）
+    if sessions_root.is_dir():
+        candidates: list[tuple[str, str, Path, dict[str, Any]]] = []
+        for metadata_path in sessions_root.glob("*/*/metadata.json"):
+            try:
+                raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
                 continue
-            own_dir = _locate_session_dir_by_id(sessions_root, clean_sid)
-            if own_dir is None:
+            if not isinstance(raw, dict):
                 continue
-            info = _inspect_session_dir(own_dir, clean_sid)
+            session_id = str(raw.get("session_id", "") or "").strip()
+            if not session_id or session_id in bloodline_ids:
+                continue
+            started = str(raw.get("started_at", "") or "")
+            last_activity = str(raw.get("last_activity", "") or "")
+            stamp = last_activity or started
+            if cursor.sessions_through and stamp and stamp < cursor.sessions_through:
+                continue
+            name = str(raw.get("name", "") or "")
+            if any(marker in name.lower() for marker in _LEDGER_SESSION_MARKERS):
+                continue
+            candidates.append((session_id, stamp, metadata_path.parent, raw))
+
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        if candidates:
+            cand_max = max(stamp for _, stamp, _, _ in candidates)
+            if cand_max > watermark:
+                watermark = cand_max
+
+        for session_id, _stamp, session_dir, raw in candidates[: max(limit, 0)]:
+            info = _inspect_session_dir(session_dir, session_id, raw)
+            if info.get("employee_id") == record.member_post_id:
+                bloodline_ids.add(session_id)
+
+    seen_in_batch: set[str] = set()
+    ordered_ids: list[str] = [
+        *[str(sid).strip() for sid in reversed(record.active_session_ids) if str(sid or "").strip()],
+        *sorted(bloodline_ids),
+    ]
+    terminal_to_prune: set[str] = set()
+
+    for sid in ordered_ids:
+        if not sid or sid in seen_in_batch:
+            continue
+        seen_in_batch.add(sid)
+
+        session_dir = _locate_session_dir_by_id(sessions_root, sid) if sessions_root.is_dir() else None
+        lifecycle_state = _resolve_bloodline_lifecycle(
+            sid,
+            session_dir=session_dir,
+            onto_svc=onto_svc,
+            onto_map=onto_map,
+            live_tmux_ids=live_tmux_ids,
+            cards_by_sid=cards_by_sid,
+            member_post_id=record.member_post_id,
+        )
+        if lifecycle_state in {"completed", "error", "cancelled"} and sid in record.active_session_ids:
+            terminal_to_prune.add(sid)
+
+        if session_dir is not None:
+            info = _inspect_session_dir(session_dir, sid)
             stamp = str(info.get("last_activity") or info.get("started_at") or "")
             if stamp and stamp > watermark:
                 watermark = stamp
-            processed.add(clean_sid)
-            seen_in_batch.add(clean_sid)
-            matched.append(
-                {
-                    "session_id": clean_sid,
-                    "started_at": info["started_at"],
-                    "last_activity": info["last_activity"],
-                    "title": info["title"],
-                    "first_prompt_summary": info["first_prompt_summary"],
-                    "latest_conclusion": info["latest_conclusion"],
-                    "bound_to_post": True,
-                }
-            )
-            topics.append(
-                {
-                    "topic_key": f"session:{clean_sid}",
-                    "title": info["title"],
-                    "status": "active",
-                    "latest_conclusion": info["latest_conclusion"],
-                    "artifacts": [str(own_dir)],
-                }
-            )
+            title = info["title"]
+            started_at = info["started_at"]
+            last_activity = info["last_activity"]
+            first_prompt_summary = info["first_prompt_summary"]
+            latest_conclusion = info["latest_conclusion"]
+            artifacts = [str(session_dir)]
+        elif cards_by_sid is not None and sid in cards_by_sid:
+            card = cards_by_sid[sid]
+            title = str(getattr(card, "title", "") or f"本岗会话 {sid[:8]}")
+            started_at = str(getattr(card, "created_at", "") or "")
+            last_activity = str(getattr(card, "last_active_at", "") or "")
+            first_prompt_summary = title
+            latest_conclusion = str(getattr(card, "digest_done", "") or getattr(card, "digest_stuck", "") or "")
+            artifacts = []
+        else:
+            # 没有本地会话目录也没有 card（例如尚未落盘的测试句柄）：仅记录基本归属，不强行删 active_session_ids
+            if sid not in record.active_session_ids and sid not in onto_map:
+                continue
+            rec_obj = onto_map.get(sid)
+            title = (rec_obj.prompt_head if rec_obj else "") or f"本岗会话 {sid[:8]}"
+            started_at = ""
+            last_activity = ""
+            first_prompt_summary = title
+            latest_conclusion = (rec_obj.summary if rec_obj and rec_obj.summary else "")
+            artifacts = []
 
-    candidates: list[tuple[str, str, Path, dict[str, Any]]] = []
-
-    for metadata_path in sessions_root.glob("*/*/metadata.json"):
-        try:
-            raw = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(raw, dict):
-            continue
-        session_id = str(raw.get("session_id", "") or "").strip()
-        if not session_id or session_id in processed or session_id in seen_in_batch:
-            continue
-        started = str(raw.get("started_at", "") or "")
-        last_activity = str(raw.get("last_activity", "") or "")
-        stamp = last_activity or started
-        # 严格早于水位线的会话上一轮已经考虑过了，只是没匹配上职责词。
-        if cursor.sessions_through and stamp and stamp < cursor.sessions_through:
-            continue
-        name = str(raw.get("name", "") or "")
-        if any(marker in name.lower() for marker in _LEDGER_SESSION_MARKERS):
-            continue
-        haystack = " ".join(
-            [
-                name,
-                str(raw.get("project_path", "") or ""),
-                str(raw.get("domain", "") or ""),
-            ]
-        )
-        candidates.append(
-            (session_id, stamp, metadata_path.parent, {**raw, "_haystack": haystack})
-        )
-
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    # 水位线取全体候选里最新的那个时刻，而不是「细读到哪」。取后者的话，被 limit 截掉的
-    # 那一批比它更旧，下一轮会被水位线挡在外面，永远轮不到。
-    if candidates:
-        cand_max = max(stamp for _, stamp, _, _ in candidates)
-        if cand_max > watermark:
-            watermark = cand_max
-
-    for session_id, _stamp, session_dir, raw in candidates[: max(limit, 0)]:
-        info = _inspect_session_dir(session_dir, session_id, raw)
-        first_prompt = info["first_prompt_summary"]
-        haystack = f"{raw['_haystack']} {first_prompt}"
-        processed.add(session_id)
-        is_own = bool(
-            record is not None
-            and info.get("employee_id")
-            and info.get("employee_id") == record.member_post_id
-        )
-        if not is_own and not _matches_scope(haystack, keywords):
-            # 不匹配也记进已处理：不记的话下一轮还得把它读一遍，那场会话的开销白付了。
-            continue
-        title = info["title"]
         matched.append(
             {
-                "session_id": session_id,
-                "started_at": info["started_at"],
-                "last_activity": info["last_activity"],
+                "session_id": sid,
+                "started_at": started_at,
+                "last_activity": last_activity,
                 "title": title,
-                "first_prompt_summary": first_prompt,
-                "latest_conclusion": info["latest_conclusion"],
-                "bound_to_post": is_own,
+                "first_prompt_summary": first_prompt_summary,
+                "latest_conclusion": latest_conclusion,
+                "lifecycle_state": lifecycle_state,
+                "bound_to_post": True,
             }
+        )
+        topic_status = (
+            "active"
+            if lifecycle_state in {"running", "awaiting_input", "queued"}
+            else lifecycle_state
         )
         topics.append(
             {
-                "topic_key": f"session:{session_id}",
+                "topic_key": f"session:{sid}",
                 "title": title,
-                "status": "active",
-                "latest_conclusion": info["latest_conclusion"],
-                "artifacts": [str(session_dir)],
+                "status": topic_status,
+                "latest_conclusion": latest_conclusion,
+                "artifacts": artifacts,
             }
         )
 
-    cursor.processed_session_ids = sorted(processed)
+    # 收口已终结/僵尸会话：从 post.active_session_ids 移除（历史归属已留存在 matched_sessions 与本体记录）
+    if terminal_to_prune:
+        kept = [s for s in record.active_session_ids if s not in terminal_to_prune]
+        if kept != record.active_session_ids:
+            record.active_session_ids = kept
+            save_post(record, base_dir=base_dir)
+
+    cursor.processed_session_ids = sorted(seen_in_batch)
     return matched, topics, watermark
 
 
@@ -2456,8 +2671,50 @@ def sync_employee_ledger(
         keywords, cursor, excluded=prior, record=record
     )
     sessions, session_topics, latest_session = _scan_sessions(
-        keywords, cursor, limit=session_limit, record=record
+        keywords,
+        cursor,
+        limit=session_limit,
+        record=record,
+        existing_ledger=prior,
+        base_dir=base_dir,
     )
+    valid_session_ids = {
+        str(item.get("session_id") or "").strip()
+        for item in sessions
+        if isinstance(item, dict) and str(item.get("session_id") or "").strip()
+    }
+    prior_matched_by_sid: dict[str, dict[str, Any]] = {}
+    if old_ledger is not None:
+        old_ledger.claimed_resources["matched_sessions"] = [
+            item
+            for item in (old_ledger.claimed_resources.get("matched_sessions") or [])
+            if isinstance(item, dict)
+            and bool(item.get("bound_to_post"))
+            and str(item.get("session_id") or "").strip() in valid_session_ids
+        ]
+        for item in old_ledger.claimed_resources["matched_sessions"]:
+            sid_key = str(item.get("session_id") or "").strip()
+            if sid_key:
+                prior_matched_by_sid[sid_key] = item
+        old_ledger.active_topics = [
+            topic
+            for topic in (old_ledger.active_topics or [])
+            if isinstance(topic, dict)
+            and (
+                not str(topic.get("topic_key") or "").startswith("session:")
+                or str(topic.get("topic_key") or "")[len("session:") :] in valid_session_ids
+            )
+        ]
+
+    changed_sessions = [
+        item
+        for item in sessions
+        if item.get("session_id") not in prior_matched_by_sid
+        or prior_matched_by_sid[item["session_id"]].get("lifecycle_state")
+        != item.get("lifecycle_state")
+        or prior_matched_by_sid[item["session_id"]].get("last_activity")
+        != item.get("last_activity")
+    ]
 
     delta = EmployeeLedger(
         member_post_id=record.member_post_id,
@@ -2484,6 +2741,8 @@ def sync_employee_ledger(
     merged, counts = merge_ledger_entries(
         old_ledger, delta, member_post_id=record.member_post_id
     )
+    # 游标只保留经本体血缘核验的自有会话编号，彻底清理历史全表扫表留下的无关会话污染。
+    merged.cursor.processed_session_ids = sorted(valid_session_ids)
     path = save_ledger(merged, base_dir=base_dir)
 
     # 主动认领的结果反哺回岗位编制：下次起会话时岗位本身就知道自己管着哪些槽位/配方/
@@ -2499,7 +2758,7 @@ def sync_employee_ledger(
         "new_data_entries": len(slot_entries),
         "new_recipes": len(recipes),
         "new_domains": len(domains),
-        "new_sessions": len(sessions),
+        "new_sessions": len(changed_sessions),
         "cursor": {
             "sessions_through": merged.cursor.sessions_through,
             "processed_session_count": len(merged.cursor.processed_session_ids),

@@ -2197,7 +2197,34 @@ class TestEmployeeLedgerProactiveSweep:
                 {
                     "step_id": 1,
                     "type": "user",
-                    "content_summary": "帮我跑一下 A 股 DMA 信号回测",
+                    "content_summary": '<frago-employee id="stock" />\n帮我跑一下 A 股 DMA 信号回测',
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # 仅含关键词 "DMA" 但无员工血缘标记的历史会话，严禁被扫表误认进账本
+        (sessions / "s-dma-unowned").mkdir(parents=True)
+        (sessions / "s-dma-unowned" / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "session_id": "s-dma-unowned",
+                    "name": "DMA 信号关键词误撞",
+                    "project_path": "/tmp/work",
+                    "started_at": "2026-10-01T02:00:00",
+                    "last_activity": "2026-10-01T03:00:00",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (sessions / "s-dma-unowned" / "steps.jsonl").write_text(
+            json.dumps(
+                {
+                    "step_id": 1,
+                    "type": "user",
+                    "content_summary": "随便聊一下 DMA 信号与股票 ETF 概念",
                 },
                 ensure_ascii=False,
             )
@@ -2297,9 +2324,10 @@ class TestEmployeeLedgerProactiveSweep:
         assert "etf-research" in domain_names
         assert "cooking" not in domain_names
 
-        # 会话按 metadata 的时刻与首条消息认领
+        # 会话仅凭本体血缘（<frago-employee> / active_session_ids / 分支）认领，严禁仅靠关键词扫表误认
         session_ids = {s["session_id"] for s in ledger.claimed_resources["matched_sessions"]}
         assert "s-dma" in session_ids
+        assert "s-dma-unowned" not in session_ids
         assert "s-cook" not in session_ids
 
         # 四栏都建起来了
