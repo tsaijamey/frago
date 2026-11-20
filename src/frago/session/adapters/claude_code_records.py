@@ -154,8 +154,16 @@ _SYSTEM_SUBTYPE_LABEL = {
     "informational": "引擎提示",
 }
 
-# ── 判据表序 4：引擎侧报错的三种 subtype ────────────────────────────
-_ENGINE_ERROR_SUBTYPES = frozenset({"model_refusal_fallback", "model_consent_fallback"})
+# ── 判据表序 4：引擎侧报错的 subtype ──────────────────────────────────
+_ENGINE_ERROR_SUBTYPES = frozenset(
+    {
+        "model_refusal_fallback",
+        "model_consent_fallback",
+        "empty_answer",
+        "api_error",
+        "error",
+    }
+)
 
 # ── 判据表序 8：并入附件卡的四种 attachment ─────────────────────────
 _MEDIA_ATTACHMENT_TYPES = frozenset(
@@ -1087,8 +1095,10 @@ class _Translator:
             return
 
         # 序 4：引擎侧报错（或生命周期停机通知）
-        if subtype in _ENGINE_ERROR_SUBTYPES or (
-            subtype == "informational" and row.get("level") == "warning"
+        if (
+            subtype in _ENGINE_ERROR_SUBTYPES
+            or row.get("level") == "error"
+            or (subtype == "informational" and row.get("level") == "warning")
         ):
             content = str(row.get("content") or "")
             if (

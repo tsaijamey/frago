@@ -20,6 +20,22 @@ const COMPLETED_STATUS_EXACT = new Set([
 
 const COMPLETED_STATUS_MARKERS = ['✅', '已完成', '已完结', '已办结', '已收口', '已归档'];
 
+const ERROR_STATUS_EXACT = new Set([
+  'error',
+  'failed',
+  'fail',
+  'aborted',
+  'cancelled',
+  'canceled',
+  '异常',
+  '失败',
+  '报错',
+  '错误',
+  '中止',
+]);
+
+const ERROR_STATUS_MARKERS = ['❌', '异常', '失败', '报错', '错误'];
+
 /** 判断某条事项是否已完结（仅用于前端展示折叠，绝不改动底层任务数据）。 */
 export function isCompletedWatcherTask(
   task: Pick<ObserverTaskItem, 'status'> | { status?: string | null }
@@ -27,6 +43,14 @@ export function isCompletedWatcherTask(
   const raw = typeof task?.status === 'string' ? task.status.trim() : '';
   if (!raw) return false;
   const lower = raw.toLowerCase();
+  // error / failed / 异常状态绝不允许静默折叠为已完结
+  if (
+    ERROR_STATUS_EXACT.has(lower) ||
+    ERROR_STATUS_EXACT.has(raw) ||
+    ERROR_STATUS_MARKERS.some((marker) => raw.includes(marker))
+  ) {
+    return false;
+  }
   if (COMPLETED_STATUS_EXACT.has(lower) || COMPLETED_STATUS_EXACT.has(raw)) {
     return true;
   }

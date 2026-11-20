@@ -34,7 +34,36 @@ describe('tasksOverview utilities', () => {
     expect(isCompletedWatcherTask({ status: 'doing' })).toBe(false);
     expect(isCompletedWatcherTask({ status: 'waiting' })).toBe(false);
     expect(isCompletedWatcherTask({ status: 'blocked' })).toBe(false);
+    expect(isCompletedWatcherTask({ status: 'error' })).toBe(false);
+    expect(isCompletedWatcherTask({ status: 'failed' })).toBe(false);
+    expect(isCompletedWatcherTask({ status: 'aborted' })).toBe(false);
+    expect(isCompletedWatcherTask({ status: '异常' })).toBe(false);
+    expect(isCompletedWatcherTask({ status: '❌ 失败' })).toBe(false);
     expect(isCompletedWatcherTask({ status: '' })).toBe(false);
+  });
+
+  it('error / failed 异常行绝不折叠进已完结隐藏分区，即使末尾全部是完结与异常混排', () => {
+    const tasks = [
+      makeTask('T1', 'done'),
+      makeTask('T2', 'done'),
+      makeTask('T3', 'done'),
+      makeTask('T4', 'error'),
+    ];
+    const part = partitionTasksForOverview(tasks);
+    expect(part.canCollapse).toBe(true);
+    expect(part.hiddenCompletedTasks.map((t) => t.id)).toEqual(['T1', 'T2', 'T3']);
+    expect(part.visibleTasks.map((t) => t.id)).toEqual(['T4']);
+    expect(part.visibleTasks[0]?.status).toBe('error');
+
+    const errorOnlyTail = [
+      makeTask('T1', 'done'),
+      makeTask('T2', 'done'),
+      makeTask('T3', 'error'),
+      makeTask('T4', 'failed'),
+    ];
+    const p2 = partitionTasksForOverview(errorOnlyTail);
+    expect(p2.visibleTasks.map((t) => t.id)).toEqual(['T3', 'T4']);
+    expect(p2.hiddenCompletedTasks.map((t) => t.id)).toEqual(['T1', 'T2']);
   });
 
   it('存在活跃事项且已完结行 >= 2 时自动折叠全部已完结行并指定最后一条完结行为渐变预览行', () => {

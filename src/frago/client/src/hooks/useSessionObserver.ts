@@ -36,7 +36,7 @@ export type ObserverStatus = 'ok' | 'failed' | 'empty' | 'unbound';
  * 「产出」；产出被下一个状态顶掉时，服务端把它挪进 happened。
  */
 export interface ObserverTail {
-  kind: 'now' | 'output';
+  kind: 'now' | 'output' | 'error';
   text: string;
 }
 
@@ -45,7 +45,7 @@ export interface ObserverTaskItem {
   proposed_at: number;
   updated_at?: number;
   title: string;
-  status: 'doing' | 'waiting' | 'done' | 'blocked';
+  status: 'doing' | 'waiting' | 'done' | 'blocked' | 'error' | 'failed';
   actor: string;
   conclusion: string;
 }

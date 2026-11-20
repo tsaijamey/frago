@@ -205,6 +205,7 @@ def inspect_session_file(
     step_count = 0
     tool_call_count = 0
     last_event_kind: str | None = None
+    last_turn_error: bool = False
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -247,11 +248,18 @@ def inspect_session_file(
                 continue
             step_count += 1
             last_event_kind = "user"
+            if not record.get("isMeta"):
+                last_turn_error = False
             if first_user_title is None and not record.get("isMeta"):
                 msg = record.get("message")
                 content = msg.get("content") if isinstance(msg, dict) else None
                 first_user_title = _extract_first_user_title(content)
         elif rec_type == "assistant":
+            if record.get("isApiErrorMessage") or record.get("error"):
+                step_count += 1
+                last_event_kind = "error"
+                last_turn_error = True
+                continue
             msg = record.get("message")
             content = msg.get("content") if isinstance(msg, dict) else None
             n_tools = 0
@@ -270,14 +278,28 @@ def inspect_session_file(
             tool_call_count += n_tools
             if n_tools > 0 or has_text:
                 step_count += 1
+                last_turn_error = False
             last_event_kind = "assistant_tool" if n_tools > 0 else "assistant_text"
         elif rec_type == "system":
             step_count += 1
-            subtype = record.get("subtype")
-            if subtype in ("turn_duration", "stop_hook_summary"):
-                last_event_kind = "turn_end"
+            subtype = str(record.get("subtype") or "").strip().lower()
+            has_err = bool(
+                record.get("error")
+                or subtype in ("empty_answer", "api_error", "error")
+                or str(record.get("level") or "").strip().lower() == "error"
+            )
+            if has_err:
+                last_event_kind = "error"
+                last_turn_error = True
+            elif subtype in ("turn_duration", "stop_hook_summary"):
+                if not last_turn_error:
+                    last_event_kind = "turn_end"
             elif last_event_kind is None:
                 last_event_kind = "system"
+        elif rec_type == "error":
+            step_count += 1
+            last_event_kind = "error"
+            last_turn_error = True
 
     started_at = first_dt or mtime_dt
     last_activity = mtime_dt
@@ -290,11 +312,15 @@ def inspect_session_file(
         idle = 0.0
 
     # 判定状态与 ended_at：
-    # 1. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账 → 已结束；
-    # 2. 末尾对话停在纯文本 assistant 回复（无待执行 tool_use）→ 已结束；
-    # 3. 停在中间态但最后活动距今已超过 COREAGENT_RUNNING_WINDOW_SECONDS（90s）→ 已结束；
-    # 4. 其余（刚写入中间态且在 90s 活跃窗口内）→ running。
-    if (
+    # 1. 末轮以异常/空答/API错误收尾 → error（绝不折叠为 completed）；
+    # 2. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账 → 已结束；
+    # 3. 末尾对话停在纯文本 assistant 回复（无待执行 tool_use）→ 已结束；
+    # 4. 停在中间态但最后活动距今已超过 COREAGENT_RUNNING_WINDOW_SECONDS（90s）→ 已结束；
+    # 5. 其余（刚写入中间态且在 90s 活跃窗口内）→ running。
+    if last_event_kind == "error" or last_turn_error:
+        status = SessionStatus.ERROR
+        ended_at = last_dt or mtime_dt
+    elif (
         last_event_kind in ("turn_end", "assistant_text")
         or idle > COREAGENT_RUNNING_WINDOW_SECONDS
     ):

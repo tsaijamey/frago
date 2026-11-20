@@ -117,7 +117,7 @@ import { isCompletedWatcherTask, partitionTasksForOverview } from '@/utils/tasks
 import { parseTextQuoteBlocks } from '@/utils/textQuoteBlocks';
 import { parseWebBridgeContext } from '@/utils/webBridgeContext';
 import { scrollBehavior } from '@/utils/reducedMotion';
-import type { ObserverTaskItem, SessionObserverView } from '@/hooks/useSessionObserver';
+import type { ObserverTail, ObserverTaskItem, SessionObserverView } from '@/hooks/useSessionObserver';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -1512,7 +1512,7 @@ export function splitWatcherLines(input: string | string[] | null | undefined): 
 }
 
 function deriveThreeParts(
-  tail: { kind: 'now' | 'output'; text: string } | null | undefined,
+  tail: ObserverTail | null | undefined,
   happenedList: string[] | undefined,
   decisionRaw: string | null | undefined
 ): { doing: string | null; findings: string[]; decision: string | null } {
@@ -1531,7 +1531,7 @@ function deriveThreeParts(
   if (tailKind === 'now' && tailText) {
     doing = tailText;
     findings = items.filter((x) => x !== tailText);
-  } else if (tailKind === 'output' && tailText) {
+  } else if ((tailKind === 'output' || tailKind === 'error') && tailText) {
     const withoutTail = items.filter((x) => x !== tailText);
     if (withoutTail.length > 0) {
       doing = joinClauses(withoutTail);
@@ -1910,12 +1910,22 @@ export default function RecordStream({
       const hasDecision = Boolean(
         hasUnansweredCard || (slice.decision && slice.decisionCards.length === 0)
       );
+      const hasTailError =
+        isLast &&
+        (observer?.state?.tail?.kind === 'error' ||
+          resolved.some(
+            (r, rIdx) =>
+              rIdx >= resolved.length - 3 &&
+              r.kind === 'error'
+          ));
       const status: ObserverTaskItem['status'] = isLast
         ? hasDecision
           ? 'waiting'
           : observer?.state?.tail?.kind === 'now'
             ? 'doing'
-            : 'done'
+            : hasTailError
+              ? 'error'
+              : 'done'
         : 'done';
       const conclusion =
         slice.findings[0] ||
@@ -3007,6 +3017,8 @@ export default function RecordStream({
               doing: '在办',
               waiting: '待拍板',
               blocked: '阻塞',
+              error: '异常',
+              failed: '失败',
             };
             const hiddenCount = taskPartition.hiddenCompletedTasks.length;
             const foldRangeSuffix = taskPartition.hiddenIdSummary

@@ -3047,7 +3047,9 @@
   color: var(--accent-warning);
 }
 
-.w-st-badge.blocked {
+.w-st-badge.blocked,
+.w-st-badge.error,
+.w-st-badge.failed {
   border-color: var(--accent-error-border);
   background: var(--accent-error-10);
   color: var(--accent-error);
