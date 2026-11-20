@@ -2727,5 +2727,133 @@ describe('RecordStream 自动跟随的滑法', () => {
     expect(scroller.className).toContain('pr-10');
     expect(scroller.className).not.toContain('pr-6');
   });
+
+  it('前序 Error 会话进入新一轮运行或发送态时，sessionLifecycleOf 立即切为 Running；真实 Error 仍保持 Error', () => {
+    // 1. 刚从输入框发送（sending / agentOnIt），哪怕后端字段尚未刷新仍带 status='error'，立刻显示 Running
+    expect(
+      sessionLifecycleOf(
+        session({ session_id: 'err-sending', status: 'error', lifecycle_state: 'error' }),
+        { sending: true }
+      )
+    ).toEqual({ key: 'running', label: 'Running' });
+    expect(
+      sessionLifecycleOf(
+        session({ session_id: 'err-agent', status: 'error', lifecycle_state: 'error' }),
+        { agentOnIt: true }
+      )
+    ).toEqual({ key: 'running', label: 'Running' });
+
+    // 2. 后端 status 已切换为 running 时，即使携带遗留 lifecycle_state='error' 也判为 Running
+    expect(
+      sessionLifecycleOf(
+        session({ session_id: 'err-running', status: 'running', lifecycle_state: 'error' })
+      )
+    ).toEqual({ key: 'running', label: 'Running' });
+
+    // 3. 真实以错误收场且未在跑时仍保留 Error
+    expect(
+      sessionLifecycleOf(
+        session({ session_id: 'err-real', status: 'error', lifecycle_state: 'error' })
+      )
+    ).toEqual({ key: 'error', label: 'Error' });
+
+    // 4. 已完成的会话即使 lifecycle_state 尚未收敛也保持 Completed，不误判为 Running
+    expect(
+      sessionLifecycleOf(
+        session({ session_id: 'done-stale', status: 'done', lifecycle_state: 'running' })
+      )
+    ).toEqual({ key: 'completed', label: 'Completed' });
+  });
 });
+
+describe('DeliveryTriad — Codex apply_patch 识别', () => {
+  it('能从 Codex apply_patch 工具调用提取文件路径与增删行数并挂出交付文件胶囊', () => {
+    const records: WorkbenchRecord[] = [
+      {
+        id: 'r0',
+        session_id: SID,
+        group_id: null,
+        seq: 0,
+        ts: 1_753_800_000_000,
+        kind: 'session.state',
+        agent_path: [],
+        raw_available: true,
+        payload: { cwd: '/repo/proj' },
+      },
+      {
+        id: 'r1',
+        session_id: SID,
+        group_id: null,
+        seq: 1,
+        ts: 1_753_800_001_000,
+        kind: 'user.say',
+        agent_path: [],
+        raw_available: true,
+        payload: { text: 'fix bug' },
+      },
+      {
+        id: 'r2',
+        session_id: SID,
+        group_id: null,
+        seq: 2,
+        ts: 1_753_800_002_000,
+        kind: 'tool.call',
+        agent_path: [],
+        raw_available: true,
+        payload: {
+          call_id: 'call_patch_1',
+          tool_name: 'apply_patch',
+          args: {
+            patch: [
+              '*** Begin Patch',
+              '*** Update File: src/app.ts',
+              '@@',
+              '-const oldVal = 1;',
+              '+const newVal = 2;',
+              '+const extra = 3;',
+              '*** Add File: /repo/proj/notes.md',
+              '+# Notes',
+              '*** End Patch',
+            ].join('\n'),
+          },
+        },
+      },
+      {
+        id: 'r3',
+        session_id: SID,
+        group_id: null,
+        seq: 3,
+        ts: 1_753_800_003_000,
+        kind: 'tool.result',
+        agent_path: [],
+        raw_available: true,
+        payload: { call_id: 'call_patch_1', ok: true, output: 'Patched' },
+      },
+      {
+        id: 'r4',
+        session_id: SID,
+        group_id: null,
+        seq: 4,
+        ts: 1_753_800_004_000,
+        kind: 'agent.say',
+        agent_path: [],
+        raw_available: true,
+        payload: { text: '已修改完成' },
+      },
+    ];
+
+    const processed = withTurnDecisionCards(records);
+    const say = processed.find((r) => r.id === 'r4');
+    const triad = say?.payload.delivery_triad as
+      | { files: Array<{ path: string; name: string; add: number; del: number }> }
+      | undefined;
+
+    expect(triad).toBeTruthy();
+    expect(triad?.files).toEqual([
+      { path: '/repo/proj/src/app.ts', name: 'app.ts', add: 2, del: 1 },
+      { path: '/repo/proj/notes.md', name: 'notes.md', add: 1, del: 0 },
+    ]);
+  });
+});
+
 

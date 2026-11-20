@@ -235,19 +235,35 @@ export function sessionLifecycleOf(
   } = {}
 ): { key: SessionLifecycleKey; label: string } {
   const meta = session as SessionMetaExtra;
-  if (meta.status === 'error') return { key: 'error', label: 'Error' };
-  if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
-    return { key: 'callback', label: 'Callback queued' };
-  }
+  const ontoState =
+    typeof meta.lifecycle_state === 'string' ? meta.lifecycle_state.toLowerCase() : '';
+  // 1. 当前轮次正在发送/接手/运行中（含子任务在跑）：优先判定为 Running，
+  //    避免上一轮遗留的 status === 'error' 在新一轮启动后仍残留红色 Error 标签。
   if (
     opts.sending ||
     opts.agentOnIt ||
     session.status === 'running' ||
     opts.hasRunningWorker ||
-    meta.has_running_worker
+    meta.has_running_worker ||
+    ((ontoState === 'running' || ontoState === 'queued') &&
+      session.status !== 'done' &&
+      session.status !== 'idle' &&
+      meta.status !== 'error')
   ) {
     return { key: 'running', label: 'Running' };
   }
+  // 2. 明确以错误收场且当前未在跑 → Error
+  if (
+    meta.status === 'error' ||
+    (ontoState === 'error' && session.status !== 'done' && session.status !== 'idle')
+  ) {
+    return { key: 'error', label: 'Error' };
+  }
+  // 3. 排队等待投递的异步回调 → Callback queued
+  if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
+    return { key: 'callback', label: 'Callback queued' };
+  }
+  // 4. 等待人类决策 → Waiting decision
   if (
     opts.hasDecisionCard ||
     meta.need ||

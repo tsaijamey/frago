@@ -145,6 +145,16 @@ export interface WorkbenchSession {
   has_running_worker?: boolean;
   /** 该会话此刻是否真正存在需要人类拍板的未决事项（服务端收敛判定）。 */
   need_decision?: boolean;
+  /** 本体五态生命周期（queued | running | awaiting_input | completed | error | cancelled）。 */
+  lifecycle_state?:
+    | 'queued'
+    | 'running'
+    | 'awaiting_input'
+    | 'completed'
+    | 'error'
+    | 'cancelled'
+    | string
+    | null;
 }
 
 /**
