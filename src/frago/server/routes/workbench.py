@@ -16,6 +16,7 @@ claude-sessions 的地方，谁读都会以为发错了。判家族、查工作�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import time
@@ -315,11 +316,19 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     """
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
+    from frago.session.service import ZOMBIE_IDLE_TIMEOUT_SECONDS, get_default_session_service
 
     cards, open_names = await asyncio.gather(
         asyncio.to_thread(record_reader.list_sessions),
         asyncio.to_thread(tsvc.open_session_names),
     )
+    onto_svc = get_default_session_service()
+    onto_by_sid = {
+        rec.session_id: rec
+        for rec in await asyncio.to_thread(onto_svc.list_sessions)
+        if rec.session_id
+    }
+    now_s = time.time()
     # ``tmux_name``：开着时那个 tmux 会话的名字，页面「关闭 tmux 会话」的弹窗原样摆出来，
     # 命名规则不在前端再抄一份。没开着为 null。
     # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
@@ -338,10 +347,11 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     }
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
-    computed_states: list[tuple[Any, str, bool, str, bool]] = []
+    computed_states: list[tuple[Any, str, bool, str, bool, str]] = []
     running_worker_parents: set[str] = set()
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
+    pending_onto_heals: list[tuple[str, str, str | None]] = []
     for card in cards:
         parent_by_sid[card.session_id] = card.parent_session_id
         emp_id = card.employee_id or active_employee_by_sid.get(card.session_id)
@@ -350,12 +360,40 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         name = tmux_name_for(card.session_id)
         alive = name in open_names
         is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
+        onto_rec = onto_by_sid.get(card.session_id)
         status = card.status
-        if card.status != "error":
+        lifecycle_state = getattr(card, "lifecycle_state", None) or (
+            onto_rec.lifecycle_state if onto_rec is not None else None
+        )
+        # 本体五态收敛：error 永不折叠为 done/completed；失联超 6h 僵尸 running/awaiting_input 批量收敛。
+        if status == "error" or lifecycle_state == "error":
+            status = "error"
+            lifecycle_state = "error"
+            if onto_rec is not None and onto_rec.lifecycle_state != "error":
+                pending_onto_heals.append(
+                    (card.session_id, "error", card.digest_stuck or "session_error")
+                )
+        else:
             if is_alive and card.last_kind in IN_PROGRESS_KINDS:
                 status = "running"
+                lifecycle_state = "running"
             elif not is_alive and status == "running":
                 status = "done" if card.last_kind == "agent.say" else "idle"
+                lifecycle_state = "completed"
+            elif status == "done":
+                lifecycle_state = lifecycle_state or "completed"
+            elif status == "idle":
+                lifecycle_state = lifecycle_state or "completed"
+            if (
+                onto_rec is not None
+                and onto_rec.lifecycle_state in {"running", "queued", "awaiting_input"}
+                and not is_alive
+                and (now_s - card.last_active_at / 1000.0) >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
+            ):
+                lifecycle_state = "completed"
+                if status == "running":
+                    status = "done" if card.last_kind == "agent.say" else "idle"
+                pending_onto_heals.append((card.session_id, "completed", None))
         if status == "running" or (card.family == "coreagent" and is_alive):
             active_target_ids.add(card.session_id)
         reply_ts = getattr(card, "last_reply_at", None)
@@ -367,7 +405,10 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             and status == "running"
         ):
             running_worker_parents.add(card.parent_session_id)
-        computed_states.append((card, name, alive, status, is_alive))
+        computed_states.append((card, name, alive, status, is_alive, str(lifecycle_state or "completed")))
+    if pending_onto_heals:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(onto_svc.store.batch_reconcile_states, pending_onto_heals)
 
     def _resolve_employee_id(card: Any) -> str | None:
         direct = direct_employee_by_sid.get(card.session_id)
@@ -397,7 +438,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         )
         effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
-        for card, name, alive, status, is_alive in computed_states:
+        for card, name, alive, status, is_alive, lifecycle_state in computed_states:
             slots_need_decision, all_tasks_done = _observer_slots_state(
                 card.session_id, card.family
             )
@@ -431,6 +472,11 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             row = {
                 **card_data,
                 "status": status,
+                "lifecycle_state": lifecycle_state or (
+                    "error"
+                    if status == "error"
+                    else ("running" if status == "running" else "completed")
+                ),
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,

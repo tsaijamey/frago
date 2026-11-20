@@ -21,6 +21,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from frago.file_guard import (
+    ProtectedFileReadError,
+    atomic_write_text,
+    backup_corrupted_file,
+    has_nonempty_file,
+    lkg_path_for,
+)
 from frago.ontology.runtime import (
     normalize_session_lifecycle_state,
     normalize_session_origin,
@@ -46,6 +53,10 @@ LEDGER_LIMIT = 4000
 LEGACY_RELATION_KINDS: frozenset[str] = frozenset({"dispatch", "branch", "handoff"})
 
 
+class StaleTurnSeqError(ValueError):
+    """Raised when a late completion/transition event carries an outdated turn_seq."""
+
+
 @dataclass
 class SessionOntologyRecord:
     """Persistent domain record for an `AgentSessionProcess` and its state bindings."""
@@ -62,6 +73,8 @@ class SessionOntologyRecord:
     cwd: str = ""
     transcript_uri: str = ""
     step_count: int = 0
+    turn_seq: int = 0
+    employee_id: str | None = None
     prompt_head: str = ""
     summary: str | None = None
     waiting_reason: str | None = None
@@ -72,6 +85,8 @@ class SessionOntologyRecord:
         self.agent_kernel = str(self.agent_kernel).strip().lower()
         self.origin = normalize_session_origin(self.origin, is_worker=self.is_worker)
         self.lifecycle_state = normalize_session_lifecycle_state(self.lifecycle_state)
+        self.turn_seq = max(0, int(self.turn_seq or 0))
+        self.employee_id = str(self.employee_id).strip() or None if self.employee_id else None
         # 先认 worker 身份：worker 就是 worker，出身一律写 worker。
         if self.is_worker or self.origin == "worker":
             self.is_worker = True
@@ -152,6 +167,9 @@ class SessionOntologyRecord:
             if key in d and key not in extra:
                 extra[key] = d[key]
 
+        raw_employee = d.get("employee_id") or extra.get("employee_id")
+        clean_employee = str(raw_employee).strip() or None if raw_employee else None
+
         return cls(
             session_id=sid,
             agent_kernel=kernel,
@@ -165,6 +183,8 @@ class SessionOntologyRecord:
             cwd=str(d.get("cwd") or ""),
             transcript_uri=str(d.get("transcript_uri") or d.get("source_file") or ""),
             step_count=int(d.get("step_count", 0)),
+            turn_seq=max(0, int(d.get("turn_seq") or 0)),
+            employee_id=clean_employee,
             prompt_head=str(d.get("prompt_head") or ""),
             summary=d.get("summary"),
             waiting_reason=d.get("waiting_reason"),
@@ -254,57 +274,95 @@ class SessionOntologyStore:
                             fcntl.flock(fd, fcntl.LOCK_UN)
                     os.close(fd)
 
-    def _read_disk_unlocked(self) -> dict[str, SessionOntologyRecord]:
+    def _load_json_with_lkg(
+        self,
+        path: Path,
+        *,
+        expected_type: type,
+        raise_on_error: bool,
+    ) -> Any:
+        if not path.exists():
+            return None
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(parsed, expected_type):
+                return parsed
+            raise ValueError(f"Expected {expected_type.__name__}, got {type(parsed).__name__}")
+        except Exception as exc:
+            lkg = lkg_path_for(path)
+            if lkg.is_file():
+                try:
+                    lkg_parsed = json.loads(lkg.read_text(encoding="utf-8"))
+                    if isinstance(lkg_parsed, expected_type):
+                        backup_corrupted_file(path, reason="read_fallback_lkg")
+                        logger.warning(
+                            "Primary store %s unreadable (%s); recovered from LKG backup %s",
+                            path,
+                            exc,
+                            lkg,
+                        )
+                        return lkg_parsed
+                except Exception:
+                    pass
+            if raise_on_error and has_nonempty_file(path):
+                raise ProtectedFileReadError(
+                    f"Refusing destructive write because existing store {path} could not be read safely: {exc}"
+                ) from exc
+            logger.warning("Failed to read session store file %s: %s", path, exc)
+            return None
+
+    def _read_disk_unlocked(self, *, raise_on_error: bool = False) -> dict[str, SessionOntologyRecord]:
         records: dict[str, SessionOntologyRecord] = {}
 
         # 1. Read legacy ledger entries if exists
-        if self.legacy_ledger_path.exists():
-            try:
-                raw_legacy = json.loads(self.legacy_ledger_path.read_text(encoding="utf-8"))
-                if isinstance(raw_legacy, list):
-                    for item in raw_legacy:
-                        if isinstance(item, dict):
-                            rec = SessionOntologyRecord.from_dict(item)
-                            if rec.session_id:
-                                records[rec.session_id] = rec
-            except Exception:
-                logger.debug("Failed to read legacy ledger %s", self.legacy_ledger_path, exc_info=True)
+        raw_legacy = self._load_json_with_lkg(
+            self.legacy_ledger_path,
+            expected_type=list,
+            raise_on_error=raise_on_error,
+        )
+        if isinstance(raw_legacy, list):
+            for item in raw_legacy:
+                if isinstance(item, dict):
+                    rec = SessionOntologyRecord.from_dict(item)
+                    if rec.session_id:
+                        records[rec.session_id] = rec
 
         # 2. Read ontology store (overrides/enriches legacy entries)
-        if self.store_path.exists():
-            try:
-                raw_store = json.loads(self.store_path.read_text(encoding="utf-8"))
-                if isinstance(raw_store, dict):
-                    raw_items = raw_store.get("sessions", {})
-                    if isinstance(raw_items, dict):
-                        for sid, val in raw_items.items():
-                            if isinstance(val, dict):
-                                rec = SessionOntologyRecord.from_dict(val)
-                                _keep_closed_branch(records.get(sid), rec)
-                                records[sid] = rec
-                    elif isinstance(raw_items, list):
-                        for val in raw_items:
-                            if isinstance(val, dict):
-                                rec = SessionOntologyRecord.from_dict(val)
-                                if rec.session_id:
-                                    _keep_closed_branch(records.get(rec.session_id), rec)
-                                    records[rec.session_id] = rec
-            except Exception:
-                logger.debug("Failed to read session ontology store %s", self.store_path, exc_info=True)
+        raw_store = self._load_json_with_lkg(
+            self.store_path,
+            expected_type=dict,
+            raise_on_error=raise_on_error,
+        )
+        if isinstance(raw_store, dict):
+            raw_items = raw_store.get("sessions", {})
+            if isinstance(raw_items, dict):
+                for sid, val in raw_items.items():
+                    if isinstance(val, dict):
+                        rec = SessionOntologyRecord.from_dict(val)
+                        _keep_closed_branch(records.get(sid), rec)
+                        records[sid] = rec
+            elif isinstance(raw_items, list):
+                for val in raw_items:
+                    if isinstance(val, dict):
+                        rec = SessionOntologyRecord.from_dict(val)
+                        if rec.session_id:
+                            _keep_closed_branch(records.get(rec.session_id), rec)
+                            records[rec.session_id] = rec
 
         return records
 
     def _write_disk_unlocked(self, records: Mapping[str, SessionOntologyRecord]) -> bool:
         try:
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "version": 1,
                 "updated_at": int(time.time()),
                 "sessions": {sid: rec.to_dict() for sid, rec in records.items()},
             }
-            tmp_store = self.store_path.with_name(f"{self.store_path.name}.{os.getpid()}.tmp")
-            tmp_store.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp_store.replace(self.store_path)
+            atomic_write_text(
+                self.store_path,
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                save_lkg=True,
+            )
 
             # 老账本只记关系，按时间序保留最近 LEDGER_LIMIT 条。
             # 两条约束缺一不可：写进没有关系的会话会让出身判定把它误当 worker；
@@ -314,10 +372,11 @@ class SessionOntologyStore:
                 for rec in sorted(records.values(), key=lambda r: r.created_at)
                 if rec.has_legacy_relation()
             ][-LEDGER_LIMIT:]
-            self.legacy_ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_legacy = self.legacy_ledger_path.with_name(f"{self.legacy_ledger_path.name}.{os.getpid()}.tmp")
-            tmp_legacy.write_text(json.dumps(legacy_entries, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp_legacy.replace(self.legacy_ledger_path)
+            atomic_write_text(
+                self.legacy_ledger_path,
+                json.dumps(legacy_entries, ensure_ascii=False, indent=2),
+                save_lkg=True,
+            )
             return True
         except Exception:
             logger.debug("Failed to write session ontology store", exc_info=True)
@@ -329,7 +388,7 @@ class SessionOntologyStore:
         if not clean_id:
             return None
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=False)
             return records.get(clean_id)
 
     def save(self, record: SessionOntologyRecord) -> bool:
@@ -337,7 +396,12 @@ class SessionOntologyStore:
         if not record.session_id:
             return False
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=True)
+            existing = records.get(record.session_id)
+            if existing is not None and record.turn_seq < existing.turn_seq:
+                record.turn_seq = existing.turn_seq
+            if existing is not None and not record.employee_id and existing.employee_id:
+                record.employee_id = existing.employee_id
             record.updated_at = int(time.time())
             records[record.session_id] = record
             return self._write_disk_unlocked(records)
@@ -345,8 +409,32 @@ class SessionOntologyStore:
     def list_all(self) -> list[SessionOntologyRecord]:
         """List all active session ontology records ordered by updated_at desc."""
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=False)
             return sorted(records.values(), key=lambda r: r.updated_at, reverse=True)
+
+    def start_turn(
+        self,
+        session_id: str,
+        *,
+        summary: str | None = None,
+    ) -> SessionOntologyRecord | None:
+        """Atomically increment monotonic ``turn_seq`` and mark session ``running``."""
+        clean_id = str(session_id or "").strip()
+        if not clean_id:
+            return None
+        with self._locked():
+            records = self._read_disk_unlocked(raise_on_error=True)
+            rec = records.get(clean_id)
+            if rec is None:
+                return None
+            rec.turn_seq = max(0, int(rec.turn_seq)) + 1
+            rec.lifecycle_state = "running"
+            rec.waiting_reason = None
+            rec.updated_at = int(time.time())
+            if summary is not None:
+                rec.summary = str(summary)
+            self._write_disk_unlocked(records)
+            return rec
 
     def update_lifecycle_state(
         self,
@@ -355,16 +443,27 @@ class SessionOntologyStore:
         *,
         waiting_reason: str | None = None,
         summary: str | None = None,
+        expected_turn_seq: int | None = None,
     ) -> SessionOntologyRecord | None:
-        """Update the lifecycle state of an existing session record."""
+        """Update the lifecycle state of an existing session record.
+
+        When ``expected_turn_seq`` is supplied and older than ``rec.turn_seq``,
+        raises :class:`StaleTurnSeqError` so late completion events cannot cancel
+        or overwrite a newer active turn.
+        """
         clean_id = str(session_id or "").strip()
         if not clean_id:
             return None
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=True)
             rec = records.get(clean_id)
             if rec is None:
                 return None
+            if expected_turn_seq is not None and int(expected_turn_seq) < int(rec.turn_seq):
+                raise StaleTurnSeqError(
+                    f"Late turn event rejected for '{clean_id}': "
+                    f"event turn_seq={expected_turn_seq} < current turn_seq={rec.turn_seq}"
+                )
             rec.lifecycle_state = normalize_session_lifecycle_state(new_state)
             rec.updated_at = int(time.time())
             if waiting_reason is not None:
@@ -374,13 +473,45 @@ class SessionOntologyStore:
             self._write_disk_unlocked(records)
             return rec
 
+    def batch_reconcile_states(
+        self,
+        updates: list[tuple[str, str, str | None]],
+    ) -> int:
+        """Apply multiple `(session_id, target_state, summary)` reconciliations in one atomic write."""
+        if not updates:
+            return 0
+        with self._locked():
+            records = self._read_disk_unlocked(raise_on_error=True)
+            now_ts = int(time.time())
+            changed = 0
+            for raw_sid, raw_state, raw_summary in updates:
+                clean_id = str(raw_sid or "").strip()
+                if not clean_id:
+                    continue
+                rec = records.get(clean_id)
+                if rec is None:
+                    continue
+                target = normalize_session_lifecycle_state(raw_state)
+                if rec.lifecycle_state == target and (
+                    raw_summary is None or rec.summary == raw_summary
+                ):
+                    continue
+                rec.lifecycle_state = target
+                rec.updated_at = now_ts
+                if raw_summary is not None:
+                    rec.summary = str(raw_summary)
+                changed += 1
+            if changed:
+                self._write_disk_unlocked(records)
+            return changed
+
     def increment_step(self, session_id: str) -> int:
         """Atomically increment step_count for a session, returning new step_count."""
         clean_id = str(session_id or "").strip()
         if not clean_id:
             return 0
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=True)
             rec = records.get(clean_id)
             if rec is None:
                 return 0
@@ -407,7 +538,7 @@ class SessionOntologyStore:
         if not clean_id:
             return None
         with self._locked():
-            records = self._read_disk_unlocked()
+            records = self._read_disk_unlocked(raise_on_error=True)
             rec = records.get(clean_id)
             if rec is None:
                 return None

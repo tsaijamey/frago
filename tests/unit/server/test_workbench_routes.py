@@ -117,6 +117,7 @@ class TestSessionList:
             "last_reply_at",
             "agent_paths",
             "status",
+            "lifecycle_state",
             "digest_done",
             "digest_stuck",
             # 这场是人开的还是 frago 派出去的 worker、以及谁派的。左栏据此把清单摆成

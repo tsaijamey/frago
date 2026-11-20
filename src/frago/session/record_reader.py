@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import time
@@ -128,6 +129,9 @@ class SessionCard:
 
     employee_id: str | None = None
     """由员工岗位入口发起时对应的岗位编号（如 ``stock``）；普通会话为 ``None``。"""
+
+    lifecycle_state: str | None = None
+    """本体五态生命周期（queued | running | awaiting_input | completed | error | cancelled）。"""
 
 
 def detect_family(session_id: str) -> RecordFamily:
@@ -568,6 +572,58 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
         )
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
     cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
+
+    # 本体五态消费端对齐：读取 SessionOntologyService 状态并收敛错误/僵尸态，防止读回误折叠。
+    onto_by_sid: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        from frago.session.service import ZOMBIE_IDLE_TIMEOUT_SECONDS, get_default_session_service
+
+        onto_svc = get_default_session_service()
+        onto_by_sid = {rec.session_id: rec for rec in onto_svc.list_sessions() if rec.session_id}
+        now_s = time.time()
+        stale_cutoff_s = float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
+        pending_heals: list[tuple[str, str, str | None]] = []
+        for card in cards:
+            rec = onto_by_sid.get(card.session_id)
+            alive = liveness.get(card.session_id) if liveness is not None else None
+            age_s = max(0.0, now_s - (card.last_active_at / 1000.0))
+            if card.status == "error" or (rec is not None and rec.lifecycle_state == "error"):
+                if card.status == "error" and rec is not None and rec.lifecycle_state != "error":
+                    pending_heals.append((card.session_id, "error", "session_error"))
+                card.status = "error"
+                card.lifecycle_state = "error"
+                continue
+            if rec is not None:
+                lstate = str(rec.lifecycle_state or "").lower()
+                if (
+                    lstate in {"running", "queued", "awaiting_input"}
+                    and alive is False
+                    and age_s >= stale_cutoff_s
+                ):
+                    card.lifecycle_state = "completed"
+                    if card.status == "running":
+                        card.status = "done" if card.last_kind == "agent.say" else "idle"
+                    pending_heals.append((card.session_id, "completed", None))
+                else:
+                    card.lifecycle_state = lstate or "completed"
+                    if lstate in {"completed", "cancelled"} and card.status == "running":
+                        card.status = "done" if card.last_kind == "agent.say" else "idle"
+                    elif lstate == "awaiting_input" and card.status == "running":
+                        card.status = "idle"
+                if not card.employee_id and rec.employee_id:
+                    card.employee_id = rec.employee_id
+            else:
+                if card.status == "running":
+                    card.lifecycle_state = "completed" if (alive is False and age_s >= stale_cutoff_s) else "running"
+                    if card.lifecycle_state == "completed":
+                        card.status = "done" if card.last_kind == "agent.say" else "idle"
+                elif card.status == "done":
+                    card.lifecycle_state = "completed"
+                else:
+                    card.lifecycle_state = "completed"
+        if pending_heals:
+            with contextlib.suppress(Exception):
+                onto_svc.store.batch_reconcile_states(pending_heals)
     return cards
 
 

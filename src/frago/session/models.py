@@ -44,9 +44,11 @@ RESERVED_AGENT_TYPES: tuple[AgentType, ...] = (AgentType.CURSOR, AgentType.CLINE
 
 
 class SessionStatus(str, Enum):
-    """Session status"""
+    """Session status (aligned with ontology five-state lifecycle + queued)."""
 
+    QUEUED = "queued"  # Queued / pending start
     RUNNING = "running"  # Currently running
+    AWAITING_INPUT = "awaiting_input"  # Yielded awaiting user/caller input
     COMPLETED = "completed"  # Completed normally
     ERROR = "error"  # Terminated with error
     CANCELLED = "cancelled"  # Cancelled by user

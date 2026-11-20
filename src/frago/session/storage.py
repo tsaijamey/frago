@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -44,10 +45,12 @@ DEFAULT_PROJECTS_DIR = Path.home() / ".frago" / "projects"
 RAW_FILENAME = "raw.jsonl"
 
 #: 一条 ``status=running`` 的元数据，多久没动静就不再当作还在跑。
-#: 取一天，而不是像网页侧 ``session_index.derive_status`` 那样取 90 秒：worker 一轮
-#: 任务不设时间上限，跑几小时是常态，判据收紧了会把真在跑的会话报成已结束——那个方向
-#: 的错比漏报更难发现。
-STALE_RUNNING_SECONDS = 24 * 60 * 60
+#: 与本体状态机一致，超过 6 小时无活动且无存活进程/tmux 连接即收敛降级，
+#: 根治失联 agy/worker 跨期僵尸 running。
+STALE_RUNNING_SECONDS = 6 * 60 * 60
+#: tmux-hosted sessions (``tmux://...``) whose tmux session has exited past this
+#: short grace window are disconnected and must not stay ``running``.
+TMUX_DISCONNECT_GRACE_SECONDS = 300
 
 
 def get_session_base_dir() -> Path:
@@ -209,6 +212,140 @@ def _session_created_epoch(
     return None
 
 
+def _live_tmux_session_ids() -> set[str] | None:
+    """Return active session IDs hosted in ``frago-agent-*`` tmux sessions.
+
+    Returns ``None`` if tmux binary is unavailable/errored, or a ``set[str]``
+    (possibly empty when tmux server is not running).
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").lower()
+        if "no server running" in stderr or "error connecting" in stderr or proc.returncode == 1:
+            return set()
+        return None
+    live: set[str] = set()
+    prefix = "frago-agent-"
+    for line in (proc.stdout or "").splitlines():
+        name = line.strip()
+        if name.startswith(prefix) and len(name) > len(prefix):
+            live.add(name[len(prefix) :])
+    return live
+
+
+def _load_ontology_index() -> dict[str, Any]:
+    """Load SessionOntologyService records keyed by session_id (best-effort)."""
+    try:
+        from frago.session.service import get_default_session_service
+
+        svc = get_default_session_service()
+        return {rec.session_id: rec for rec in svc.list_sessions() if rec.session_id}
+    except Exception:
+        logger.debug("Failed to load session ontology index", exc_info=True)
+        return {}
+
+
+def _status_from_ontology_state(state: str) -> SessionStatus:
+    mapping = {
+        "queued": SessionStatus.QUEUED,
+        "running": SessionStatus.RUNNING,
+        "awaiting_input": SessionStatus.AWAITING_INPUT,
+        "completed": SessionStatus.COMPLETED,
+        "error": SessionStatus.ERROR,
+        "cancelled": SessionStatus.CANCELLED,
+    }
+    return mapping.get(str(state or "").strip().lower(), SessionStatus.RUNNING)
+
+
+def _activity_idle_seconds(last_activity: datetime, now: datetime) -> float:
+    current = now
+    activity = last_activity
+    if activity.tzinfo is not None and current.tzinfo is None:
+        current = current.astimezone(activity.tzinfo)
+    elif activity.tzinfo is None and current.tzinfo is not None:
+        activity = activity.replace(tzinfo=current.tzinfo)
+    try:
+        return max(0.0, (current - activity).total_seconds())
+    except (OverflowError, OSError):
+        return 0.0
+
+
+def _reconcile_monitored_status(
+    session: MonitoredSession,
+    now: datetime,
+    *,
+    onto_map: dict[str, Any] | None = None,
+    live_tmux_ids: set[str] | None = None,
+    persist_reconciliation: bool = False,
+) -> SessionStatus:
+    """Resolve authoritative session status through SessionOntologyService five-state rules."""
+    onto_rec = onto_map.get(session.session_id) if onto_map else None
+    idle = _activity_idle_seconds(session.last_activity, now)
+    is_tmux_hosted = str(session.source_file or "").startswith("tmux://")
+    is_alive: bool | None = None
+    if live_tmux_ids is not None and is_tmux_hosted:
+        is_alive = session.session_id in live_tmux_ids
+    elif live_tmux_ids is not None and session.session_id in live_tmux_ids:
+        is_alive = True
+
+    # 1. Explicit authoritative error from transcript/metadata MUST never be folded into completed.
+    if session.status == SessionStatus.ERROR:
+        if persist_reconciliation and onto_rec is not None and onto_rec.lifecycle_state != "error":
+            with contextlib.suppress(Exception):
+                from frago.session.service import get_default_session_service
+
+                get_default_session_service().reconcile_session_lifecycle(
+                    session.session_id,
+                    agent_kernel_id=session.agent_type.value,
+                    is_alive=False,
+                    last_activity_ts=session.last_activity.timestamp(),
+                    observed_error="transcript_error",
+                    persist=True,
+                )
+        return SessionStatus.ERROR
+
+    # 2. Consult ontology store if this session is managed there.
+    if onto_rec is not None:
+        onto_state = str(onto_rec.lifecycle_state or "").strip().lower()
+        if onto_state in {"error", "cancelled", "completed"}:
+            return _status_from_ontology_state(onto_state)
+        if onto_state in {"running", "queued", "awaiting_input"}:
+            disconnected_tmux = is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS
+            stale_zombie = idle > STALE_RUNNING_SECONDS and is_alive is not True
+            if (onto_state in {"running", "queued"} and disconnected_tmux) or stale_zombie:
+                if persist_reconciliation:
+                    with contextlib.suppress(Exception):
+                        from frago.session.service import get_default_session_service
+
+                        get_default_session_service().reconcile_session_lifecycle(
+                            session.session_id,
+                            agent_kernel_id=session.agent_type.value,
+                            is_alive=False,
+                            last_activity_ts=session.last_activity.timestamp(),
+                            stale_after_seconds=0 if disconnected_tmux else STALE_RUNNING_SECONDS,
+                            now_ts=now.timestamp(),
+                            persist=True,
+                        )
+                return SessionStatus.COMPLETED
+            return _status_from_ontology_state(onto_state)
+
+    # 3. Fallback when session is not yet in SessionOntologyStore:
+    #    disconnected tmux:// sessions or >6h stale running sessions must converge.
+    if session.status == SessionStatus.RUNNING:
+        if is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS:
+            return SessionStatus.COMPLETED
+    return _live_status(session.status, session.last_activity, now)
+
+
 def _live_status(
     status: SessionStatus, last_activity: datetime, now: datetime | None = None
 ) -> SessionStatus:
@@ -245,6 +382,7 @@ def _derive_session_from_raw(
     now: datetime | None = None,
     *,
     status_filter: SessionStatus | None = None,
+    onto_rec: Any = None,
 ) -> MonitoredSession | None:
     """目录里只有原文副本、没有 ``metadata.json`` 时，就地派生一份最小元数据。
 
@@ -257,7 +395,12 @@ def _derive_session_from_raw(
         stats = coreagent_store.inspect_session_file(raw_path, now=now)
         if stats is None:
             return None
-        if status_filter is not None and stats.status != status_filter:
+        resolved_status = stats.status
+        if resolved_status != SessionStatus.ERROR and onto_rec is not None:
+            onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
+            if onto_state in {"error", "cancelled", "completed", "awaiting_input"}:
+                resolved_status = _status_from_ontology_state(onto_state)
+        if status_filter is not None and resolved_status != status_filter:
             return None
         fallback_dt = stats.last_activity or datetime.now()
         return MonitoredSession(
@@ -269,7 +412,7 @@ def _derive_session_from_raw(
             started_at=stats.started_at or fallback_dt,
             last_activity=fallback_dt,
             ended_at=stats.ended_at,
-            status=stats.status,
+            status=resolved_status,
             step_count=stats.step_count,
             tool_call_count=stats.tool_call_count,
             source=SessionSource.UNKNOWN,
@@ -280,6 +423,10 @@ def _derive_session_from_raw(
     except OSError:
         return None
     live_status = _live_status(SessionStatus.RUNNING, last_active, now)
+    if onto_rec is not None:
+        onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
+        if onto_state in {"error", "cancelled", "completed", "awaiting_input"}:
+            live_status = _status_from_ontology_state(onto_state)
     if status_filter is not None and live_status != status_filter:
         # 状态已经对不上时直接放行，不必为一场会被筛掉的会话去读 256 KB 原文算创建时刻。
         return None
@@ -337,7 +484,11 @@ def _load_session_from_dir(
         # 认不出是哪一家，派生的卡片连 agent_type 都填不出来，不猜。
         return None
     return _derive_session_from_raw(
-        session_dir, agent_type, raw_path, now, status_filter=status_filter
+        session_dir,
+        agent_type,
+        raw_path,
+        now,
+        status_filter=status_filter,
     )
 
 
@@ -967,6 +1118,8 @@ def count_sessions(
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
     now = datetime.now()
+    onto_map = _load_ontology_index() if status else {}
+    live_tmux_ids = _live_tmux_session_ids() if status else None
     running_cutoff = (
         now.timestamp() - STALE_RUNNING_SECONDS
         if status == SessionStatus.RUNNING
@@ -992,12 +1145,20 @@ def count_sessions(
                     continue
 
                 session = _load_session_from_dir(
-                    Path(entry.path), now, status_filter=status
+                    Path(entry.path),
+                    now,
+                    status_filter=status,
                 )
                 if session is None:
                     continue
-                # 状态判据必须与 list_sessions 同一套，否则同一个问题两个答案。
-                session_status = _live_status(session.status, session.last_activity, now)
+                # 状态判据必须与 list_sessions 同一套，走 SessionOntologyService 五态收口。
+                session_status = _reconcile_monitored_status(
+                    session,
+                    now,
+                    onto_map=onto_map,
+                    live_tmux_ids=live_tmux_ids,
+                    persist_reconciliation=False,
+                )
                 if session_status != status:
                     continue
 
@@ -1037,6 +1198,8 @@ def list_sessions(
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
     now = datetime.now()
+    onto_map = _load_ontology_index()
+    live_tmux_ids = _live_tmux_session_ids()
     # 只找 running 时，最后文件修改时刻早于 STALE_RUNNING_SECONDS 的目录不可能是
     # running——直接挡在候选集外，避免由于在跑会话少于 limit 而触发全量翻倍重扫。
     running_cutoff = (
@@ -1049,6 +1212,7 @@ def list_sessions(
     # （同步进来的、frago 没监控过的会话）或 metadata 二者有其一即可。mtime 取两份文件
     # 里新的那个，粗筛时才不会漏掉刚写过原文的会话。
     candidates: list[tuple[float, Path]] = []
+    stale_onto_heals: list[tuple[str, str, str | None]] = []
     for agent_dir in agent_dirs:
         if not agent_dir.is_dir():
             continue
@@ -1061,8 +1225,21 @@ def list_sessions(
                 if mtime is None:
                     continue
                 if running_cutoff is not None and mtime < running_cutoff:
+                    onto_rec = onto_map.get(entry.name)
+                    if (
+                        onto_rec is not None
+                        and str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
+                        in {"running", "queued", "awaiting_input"}
+                        and entry.name not in live_tmux_ids
+                    ):
+                        stale_onto_heals.append((entry.name, "completed", None))
                     continue
                 candidates.append((mtime, Path(entry.path)))
+    if stale_onto_heals:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            get_default_session_service().store.batch_reconcile_states(stale_onto_heals)
 
     # Phase 2: mtime 只是「创建时刻的上界」——文件只会在会话开始之后才存在、才被写。
     # 先按 mtime 取一个窗口，窗口内读准创建时刻；窗口外每一场都满足
@@ -1082,13 +1259,21 @@ def list_sessions(
         nonlocal scanned
         for _mtime, session_dir in candidates[scanned:target]:
             session = _load_session_from_dir(
-                session_dir, now, status_filter=status
+                session_dir,
+                now,
+                status_filter=status,
             )
             if session is None:
                 continue
 
-            # 烂在 running 上的状态按最后活动时刻归位，再过滤。
-            session.status = _live_status(session.status, session.last_activity, now)
+            # 统一走本体五态收口（失联 tmux / >6h 僵尸收敛 + error 不折叠）。
+            session.status = _reconcile_monitored_status(
+                session,
+                now,
+                onto_map=onto_map,
+                live_tmux_ids=live_tmux_ids,
+                persist_reconciliation=True,
+            )
             if status and session.status != status:
                 continue
 
@@ -1126,9 +1311,17 @@ def find_session_by_prefix(
     明明在盘上，却会因为没有排进窗口而报「找不到」。
     """
     now = datetime.now()
+    onto_map = _load_ontology_index()
+    live_tmux_ids = _live_tmux_session_ids()
     session = read_metadata(prefix, agent_type)
     if session is not None:
-        session.status = _live_status(session.status, session.last_activity, now)
+        session.status = _reconcile_monitored_status(
+            session,
+            now,
+            onto_map=onto_map,
+            live_tmux_ids=live_tmux_ids,
+            persist_reconciliation=True,
+        )
         return session
 
     if not prefix:
@@ -1141,10 +1334,19 @@ def find_session_by_prefix(
     for session_dir in sorted(agent_dir.iterdir()):
         if not session_dir.is_dir() or not session_dir.name.startswith(prefix):
             continue
-        session = _load_session_from_dir(session_dir, now)
+        session = _load_session_from_dir(
+            session_dir,
+            now,
+        )
         if session is None:
             continue
-        session.status = _live_status(session.status, session.last_activity, now)
+        session.status = _reconcile_monitored_status(
+            session,
+            now,
+            onto_map=onto_map,
+            live_tmux_ids=live_tmux_ids,
+            persist_reconciliation=True,
+        )
         return session
 
     return None

@@ -117,7 +117,7 @@ def self_cmd(agent_only: bool, signature_only: bool, json_output: bool):
 )
 @click.option(
     "--status", "-s",
-    type=click.Choice(["running", "completed", "error", "all"]),
+    type=click.Choice(["queued", "running", "awaiting_input", "completed", "error", "cancelled", "all"]),
     default="all",
     help="Filter by session status"
 )
@@ -193,7 +193,9 @@ def list_cmd(
 def _get_status_display(status: SessionStatus) -> str:
     """Get status display text"""
     status_map = {
+        SessionStatus.QUEUED: "⏳ Queued",
         SessionStatus.RUNNING: "🟢 Running",
+        SessionStatus.AWAITING_INPUT: "🟡 Awaiting",
         SessionStatus.COMPLETED: "[OK] Completed",
         SessionStatus.ERROR: "[X] Error",
         SessionStatus.CANCELLED: "⚪ Cancelled",

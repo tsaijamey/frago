@@ -24,6 +24,7 @@ NEVER imports `frago.server` or `frago.cli`.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -52,12 +53,18 @@ from frago.session.store import (
     LEGACY_RELATION_KINDS,
     SessionOntologyRecord,
     SessionOntologyStore,
+    StaleTurnSeqError,
     get_default_session_store,
 )
 
 logger = logging.getLogger(__name__)
 
 TERMINAL_STATES: frozenset[str] = frozenset({"completed", "error", "cancelled"})
+ZOMBIE_IDLE_TIMEOUT_SECONDS: int = 6 * 60 * 60  # 6 hours
+
+
+class StaleTurnEventError(ActionContractError):
+    """Raised when a late turn completion/cancellation event carries an outdated turn_seq."""
 
 _ALLOWED_STEP_TYPES: frozenset[str] = frozenset(
     {"user", "assistant", "tool_call", "tool_result", "system"}
@@ -107,6 +114,7 @@ class SessionOntologyService:
         caller_is_worker: bool = False,
         cwd: str = "",
         relation_kind: str | None = None,
+        employee_id: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> SessionProcessProjection:
         """Launch an AgentSessionProcess with strict Ring 3 contract guardrails.
@@ -170,6 +178,10 @@ class SessionOntologyService:
                 f"Session '{clean_sid}' already exists and is currently in active state '{existing.lifecycle_state}'."
             )
 
+        clean_employee = str(employee_id).strip() or None if employee_id else None
+        if not clean_employee and extra and extra.get("employee_id"):
+            clean_employee = str(extra.get("employee_id")).strip() or None
+
         rec = SessionOntologyRecord(
             session_id=clean_sid,
             agent_kernel=clean_kernel,
@@ -179,6 +191,8 @@ class SessionOntologyService:
             parent_session_id=parent_session_id,
             relation_kind=clean_relation,
             cwd=cwd,
+            turn_seq=max(1, (existing.turn_seq + 1) if existing is not None else 1),
+            employee_id=clean_employee,
             prompt_head=initial_prompt[:120],
             extra=dict(extra or {}),
         )
@@ -369,8 +383,79 @@ class SessionOntologyService:
         return new_rec
 
     # ──────────────────────────────────────────────────────────────────────────
-    # State Machine Transition Guard
+    # State Machine Transition Guard & Monotonic Turn Seq
     # ──────────────────────────────────────────────────────────────────────────
+
+    def start_turn(
+        self,
+        session_id: str,
+        *,
+        agent_kernel_id: str = "claude",
+        origin: str = "terminal",
+        summary: str | None = None,
+    ) -> SessionOntologyRecord:
+        """Start a new active turn for ``session_id`` and bump monotonic ``turn_seq``."""
+        clean_sid = str(session_id or "").strip()
+        self.ensure_managed_session(
+            clean_sid,
+            agent_kernel_id=agent_kernel_id,
+            origin=origin,
+            initial_state="running",
+        )
+        updated = self._store.start_turn(clean_sid, summary=summary)
+        if updated is None:
+            raise ActionContractError(
+                f"Session '{clean_sid}' disappeared from the store while starting turn."
+            )
+        return updated
+
+    def complete_turn_if_current(
+        self,
+        session_id: str,
+        *,
+        turn_seq: int,
+        target_state: str = "completed",
+        waiting_reason: str | None = None,
+        summary: str | None = None,
+    ) -> tuple[SessionOntologyRecord | None, bool]:
+        """Complete/yield a turn ONLY when ``turn_seq`` matches the latest active turn.
+
+        Late completion/cancellation callbacks carrying ``turn_seq < rec.turn_seq``
+        are safely dropped (returns ``(rec, False)``) and NEVER downgrade or cancel
+        the currently running turn.
+        """
+        clean_sid = str(session_id or "").strip()
+        rec = self._store.get(clean_sid)
+        if rec is None:
+            return None, False
+        if int(turn_seq) < int(rec.turn_seq):
+            logger.warning(
+                "Late turn event dropped for session %s: event_turn_seq=%s < current_turn_seq=%s (target=%s)",
+                clean_sid,
+                turn_seq,
+                rec.turn_seq,
+                target_state,
+            )
+            return rec, False
+        target = normalize_session_lifecycle_state(target_state)
+        try:
+            updated = self._store.update_lifecycle_state(
+                clean_sid,
+                target,
+                waiting_reason=waiting_reason,
+                summary=summary,
+                expected_turn_seq=int(turn_seq),
+            )
+        except StaleTurnSeqError:
+            latest = self._store.get(clean_sid)
+            logger.warning(
+                "Late turn event dropped under store lock for session %s: event_turn_seq=%s (current=%s)",
+                clean_sid,
+                turn_seq,
+                latest.turn_seq if latest else "?",
+            )
+            return latest, False
+        return updated, updated is not None
 
     def transition_state(
         self,
@@ -380,12 +465,19 @@ class SessionOntologyService:
         reason: str | None = None,
         summary: str | None = None,
         allow_resume: bool = False,
+        turn_seq: int | None = None,
     ) -> SessionOntologyRecord:
         """Enforce strict state machine transitions across session lifecycle."""
         clean_sid = str(session_id or "").strip()
         rec = self._store.get(clean_sid)
         if rec is None:
             raise ActionContractError(f"Session '{clean_sid}' not found.")
+
+        if turn_seq is not None and int(turn_seq) < int(rec.turn_seq):
+            raise StaleTurnEventError(
+                f"Late turn event rejected for session '{clean_sid}': "
+                f"event turn_seq={turn_seq} < current turn_seq={rec.turn_seq}."
+            )
 
         current = rec.lifecycle_state
         target = normalize_session_lifecycle_state(target_state)
@@ -397,18 +489,131 @@ class SessionOntologyService:
                 f"from terminal state '{current}' to '{target}' without explicit resume."
             )
 
-        updated = self._store.update_lifecycle_state(
-            clean_sid,
-            target,
-            waiting_reason=reason,
-            summary=summary,
-        )
+        try:
+            updated = self._store.update_lifecycle_state(
+                clean_sid,
+                target,
+                waiting_reason=reason,
+                summary=summary,
+                expected_turn_seq=turn_seq,
+            )
+        except StaleTurnSeqError as exc:
+            raise StaleTurnEventError(str(exc)) from exc
         if updated is None:
             # 同另外两处：`assert` 在 `-O` 下整句被剥掉，契约会静默消失；这里显式抛。
             raise ActionContractError(
                 f"Session '{clean_sid}' disappeared from the store while transitioning to '{target}'."
             )
         return updated
+
+    def reconcile_session_lifecycle(
+        self,
+        session_id: str,
+        *,
+        agent_kernel_id: str = "claude",
+        origin: str = "terminal",
+        is_alive: bool | None = None,
+        last_activity_ts: float | None = None,
+        observed_error: str | None = None,
+        observed_terminal_state: str | None = None,
+        turn_seq: int | None = None,
+        stale_after_seconds: float = ZOMBIE_IDLE_TIMEOUT_SECONDS,
+        now_ts: float | None = None,
+        persist: bool = True,
+    ) -> SessionOntologyRecord | None:
+        """Reconcile a session's ontology five-state lifecycle against live liveness & transcript signals.
+
+        Rules enforced:
+        1. Late events with ``turn_seq < rec.turn_seq`` NEVER downgrade an active turn.
+        2. Authoritative ``observed_error`` NEVER collapses into ``completed``; if a session
+           was previously mis-folded as ``completed`` (or stuck ``running``), it heals to ``error``.
+        3. Disconnected sessions (``is_alive is False``) stuck in ``running`` or ``queued`` beyond
+           ``stale_after_seconds`` (default 6h) converge to ``error`` (if error observed) or
+           ``completed`` — eliminating >6h zombie ``running`` sessions.
+        """
+        clean_sid = str(session_id or "").strip()
+        if not clean_sid:
+            return None
+
+        rec = self._store.get(clean_sid)
+        if rec is None:
+            if not persist:
+                return None
+            rec = self.ensure_managed_session(
+                clean_sid,
+                agent_kernel_id=agent_kernel_id,
+                origin=origin,
+                initial_state="running" if is_alive else "completed",
+            )
+
+        if turn_seq is not None and int(turn_seq) < int(rec.turn_seq):
+            logger.warning(
+                "reconcile_session_lifecycle dropped stale event for %s (event_turn_seq=%s < current=%s)",
+                clean_sid,
+                turn_seq,
+                rec.turn_seq,
+            )
+            return rec
+
+        now = float(now_ts if now_ts is not None else time.time())
+        ref_ts = float(last_activity_ts if last_activity_ts is not None else rec.updated_at or rec.created_at)
+        age = max(0.0, now - ref_ts)
+        current = rec.lifecycle_state
+        target = current
+        new_summary = rec.summary
+
+        clean_error = str(observed_error).strip() if observed_error else ""
+        clean_obs_terminal = (
+            normalize_session_lifecycle_state(observed_terminal_state)
+            if observed_terminal_state
+            else None
+        )
+
+        if clean_error:
+            # Error MUST remain explicitly exposed and NEVER folded into completed
+            if is_alive is not True or current in {"running", "queued", "completed"}:
+                target = "error"
+                new_summary = clean_error[:500]
+        elif clean_obs_terminal in TERMINAL_STATES:
+            if current == "error" and clean_obs_terminal == "completed":
+                target = "error"
+            elif is_alive is not True:
+                target = clean_obs_terminal
+        elif current in {"running", "queued", "awaiting_input"} and is_alive is False and age >= float(stale_after_seconds):
+            target = "completed"
+        elif current in {"running", "awaiting_input"} and is_alive is None and age >= float(stale_after_seconds):
+            # When caller has no live signal and inactivity exceeded stale threshold, converge zombie running/awaiting_input
+            target = "completed"
+
+        if target != current or (clean_error and new_summary != rec.summary):
+            if not persist:
+                rec.lifecycle_state = target
+                if new_summary:
+                    rec.summary = new_summary
+                return rec
+            try:
+                updated = self._store.update_lifecycle_state(
+                    clean_sid,
+                    target,
+                    summary=new_summary if new_summary != rec.summary else None,
+                    expected_turn_seq=turn_seq,
+                )
+                return updated or rec
+            except StaleTurnSeqError:
+                return self._store.get(clean_sid) or rec
+        return rec
+
+    def list_sessions_by_employee(self, member_post_id: str) -> list[SessionOntologyRecord]:
+        """Return sessions explicitly bound to ``member_post_id`` in the ontology store."""
+        clean_post = str(member_post_id or "").strip()
+        if not clean_post:
+            return []
+        return [
+            rec
+            for rec in self._store.list_all()
+            if rec.employee_id == clean_post
+            or rec.extra.get("employee_id") == clean_post
+        ]
 
     # ──────────────────────────────────────────────────────────────────────────
     # Projection & Graph Discovery & Defensive Admission
