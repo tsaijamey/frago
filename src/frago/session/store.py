@@ -17,26 +17,23 @@ import os
 import threading
 import time
 from collections.abc import Iterator, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from frago.file_guard import (
+    FileGuardError,
     ProtectedFileReadError,
     atomic_write_text,
     backup_corrupted_file,
     has_nonempty_file,
     lkg_path_for,
+    locked_file,
 )
 from frago.ontology.runtime import (
     normalize_session_lifecycle_state,
     normalize_session_origin,
 )
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows fallback
-    fcntl = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -241,38 +238,56 @@ class SessionOntologyStore:
             if legacy_ledger_path is not None
             else Path(os.environ.get("FRAGO_LAUNCH_LEDGER_PATH", str(DEFAULT_LEGACY_LEDGER_PATH)))
         )
+        self._cache_lock = threading.Lock()
+        self._cache_sig: (
+            tuple[tuple[int, int, int] | None, tuple[int, int, int] | None] | None
+        ) = None
+        self._cache_records: dict[str, SessionOntologyRecord] | None = None
+
+    @staticmethod
+    def _file_sig(path: Path) -> tuple[int, int, int] | None:
+        try:
+            st = os.stat(path)
+            return (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            return None
+
+    def _stat_signature(
+        self,
+    ) -> tuple[tuple[int, int, int] | None, tuple[int, int, int] | None]:
+        return (self._file_sig(self.legacy_ledger_path), self._file_sig(self.store_path))
+
+    @staticmethod
+    def _clone_record(rec: SessionOntologyRecord) -> SessionOntologyRecord:
+        return replace(rec, extra=dict(rec.extra))
+
+    def _read_cached(self) -> dict[str, SessionOntologyRecord]:
+        sig = self._stat_signature()
+        with self._cache_lock:
+            if self._cache_records is not None and self._cache_sig == sig:
+                return self._cache_records
+        with self._locked():
+            sig = self._stat_signature()
+            with self._cache_lock:
+                if self._cache_records is not None and self._cache_sig == sig:
+                    return self._cache_records
+            records = self._read_disk_unlocked(raise_on_error=False)
+            sig_after = self._stat_signature()
+            with self._cache_lock:
+                self._cache_sig = sig_after
+                self._cache_records = records
+            return records
 
     def _lock_path(self) -> Path:
-        return self.store_path.with_name(self.store_path.name + ".lock")
+        from frago.file_guard import lock_path_for
+
+        return lock_path_for(self.store_path)
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        """Cross-thread and cross-process safe file locking context."""
-        with self._process_lock:
-            lock_path = self._lock_path()
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            if os.name == "nt":
-                import msvcrt
-
-                fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
-                try:
-                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-                    yield
-                finally:
-                    with contextlib.suppress(OSError):
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-                    os.close(fd)
-            else:
-                fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
-                try:
-                    if fcntl is not None:
-                        fcntl.flock(fd, fcntl.LOCK_EX)
-                    yield
-                finally:
-                    if fcntl is not None:
-                        with contextlib.suppress(OSError):
-                            fcntl.flock(fd, fcntl.LOCK_UN)
-                    os.close(fd)
+        """Cross-thread and cross-process safe file locking context via file_guard."""
+        with locked_file(self.store_path, exclusive=True):
+            yield
 
     def _load_json_with_lkg(
         self,
@@ -377,8 +392,16 @@ class SessionOntologyStore:
                 json.dumps(legacy_entries, ensure_ascii=False, indent=2),
                 save_lkg=True,
             )
+            sig_after = self._stat_signature()
+            cached_copy = {sid: self._clone_record(rec) for sid, rec in records.items()}
+            with self._cache_lock:
+                self._cache_sig = sig_after
+                self._cache_records = cached_copy
             return True
         except Exception:
+            with self._cache_lock:
+                self._cache_sig = None
+                self._cache_records = None
             logger.debug("Failed to write session ontology store", exc_info=True)
             return False
 
@@ -387,9 +410,8 @@ class SessionOntologyStore:
         clean_id = str(session_id or "").strip()
         if not clean_id:
             return None
-        with self._locked():
-            records = self._read_disk_unlocked(raise_on_error=False)
-            return records.get(clean_id)
+        rec = self._read_cached().get(clean_id)
+        return self._clone_record(rec) if rec is not None else None
 
     def save(self, record: SessionOntologyRecord) -> bool:
         """Upsert a session record."""
@@ -408,9 +430,11 @@ class SessionOntologyStore:
 
     def list_all(self) -> list[SessionOntologyRecord]:
         """List all active session ontology records ordered by updated_at desc."""
-        with self._locked():
-            records = self._read_disk_unlocked(raise_on_error=False)
-            return sorted(records.values(), key=lambda r: r.updated_at, reverse=True)
+        records = self._read_cached()
+        return [
+            self._clone_record(r)
+            for r in sorted(records.values(), key=lambda r: r.updated_at, reverse=True)
+        ]
 
     def start_turn(
         self,
@@ -433,7 +457,8 @@ class SessionOntologyStore:
             rec.updated_at = int(time.time())
             if summary is not None:
                 rec.summary = str(summary)
-            self._write_disk_unlocked(records)
+            if not self._write_disk_unlocked(records):
+                raise FileGuardError(f"Failed to persist start_turn for session '{clean_id}'")
             return rec
 
     def update_lifecycle_state(
@@ -470,7 +495,10 @@ class SessionOntologyStore:
                 rec.waiting_reason = str(waiting_reason)
             if summary is not None:
                 rec.summary = str(summary)
-            self._write_disk_unlocked(records)
+            if not self._write_disk_unlocked(records):
+                raise FileGuardError(
+                    f"Failed to persist lifecycle state '{new_state}' for session '{clean_id}'"
+                )
             return rec
 
     def batch_reconcile_states(
@@ -501,8 +529,8 @@ class SessionOntologyStore:
                 if raw_summary is not None:
                     rec.summary = str(raw_summary)
                 changed += 1
-            if changed:
-                self._write_disk_unlocked(records)
+            if changed and not self._write_disk_unlocked(records):
+                raise FileGuardError("Failed to persist batch lifecycle state reconciliations")
             return changed
 
     def increment_step(self, session_id: str) -> int:

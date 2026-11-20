@@ -5,13 +5,18 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from frago.file_guard import ProtectedFileReadError, lkg_path_for
+from frago.file_guard import (
+    FileGuardError,
+    FileLockTimeoutError,
+    ProtectedFileReadError,
+    lkg_path_for,
+    locked_file,
+)
 
 
 class TestAgyZombieAndErrorNonFolding:
@@ -498,3 +503,254 @@ class TestFileGuardAntiReset:
         assert errors == []
         final_profiles = profile_manager.load_profiles()
         assert len(final_profiles.profiles) == 6
+
+
+class TestReviewBlockingRegressions:
+    def test_coreagent_enqueue_and_stream_bridge_do_not_double_increment_turn_seq(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blocking #1: coreagent_runner._enqueue + WorkbenchStreamBridge._on_new_records keep turn_seq=1 without dropping settle."""
+        from frago.server.services import coreagent_runner as cr
+        from frago.server.services import workbench_queue
+        from frago.server.services.workbench_stream_bridge import WorkbenchStreamBridge
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setattr(workbench_queue, "is_server_process", lambda: True)
+        scheduled: list[tuple[str, int | None]] = []
+
+        # Enqueue a pending queued message so schedule_auto_inject_after_settle proceeds into timer scheduling
+        sid = "core_no_double_seq"
+        workbench_queue.enqueue(
+            sid,
+            text="follow-up queued prompt",
+            prompt="follow-up queued prompt",
+            auto_schedule=False,
+        )
+        monkeypatch.setattr(
+            workbench_queue,
+            "try_auto_inject",
+            lambda s, **_kw: scheduled.append((s, workbench_queue.current_turn_seq(s)))
+            or {"injected": False, "reason": "test"},
+        )
+
+        sess = cr._session_for(sid, "/tmp", None)
+        bridge = WorkbenchStreamBridge(loop=None)
+        monkeypatch.setattr(bridge, "_trigger_the_observer", lambda *_a, **_kw: None)
+        monkeypatch.setattr(cr, "_spawn", lambda _s: None)
+        try:
+            # 1) coreagent_runner._enqueue bumps sess.turn_seq -> 1 and syncs queue -> 1
+            cr._enqueue(sess, "first message")
+            assert sess.turn_seq == 1
+            assert workbench_queue.current_turn_seq(sid) == 1
+
+            # 2) Native kernel writes user.say, WorkbenchStreamBridge sees it: must NOT double-increment to 2
+            bridge._on_new_records(sid, [{"kind": "user.say", "seq": 1, "payload": {"text": "hi"}}])
+            assert workbench_queue.current_turn_seq(sid) == 1
+
+            # 3) On turn completion with turn_seq=1, settle scheduling MUST NOT be dropped
+            workbench_queue.schedule_auto_inject_after_settle(
+                sid, delay_s=5.0, max_retries=0, turn_seq=1
+            )
+            with workbench_queue._locks_guard:
+                has_timer = sid in workbench_queue._settle_timers
+                timer = workbench_queue._settle_timers.pop(sid, None)
+            if timer is not None:
+                timer.cancel()
+            assert has_timer is True
+
+            # 4) Once Turn 2 begins, stale turn_seq=1 completion from bridge is rejected
+            cr._enqueue(sess, "second message")
+            assert workbench_queue.current_turn_seq(sid) == 2
+            bridge._on_turn_complete(sid, True, "end_turn", turn_seq=1)
+            with workbench_queue._locks_guard:
+                stale_timer = workbench_queue._settle_timers.get(sid)
+            assert stale_timer is None
+        finally:
+            cr._sessions.pop(sid, None)
+            bridge.stop_all()
+            with workbench_queue._locks_guard:
+                workbench_queue._active_turn_seq.pop(sid, None)
+                t = workbench_queue._settle_timers.pop(sid, None)
+                if t is not None:
+                    t.cancel()
+
+    def test_storage_list_sessions_handles_none_tmux_and_real_core_7ef20ab9_error_filter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blocking #2: _live_tmux_session_ids() returning None does not crash, and real core_7ef20ab9 format appears under status=ERROR."""
+        from frago.session import coreagent_store, storage
+        from frago.session.models import AgentType, SessionStatus
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setattr(storage, "_live_tmux_session_ids", lambda: None)
+
+        store = SessionOntologyStore(store_path=tmp_path / "session-ontology-store.json")
+        svc = SessionOntologyService(store=store)
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+        monkeypatch.setattr("frago.session.store.get_default_session_store", lambda: store)
+
+        # 2a) >6h stale agy dir + ontology running when tmux is unavailable (None) -> no TypeError, converges to completed
+        agy_dir = tmp_path / "sessions" / "agy" / "agy_no_tmux_01"
+        agy_dir.mkdir(parents=True)
+        raw_agy = agy_dir / "raw.jsonl"
+        old_dt = datetime.now() - timedelta(hours=8)
+        raw_agy.write_text(
+            json.dumps({"step_index": 0, "type": "USER_INPUT", "content": "hi"}) + "\n",
+            encoding="utf-8",
+        )
+        old_ts = old_dt.timestamp()
+        os.utime(raw_agy, (old_ts, old_ts))
+        store.save(
+            SessionOntologyRecord(
+                session_id="agy_no_tmux_01",
+                agent_kernel="agy",
+                lifecycle_state="running",
+            )
+        )
+        running = storage.list_sessions(
+            agent_type=AgentType.AGY, status=SessionStatus.RUNNING, limit=50
+        )
+        assert all(s.session_id != "agy_no_tmux_01" for s in running)
+        assert store.get("agy_no_tmux_01").lifecycle_state == "completed"  # type: ignore[union-attr]
+
+        # 2b) Real core_7ef20ab9 format: assistant + system(informational, warning) + system(turn_duration, warning)
+        core_sid = "core_7ef20ab9e7e2437bbc0cf58b890ef435"
+        core_dir = tmp_path / "sessions" / "coreagent" / core_sid
+        core_dir.mkdir(parents=True)
+        raw_core = core_dir / "raw.jsonl"
+        raw_core.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": "2026-11-20T08:00:00Z",
+                            "message": {"role": "user", "content": "run task"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "timestamp": "2026-11-20T08:00:04Z",
+                            "message": {
+                                "role": "assistant",
+                                "content": "【收场交接】任务停下：为什么停（empty_answer）",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "informational",
+                            "level": "warning",
+                            "content": "empty_answer: model returned empty output",
+                            "timestamp": "2026-11-20T08:00:05Z",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "turn_duration",
+                            "level": "warning",
+                            "durationMs": 5000,
+                            "timestamp": "2026-11-20T08:00:05Z",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        inspected = coreagent_store.inspect_session_file(raw_core)
+        assert inspected is not None
+        assert inspected.status == SessionStatus.ERROR
+
+        # Also test ontology-only error session with no error marker in transcript
+        onto_err_sid = "core_onto_only_err"
+        onto_err_dir = tmp_path / "sessions" / "coreagent" / onto_err_sid
+        onto_err_dir.mkdir(parents=True)
+        (onto_err_dir / "raw.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-11-20T08:00:00Z",
+                    "message": {"role": "assistant", "content": "done"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        store.save(
+            SessionOntologyRecord(
+                session_id=onto_err_sid,
+                agent_kernel="coreagent",
+                lifecycle_state="error",
+            )
+        )
+
+        err_sessions = storage.list_sessions(
+            agent_type=AgentType.COREAGENT, status=SessionStatus.ERROR, limit=50
+        )
+        err_ids = {s.session_id for s in err_sessions}
+        assert core_sid in err_ids
+        assert onto_err_sid in err_ids
+
+    def test_file_guard_blocks_shared_to_exclusive_upgrade_and_config_recovers_lkg_on_validation_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blocking #3 & High #4: shared->exclusive lock upgrade fails loudly; config ValidationError recovers from .lkg; timeout raises FileLockTimeoutError."""
+        from frago.init import config_manager
+        from frago.init.models import Config
+
+        guard_target = tmp_path / "guarded.json"
+        # Same-thread shared -> exclusive nested lock must NOT silently proceed without exclusive lock
+        with (
+            locked_file(guard_target, exclusive=False),
+            pytest.raises(FileGuardError, match="Cannot upgrade shared file lock"),
+            locked_file(guard_target, exclusive=True),
+        ):
+            pass
+
+        # Real timeout check across exclusive flock in two file descriptors
+        lock_file = tmp_path / ".timeout_test.json.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with (
+                pytest.raises(FileLockTimeoutError),
+                locked_file(tmp_path / "timeout_test.json", timeout_s=0.05, exclusive=True),
+            ):
+                pass
+        finally:
+            os.close(fd)
+
+        # Config ValidationError tries .lkg recovery before partial field recovery; and legacy heal exits shared lock cleanly
+        c_path = tmp_path / "config.json"
+        monkeypatch.setattr(config_manager, "CONFIG_PATH", c_path)
+        valid_cfg = Config(agent_core="codex")
+        config_manager.save_config(valid_cfg)
+        assert lkg_path_for(c_path).is_file()
+
+        # Inject a Pydantic ValidationError into primary config.json while .lkg still holds codex
+        c_path.write_text(
+            json.dumps({"agent_core": "invalid_core_name"}),
+            encoding="utf-8",
+        )
+        recovered = config_manager.load_config()
+        assert recovered.agent_core == "codex"
+
+        # Legacy config missing webui_sessions self-heals after exiting shared lock cleanly
+        lkg_path_for(c_path).unlink()
+        c_path.write_text(json.dumps({"agent_core": "claude"}), encoding="utf-8")
+        healed = config_manager.load_config()
+        assert healed.agent_core == "claude"
+        on_disk = json.loads(c_path.read_text(encoding="utf-8"))
+        assert "webui_sessions" in on_disk
+

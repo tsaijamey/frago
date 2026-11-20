@@ -10,7 +10,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -37,7 +37,7 @@ CONFIG_PATH = Path.home() / ".frago" / "config.json"
 _LEGACY_DROPPED_FIELDS = ("sync_repo_url", "sync_max_file_size_mb")
 
 
-def _drop_legacy_fields(data: Dict[str, Any]) -> None:
+def _drop_legacy_fields(data: dict[str, Any]) -> None:
     """Pop fields no longer defined on Config, with a stderr warning."""
     for field in _LEGACY_DROPPED_FIELDS:
         if field in data:
@@ -45,7 +45,7 @@ def _drop_legacy_fields(data: Dict[str, Any]) -> None:
             data.pop(field)
 
 
-def _parse_config_data(data: Dict[str, Any]) -> Config:
+def _parse_config_data(data: dict[str, Any]) -> Config:
     _migrate_api_endpoint_if_needed(data)
     _drop_legacy_fields(data)
     return Config(**data)
@@ -63,6 +63,8 @@ def load_config(*, raise_on_error: bool = False) -> Config:
           existing config with blank defaults on transient read failure
         - Performs one-time migration of api_endpoint to settings.json
     """
+    needs_webui_heal = False
+    loaded_config: Config | None = None
     with locked_file(CONFIG_PATH, exclusive=False):
         if not CONFIG_PATH.exists():
             return Config()
@@ -74,13 +76,11 @@ def load_config(*, raise_on_error: bool = False) -> Config:
 
             config = _parse_config_data(data)
 
-            # 缺省自愈：旧 config.json 缺 webui_sessions 段时补默认并回写，
+            # 缺省自愈：旧 config.json 缺 webui_sessions 段时先记录标记，退出共享读锁后再拿独占写锁校验并回写，
             # 让 server 启动期生效（spec 20260625-webui-session-lifecycle-mediator）。
             if "webui_sessions" not in data:
-                with locked_file(CONFIG_PATH, exclusive=True):
-                    save_config(config)
-
-            return config
+                needs_webui_heal = True
+            loaded_config = config
         except json.JSONDecodeError as e:
             lkg = lkg_path_for(CONFIG_PATH)
             if lkg.is_file():
@@ -101,6 +101,18 @@ def load_config(*, raise_on_error: bool = False) -> Config:
             fallback._from_corrupted_read = True
             return fallback
         except ValidationError as e:
+            lkg = lkg_path_for(CONFIG_PATH)
+            if lkg.is_file():
+                try:
+                    lkg_data = json.loads(lkg.read_text(encoding='utf-8'))
+                    if isinstance(lkg_data, dict):
+                        _backup_corrupted_config("validation_error_lkg")
+                        logger.warning(
+                            "Config validation failed (%s); recovered from LKG backup", e
+                        )
+                        return _parse_config_data(lkg_data)
+                except Exception:
+                    pass
             _backup_corrupted_config("validation_error")
             logger.warning("Config validation failed: %s. Attempting recovery.", e)
             try:
@@ -134,6 +146,22 @@ def load_config(*, raise_on_error: bool = False) -> Config:
             fallback._from_corrupted_read = True
             return fallback
 
+    if needs_webui_heal:
+        with locked_file(CONFIG_PATH, exclusive=True):
+            if CONFIG_PATH.exists():
+                try:
+                    fresh_data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+                    if isinstance(fresh_data, dict):
+                        fresh_config = _parse_config_data(fresh_data)
+                        if "webui_sessions" not in fresh_data:
+                            save_config(fresh_config)
+                        return fresh_config
+                except Exception:
+                    pass
+
+    assert loaded_config is not None
+    return loaded_config
+
 
 def get_agent_core() -> str:
     """当前的默认内核（不显式指定 agent-type 时用谁）。
@@ -163,7 +191,7 @@ def save_config(config: Config) -> None:
         config._from_corrupted_read = False
 
 
-def update_config(updates: Dict[str, Any]) -> Config:
+def update_config(updates: dict[str, Any]) -> Config:
     """Partially update configuration file atomically under lock."""
     with locked_file(CONFIG_PATH, exclusive=True):
         config = load_config(raise_on_error=True)
@@ -190,11 +218,12 @@ def _backup_corrupted_config(reason: str) -> None:
 
     try:
         shutil.copy(CONFIG_PATH, backup_path)
+        logger.debug("Backed up corrupted config (%s) to %s", reason, backup_path)
     except Exception:
         pass  # Backup failure does not affect main flow
 
 
-def _recover_config_from_data(data: Dict[str, Any]) -> Config:
+def _recover_config_from_data(data: dict[str, Any]) -> Config:
     """Recover valid fields from corrupted config data.
 
     When config validation fails (e.g., invalid auth_method), this function
@@ -206,7 +235,7 @@ def _recover_config_from_data(data: Dict[str, Any]) -> Config:
     Returns:
         Config instance with recovered fields
     """
-    safe_fields: Dict[str, Any] = {}
+    safe_fields: dict[str, Any] = {}
 
     # Preserve critical non-auth fields that don't affect validation
     preserve_fields = [
@@ -237,7 +266,7 @@ def _recover_config_from_data(data: Dict[str, Any]) -> Config:
     return Config(**safe_fields)
 
 
-def _migrate_api_endpoint_if_needed(data: Dict[str, Any]) -> None:
+def _migrate_api_endpoint_if_needed(data: dict[str, Any]) -> None:
     """One-time migration: move api_endpoint from config.json to settings.json
 
     This migration runs once per installation. It:
@@ -265,10 +294,10 @@ def _migrate_api_endpoint_if_needed(data: Dict[str, Any]) -> None:
 
     # Import here to avoid circular imports
     from frago.init.configurator import (
-        load_claude_settings,
         build_claude_env_config,
-        save_claude_settings,
         ensure_claude_json_for_custom_auth,
+        load_claude_settings,
+        save_claude_settings,
     )
 
     # Check if settings.json already has API config
@@ -325,7 +354,7 @@ def _migrate_api_endpoint_if_needed(data: Dict[str, Any]) -> None:
             del data["api_endpoint"]
 
 
-def _save_data_without_api_endpoint(data: Dict[str, Any]) -> None:
+def _save_data_without_api_endpoint(data: dict[str, Any]) -> None:
     """Save config data without api_endpoint field
 
     Args:

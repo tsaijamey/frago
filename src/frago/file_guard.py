@@ -49,7 +49,7 @@ def _get_thread_locks(path_key: str) -> threading.RLock:
         return lock
 
 
-def _hold_map() -> dict[str, int]:
+def _hold_map() -> dict[str, tuple[int, bool]]:
     held = getattr(_THREAD_HOLD_COUNTS, "held", None)
     if held is None:
         held = {}
@@ -107,13 +107,18 @@ def locked_file(
     holds = _hold_map()
 
     with thread_lock:
-        depth = holds.get(key, 0)
-        if depth > 0:
-            holds[key] = depth + 1
+        held_state = holds.get(key)
+        if held_state is not None:
+            depth, held_exclusive = held_state
+            if exclusive and not held_exclusive:
+                raise FileGuardError(
+                    f"Cannot upgrade shared file lock to exclusive lock on {target} in the same thread"
+                )
+            holds[key] = (depth + 1, held_exclusive)
             try:
                 yield
             finally:
-                holds[key] = depth
+                holds[key] = (depth, held_exclusive)
             return
 
         lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +142,7 @@ def locked_file(
                     f"Timed out waiting for {'exclusive' if exclusive else 'shared'} lock on {target}"
                 )
 
-            holds[key] = 1
+            holds[key] = (1, bool(exclusive))
             try:
                 yield
             finally:
