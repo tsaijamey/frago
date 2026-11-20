@@ -14,14 +14,14 @@ import MainLayout from '@/components/layout/MainLayout';
 import PageHost from '@/components/layout/PageHost';
 
 // UI
-import Toast from '@/components/ui/Toast';
+import { ToastContainer } from '@/components/ui/Toast';
 import ReconnectOverlay from '@/components/ui/ReconnectOverlay';
 
 // Init wizard
 import { InitWizardPage } from '@/components/init';
 
 function App() {
-  const { loadConfig, toasts } = useAppStore();
+  const { loadConfig } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
   const [initCompleted, setInitCompleted] = useState<boolean | null>(null);
 
@@ -139,13 +139,7 @@ function App() {
         <MainLayout>
           <InitWizardPage onComplete={handleInitComplete} />
         </MainLayout>
-        {toasts.length > 0 && (
-          <div className="toast-container">
-            {toasts.map((toast) => (
-              <Toast key={toast.id} {...toast} />
-            ))}
-          </div>
-        )}
+        <ToastContainer />
         <ReconnectOverlay />
       </>
     );
@@ -163,14 +157,7 @@ function App() {
         <PageHost onOpenInitWizard={() => setInitCompleted(false)} />
       </MainLayout>
 
-      {/* Toast container */}
-      {toasts.length > 0 && (
-        <div className="toast-container">
-          {toasts.map((toast) => (
-            <Toast key={toast.id} {...toast} />
-          ))}
-        </div>
-      )}
+      <ToastContainer />
 
       {/* 本机服务不在时盖住整页——放在最后，保证盖在弹窗与 toast 之上 */}
       <ReconnectOverlay />

@@ -2279,6 +2279,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* === Toast === */
+/* 层级契约：全站弹窗/抽屉为 1000–1101，断连整页遮罩为 1200；Toast 固定在 1150 并经 Portal 挂到 body，
+   保证任何弹窗内的保存报错都能完整浮在遮罩与卡片最上方，同时断连遮罩仍能盖住它。 */
 .toast-container {
   position: fixed;
   top: var(--spacing-md);
@@ -2287,14 +2289,16 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  z-index: 1000;
+  z-index: 1150;
   max-width: calc(100vw - 2 * var(--spacing-md));
+  pointer-events: none;
 }
 
 /* 提示条：比模态更轻的一层，靠边角与阴影统一到同一套令牌上。
    2026-11-14：字号从 lg(15px) 收到 base(13px)，15px 是页标题档，
    一条「已保存」的提示条不该和页标题一样大。 */
 .toast {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
