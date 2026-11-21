@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from 'react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './i18n'; // Initialize i18n before App
 import App from './App';
@@ -19,20 +19,8 @@ installConnectionMonitor();
 // 执行。worker 把首屏几份文件留在本地，页面进得来，剩下的归上面那套管（utils/shellWorker.ts）。
 registerShellWorker();
 
-// Wrapper component to hide loading screen after mount
-function AppWithLoading() {
-  useEffect(() => {
-    // Hide loading screen when React app is mounted
-    if (typeof (window as any).fragoHideLoading === 'function') {
-      (window as any).fragoHideLoading();
-    }
-  }, []);
-
-  return <App />;
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AppWithLoading />
+    <App />
   </StrictMode>
 );

@@ -9,6 +9,8 @@
  * (callers do `import type { ... } from '@/api/client'` and via the `api` barrel).
  */
 
+import { useConnectionStore } from './connection';
+
 import type {
   ServerInfo,
   ServerStatus,
@@ -1123,16 +1125,36 @@ export function isWebServiceMode(): boolean {
   return !window.pywebview?.api;
 }
 
+const WAIT_FOR_API_TIMEOUT_MS = 8_000;
+
 /**
- * Wait for API to be ready (for compatibility with pywebview pattern)
+ * Wait for API to be ready (for compatibility with pywebview pattern).
+ *
+ * Uses the lightweight `/api/info` endpoint (same probe as `connection.ts`) with a
+ * bounded timeout so slow thread-pool endpoints like `/api/status` cannot hang initial
+ * boot indefinitely. If the request times out, explicitly notifies `useConnectionStore`
+ * because the connection monitor ignores `AbortError`.
  */
 export async function waitForApi(): Promise<void> {
-  // In web service mode, API is always ready
-  // Just do a health check
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, WAIT_FOR_API_TIMEOUT_MS);
+
   try {
-    await getServerStatus();
+    await fetchApi<ServerInfo>('/info', {
+      signal: controller.signal,
+      cache: 'no-store',
+    });
   } catch {
+    if (timedOut) {
+      useConnectionStore.getState().reportFailure();
+    }
     throw new Error('Failed to connect to Frago web service');
+  } finally {
+    clearTimeout(timer);
   }
 }
 

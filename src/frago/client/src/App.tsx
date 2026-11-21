@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isApiReady, getApiMode, waitForApi } from '@/api';
 import { getInitStatus } from '@/api/client';
-import { RECONNECTED_EVENT } from '@/api/connection';
+import { RECONNECTED_EVENT, useConnectionStore } from '@/api/connection';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useHashRoute } from '@/hooks/useHashRoute';
 import { useRecipeAppOpen } from '@/hooks/useRecipeAppOpen';
@@ -24,6 +24,18 @@ function App() {
   const { loadConfig } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
   const [initCompleted, setInitCompleted] = useState<boolean | null>(null);
+  const reachable = useConnectionStore((state) => state.reachable);
+
+  // 首屏加载屏等首屏初始化落定或断连遮罩接管后再撤，避免服务缓慢时露出黑底空窗。
+  useEffect(() => {
+    const readyToReveal =
+      initCompleted !== null || !reachable || (getApiMode() !== 'http' && apiReady);
+    if (!readyToReveal) return;
+    const hide = (window as unknown as { fragoHideLoading?: () => void }).fragoHideLoading;
+    if (typeof hide === 'function') {
+      hide();
+    }
+  }, [initCompleted, reachable, apiReady]);
 
   // Subscribe to WebSocket data push for real-time updates
   useDataSync();
