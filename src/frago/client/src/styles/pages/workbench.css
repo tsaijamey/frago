@@ -1089,6 +1089,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 .tl-affair-row {
@@ -1098,6 +1099,7 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  flex-shrink: 0;
   transition: background-color 120ms ease;
 }
 

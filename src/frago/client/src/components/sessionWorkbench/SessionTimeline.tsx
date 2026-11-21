@@ -836,7 +836,7 @@ export default function SessionTimeline({
   const timelineListComponents = useMemo(
     () => ({
       Header: () => <div className="h-1.5" />,
-      Footer: () => <div className="h-3" />,
+      Footer: () => <div className="h-6" />,
     }),
     []
   );
@@ -885,7 +885,7 @@ export default function SessionTimeline({
       className="fixed inset-0 z-[80] flex p-4"
     >
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
         {/* 顶栏：左侧月份导航 + 当月总量 + 刷新；右上角多组 Tag 筛选框 + 关闭按钮 */}
         <div className="flex min-h-[48px] shrink-0 flex-wrap items-center gap-2 border-b border-border-color px-3.5 py-1.5">
           <div className="flex items-center gap-1.5">
@@ -1237,7 +1237,7 @@ export default function SessionTimeline({
                 e.preventDefault();
                 shiftDayWindow(e.deltaY > 0 ? 1 : -1);
               }}
-              className="flex w-[216px] shrink-0 flex-col border-r border-border-color bg-bg-secondary p-2"
+              className="flex min-h-0 w-[216px] shrink-0 flex-col overflow-hidden border-r border-border-color bg-bg-secondary p-2"
             >
               {activeTags.length > 0 ? (
                 <button
@@ -1360,7 +1360,7 @@ export default function SessionTimeline({
             </aside>
 
             {/* 右侧栏：已完成事务与会话时间轴双视图 */}
-            <div data-testid="timeline-pane" className="flex min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
+            <div data-testid="timeline-pane" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
               {/* 顶栏 Tab 视图切换 */}
               <div className="flex h-10 shrink-0 items-center justify-between border-b border-border-color bg-bg-secondary px-3">
                 <div className="flex items-center gap-1.5">
@@ -1529,10 +1529,10 @@ export default function SessionTimeline({
                   {/* 每日事务扁平分带台账（去盒中盒，单层外框 + 发丝线分带 + 左侧引线结论） */}
                   <div
                     data-testid="affairs-card-list"
-                    className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4"
+                    className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-10"
                   >
                     {filteredAffairs.length > 0 ? (
-                      <div className="tl-affair-ledger">
+                      <div className="tl-affair-ledger shrink-0">
                         {filteredAffairs.map((affair) => (
                           <div
                             key={affair.id}

@@ -12,6 +12,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { getCalendarAffairs } from '@/api';
 import SessionTimeline from '../SessionTimeline';
 import type { SessionTodayState } from '@/hooks/useSessionToday';
 
@@ -196,5 +197,110 @@ describe('SessionTimeline Completed Affairs View', () => {
     const employeeFilter = screen.getByTestId('affair-employee-filter');
     fireEvent.change(employeeFilter, { target: { value: 'frago-developer' } });
     expect(screen.getAllByTestId('affair-card').length).toBe(1);
+  });
+
+  it('12+ 及 50 条同日事务全部渲染且保持完整可滚动布局链，不被容器压缩裁切', async () => {
+    const manyDate = '2026-11-21';
+    const manyAffairs = Array.from({ length: 50 }, (_, idx) => {
+      const seq = idx + 1;
+      const hh = String(8 + Math.floor(idx / 5)).padStart(2, '0');
+      const mm = String((idx % 5) * 10).padStart(2, '0');
+      return {
+        id: `aff-20261121-${seq}`,
+        date: manyDate,
+        title: `第 ${seq} 条已完成事务：验证长列表独立滚动到底部`,
+        summary: `第 ${seq} 条业务结论摘要，用于验证 .tl-affair-ledger 不会被 flex-shrink 压缩裁切。`,
+        category: seq % 2 === 0 ? '系统研发' : '测试验证',
+        tags: ['scroll-fix'],
+        employee: 'frago-developer',
+        sessions: [`sess-20261121-${seq}`],
+        artifacts: [`/Users/frago/.frago/data/frago-dev/20261121-case-${seq}/notebook.md`],
+        completed_at: `${manyDate}T${hh}:${mm}:00`,
+        created_at: `${manyDate}T${hh}:${mm}:00`,
+        updated_at: `${manyDate}T${hh}:${mm}:00`,
+      };
+    });
+
+    vi.mocked(getCalendarAffairs).mockResolvedValueOnce({
+      items: manyAffairs,
+      by_date: {
+        [manyDate]: {
+          date: manyDate,
+          count: manyAffairs.length,
+          categories: ['系统研发', '测试验证'],
+          employees: ['frago-developer'],
+          previews: manyAffairs.slice(0, 2).map((a) => a.title),
+        },
+      },
+      summary: {
+        total_affairs: manyAffairs.length,
+        active_days: 1,
+        categories: ['系统研发', '测试验证'],
+        employees: ['frago-developer'],
+      },
+      cli_guide: {
+        add_example: 'frago calendar add --title "..."',
+        write_example: 'frago calendar write --file affairs.json',
+        prompt_example: '把今天做完的事整理后写入日历',
+      },
+    });
+
+    render(
+      <SessionTimeline
+        sessions={[]}
+        selectedId={null}
+        today={todayState()}
+        onSelect={() => {}}
+        onClose={() => {}}
+        initialDate={manyDate}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('affair-card').length).toBe(50);
+    });
+
+    // 1. 计数与全部 50 条事务渲染完整（含第 1 条、第 12 条与第 50 条）
+    expect(screen.getByTestId('tab-affairs').textContent).toContain('50');
+    expect(screen.getByTestId('affairs-view').textContent).toContain('50 / 50');
+    expect(screen.getByText('第 1 条已完成事务：验证长列表独立滚动到底部')).toBeTruthy();
+    expect(screen.getByText('第 12 条已完成事务：验证长列表独立滚动到底部')).toBeTruthy();
+    expect(screen.getByText('第 50 条已完成事务：验证长列表独立滚动到底部')).toBeTruthy();
+
+    // 2. 逐层核对日详情容器链的 min-h-0 / overflow 约束（外层弹窗 → 左日期栏 → 右双 Tab → 滚动容器 → 台账列表）
+    const dialog = screen.getByTestId('session-timeline');
+    const modalCard = dialog.querySelector('.min-h-0.min-w-0.flex-1.flex-col.overflow-hidden');
+    expect(modalCard).toBeTruthy();
+
+    const dateRail = screen.getByTestId('timeline-date-rail');
+    expect(dateRail.className).toContain('min-h-0');
+    expect(dateRail.className).toContain('overflow-hidden');
+
+    const pane = screen.getByTestId('timeline-pane');
+    expect(pane.className).toContain('min-h-0');
+    expect(pane.className).toContain('flex-1');
+    expect(pane.className).toContain('overflow-hidden');
+
+    const affairsView = screen.getByTestId('affairs-view');
+    expect(affairsView.className).toContain('min-h-0');
+    expect(affairsView.className).toContain('flex-1');
+    expect(affairsView.className).toContain('overflow-hidden');
+
+    const scroller = screen.getByTestId('affairs-card-list');
+    expect(scroller.className).toContain('min-h-0');
+    expect(scroller.className).toContain('flex-1');
+    expect(scroller.className).toContain('overflow-y-auto');
+    expect(scroller.className).toContain('pb-10');
+    // 滚动容器不再自身设为 flex-col，避免子代 .tl-affair-ledger 因 overflow:hidden 被压缩裁切
+    expect(scroller.className).not.toContain('flex-col');
+
+    const ledger = scroller.querySelector('.tl-affair-ledger');
+    expect(ledger).toBeTruthy();
+    expect(ledger?.className).toContain('shrink-0');
+
+    // 3. 切换至「会话时间轴·用量」Tab，确认轨道外层同样具备 min-h-0 flex-1 overflow-hidden
+    fireEvent.click(screen.getByTestId('tab-timeline'));
+    const timelineEmptyOrTrack = screen.getByTestId('timeline-pane').querySelector('.min-h-0.flex-1.overflow-hidden');
+    expect(timelineEmptyOrTrack).toBeTruthy();
   });
 });
