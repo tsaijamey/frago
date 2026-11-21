@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import os
 import subprocess
 import time
 import uuid
+from collections.abc import Iterator, Mapping
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -296,6 +298,38 @@ def _session_needs_decision(
     return False
 
 
+class _WorkbenchLiveness(Mapping[str, bool]):
+    """实时存活视图：tmux 在开或 CoreAgent 正忙即 True，其余明确为 False（避免落回 90 秒窗）。"""
+
+    def __init__(
+        self, open_names: set[str], core_alive: Mapping[str, bool], tmux_name_fn: Any
+    ) -> None:
+        self._open_names = open_names
+        self._core_alive = core_alive
+        self._tmux_name_fn = tmux_name_fn
+
+    def __getitem__(self, session_id: str) -> bool:
+        return (self._tmux_name_fn(session_id) in self._open_names) or (
+            self._core_alive.get(session_id) is True
+        )
+
+    def __iter__(self) -> Iterator[str]:
+        seen: set[str] = set()
+        for name in self._open_names:
+            if name.startswith("frago-agent-"):
+                sid = name[len("frago-agent-") :]
+                if sid and sid not in seen:
+                    seen.add(sid)
+                    yield sid
+        for sid, busy in self._core_alive.items():
+            if busy and sid not in seen:
+                seen.add(sid)
+                yield sid
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
 @router.get("/workbench/sessions")
 async def list_workbench_sessions() -> list[dict[str, Any]]:
     """两家的会话合并成一份清单，按最后活动时刻倒序。
@@ -314,13 +348,32 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     盯住记录文件、要不要持续取增量。它比 ``in_tmux`` 宽一格，**不要用它替 ``in_tmux``**：
     左栏的流光说的是"终端还开着"，CoreAgent 没有终端、流光不该亮。
     """
+    return await collect_workbench_session_rows()
+
+
+async def collect_workbench_session_rows(
+    *,
+    filter_employee_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """复用工作台同源状态机与四级血缘判定，构建会话行；可选按 `employee_id` 过滤以跳过无关卡片开销。"""
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
     from frago.session.service import ZOMBIE_IDLE_TIMEOUT_SECONDS, get_default_session_service
 
-    cards, open_names = await asyncio.gather(
-        asyncio.to_thread(record_reader.list_sessions),
+    # 一次问清哪些 tmux 会话与 CoreAgent 场次还活着，并作为真实存活映射传入 record_reader，
+    # 防止无 liveness 调用把刚 start_turn() 的新轮次反手覆写回 error 或被 90 秒窗口吞掉 error。
+    open_names, core_alive = await asyncio.gather(
         asyncio.to_thread(tsvc.open_session_names),
+        asyncio.to_thread(coreagent_runner.live_states),
+    )
+    liveness = _WorkbenchLiveness(open_names, core_alive, tmux_name_for)
+    sig = inspect.signature(record_reader.list_sessions)
+    accepts_liveness = "liveness" in sig.parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    cards = await asyncio.to_thread(
+        record_reader.list_sessions,
+        **({"liveness": liveness} if accepts_liveness else {}),
     )
     onto_svc = get_default_session_service()
     onto_by_sid = {
@@ -333,9 +386,6 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     # 命名规则不在前端再抄一份。没开着为 null。
     # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
     titles = await asyncio.to_thread(workbench_titles.load)
-    # 一次问清哪些 CoreAgent 场次还活着：看护一趟要过上百张卡片，逐场问就要逐场拿一次锁
-    # （见 ``coreagent_runner.live_states``）。
-    core_alive = await asyncio.to_thread(coreagent_runner.live_states)
     local_ops_ids = await asyncio.to_thread(workbench_groups.local_ops_session_ids)
     employee_posts = await asyncio.to_thread(list_posts)
     posts_by_id = {post.member_post_id: post for post in employee_posts}
@@ -352,21 +402,72 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
     pending_onto_heals: list[tuple[str, str, str | None]] = []
+    seen_card_sids: set[str] = set()
     for card in cards:
+        if not card.session_id or card.session_id in seen_card_sids:
+            continue
+        seen_card_sids.add(card.session_id)
         parent_by_sid[card.session_id] = card.parent_session_id
-        emp_id = card.employee_id or active_employee_by_sid.get(card.session_id)
+        onto_rec = onto_by_sid.get(card.session_id)
+        emp_id = (
+            card.employee_id
+            or (onto_rec.employee_id if onto_rec is not None else None)
+            or active_employee_by_sid.get(card.session_id)
+        )
         if emp_id:
             direct_employee_by_sid[card.session_id] = emp_id
         name = tmux_name_for(card.session_id)
         alive = name in open_names
         is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
-        onto_rec = onto_by_sid.get(card.session_id)
         status = card.status
         lifecycle_state = getattr(card, "lifecycle_state", None) or (
             onto_rec.lifecycle_state if onto_rec is not None else None
         )
-        # 本体五态收敛：error 永不折叠为 done/completed；失联超 6h 僵尸 running/awaiting_input 批量收敛。
-        if status == "error" or lifecycle_state == "error":
+        is_busy_core = core_alive.get(card.session_id) is True
+        fresh_onto_turn = (
+            onto_rec is not None
+            and onto_rec.lifecycle_state == "running"
+            and int(getattr(onto_rec, "turn_seq", 0) or 0) > 0
+            and float(getattr(onto_rec, "updated_at", 0) or 0)
+            > (card.last_active_at / 1000.0) + 1.0
+            and is_alive
+        )
+        is_transcript_running = (
+            is_alive
+            and card.last_kind != "error"
+            and (
+                card.last_kind in IN_PROGRESS_KINDS
+                or (card.last_kind != "agent.say" and status == "running")
+            )
+        )
+        reply_ts = getattr(card, "last_reply_at", None)
+        last_reply_s = (
+            (reply_ts / 1000.0) if isinstance(reply_ts, int | float) and reply_ts > 0 else None
+        )
+        healed_completed_after_error = (
+            onto_rec is not None
+            and onto_rec.lifecycle_state == "error"
+            and status != "error"
+            and card.last_kind == "agent.say"
+            and last_reply_s is not None
+            and last_reply_s > float(getattr(onto_rec, "updated_at", 0) or 0) + 5.0
+        )
+        # 本体五态收敛：
+        # 1. 正在跑的新轮次（常驻进程忙 / 刚 start_turn / 转录处于进行中态）必须干净切回 running，不得残留旧 error；
+        # 2. 前序 error 之后明确产出了新一轮正常助手回复（> updated_at + 5s）时自愈为 completed；
+        # 3. 真实 error 且当前未在跑时永不折叠为 done/completed；
+        # 4. 失联超 6h 僵尸 running/awaiting_input 批量收敛。
+        if is_busy_core or fresh_onto_turn or is_transcript_running:
+            status = "running"
+            lifecycle_state = "running"
+            if onto_rec is not None and onto_rec.lifecycle_state == "error":
+                pending_onto_heals.append((card.session_id, "running", ""))
+        elif healed_completed_after_error:
+            if status == "running":
+                status = "done"
+            lifecycle_state = "completed"
+            pending_onto_heals.append((card.session_id, "completed", ""))
+        elif status == "error" or lifecycle_state == "error":
             status = "error"
             lifecycle_state = "error"
             if onto_rec is not None and onto_rec.lifecycle_state != "error":
@@ -374,10 +475,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
                     (card.session_id, "error", card.digest_stuck or "session_error")
                 )
         else:
-            if is_alive and card.last_kind in IN_PROGRESS_KINDS:
-                status = "running"
-                lifecycle_state = "running"
-            elif not is_alive and status == "running":
+            if not is_alive and status == "running":
                 status = "done" if card.last_kind == "agent.say" else "idle"
                 lifecycle_state = "completed"
             elif status in ("done", "idle"):
@@ -437,6 +535,9 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
         for card, name, alive, status, is_alive, lifecycle_state in computed_states:
+            employee_id = _resolve_employee_id(card)
+            if filter_employee_id is not None and employee_id != filter_employee_id:
+                continue
             slots_need_decision, all_tasks_done = _observer_slots_state(
                 card.session_id, card.family
             )
@@ -457,7 +558,6 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             )
             card_data = asdict(card)
             card_data.pop("last_kind", None)
-            employee_id = _resolve_employee_id(card)
             matched_post = posts_by_id.get(employee_id) if employee_id else None
             employee_title = (
                 matched_post.title if matched_post is not None else employee_id
@@ -470,6 +570,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             row = {
                 **card_data,
                 "status": status,
+                "digest_stuck": card.digest_stuck if status == "error" else None,
                 "lifecycle_state": lifecycle_state or (
                     "error"
                     if status == "error"
@@ -494,10 +595,11 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         return built
 
     rows = await asyncio.to_thread(_build_rows)
-    # 这一场还活着的才盯它的文件（主人 09-30 定的省法：不开着的、点开那一刻取一次最新内容
-    # 就够）。清单本来就每 15 秒取一次、手上正好有 tmux 此刻的样子，顺带收一道。
-    still_alive = {row["session_id"] for row in rows if row["alive"]}
-    await asyncio.to_thread(_keep_watching_only, still_alive)
+    if filter_employee_id is None:
+        # 这一场还活着的才盯它的文件（主人 09-30 定的省法：不开着的、点开那一刻取一次最新内容
+        # 就够）。清单本来就每 15 秒取一次、手上正好有 tmux 此刻的样子，顺带收一道。
+        still_alive = {row["session_id"] for row in rows if row["alive"]}
+        await asyncio.to_thread(_keep_watching_only, still_alive)
     return rows
 
 

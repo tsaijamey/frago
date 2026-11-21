@@ -3036,14 +3036,63 @@
     "page": {
       "title": "员工",
       "count": "{{n}} 个岗位",
+      "countWithRunning": "{{n}} 个岗位 · {{running}} 进行中",
       "new": "新建员工",
       "empty": "还没有员工",
       "emptyDesc": "员工是这台机器上的岗位编制：他管着哪几块数据目录、用哪家内核起会话、新会话自动带着什么语境。",
+      "emptyFiltered": "当前筛选下暂无员工",
+      "emptyFilteredDesc": "切换回「全部」查看全部岗位，或新建一个员工。",
+      "filterAria": "员工状态筛选",
+      "filterAll": "全部 {{n}}",
+      "filterRunning": "运行中 {{n}}",
+      "filterStandby": "待命 {{n}}",
       "loadFailed": "员工清单取不到：{{reason}}"
     },
     "card": {
       "startWith": "与 {{name}} 开始一场新对话",
-      "edit": "员工详情"
+      "selectCard": "选择 {{name}} 查看名下会话",
+      "edit": "员工详情",
+      "activeCount": "{{count}} 进行中",
+      "standby": "待命",
+      "totalSessions": "共 {{count}} 场",
+      "totalSessionsStandby": "待命 · 共 {{count}} 场"
+    },
+    "deck": {
+      "stageAria": "员工 3D 选卡舞台",
+      "prev": "上一张",
+      "next": "下一张",
+      "boundaryFirst": "已到达牌组首张",
+      "boundaryLast": "已到达牌组末张",
+      "jumpTriggerTitle": "快速定位或检索员工 (快捷键 /)",
+      "jumpDialogAria": "快速切换员工",
+      "jumpSearchPlaceholder": "搜索员工名称或职责…",
+      "jumpEmpty": "未找到匹配的员工",
+      "loop": "循环",
+      "loopTitle": "切换首尾边界模式（回弹 / 循环）"
+    },
+    "sessions": {
+      "panelAria": "当前员工名下会话",
+      "titleOf": "{{name}} 的会话",
+      "filterAria": "会话状态筛选",
+      "filterAll": "全部 {{n}}",
+      "filterActive": "进行中 {{n}}",
+      "filterCompleted": "已结束 {{n}}",
+      "editPost": "岗位详情",
+      "newSession": "新建会话",
+      "running": "进行中",
+      "needDecision": "待拍板",
+      "error": "异常",
+      "completed": "已结束",
+      "enter": "进入会话",
+      "noSummary": "暂无对话摘要",
+      "exactTimeTitle": "精确时间：{{time}}",
+      "cwdTitle": "工作目录：{{dir}}",
+      "loadMore": "显示更多历史会话（剩余 {{n}} 场）",
+      "loadingMore": "正在加载更多…",
+      "emptyTitle": "暂无会话记录",
+      "emptyDesc": "点击上方「新建会话」，即可带着该员工的工作语境开始协作。",
+      "filteredEmptyTitle": "当前筛选下暂无会话",
+      "filteredEmptyDesc": "可切换「全部」查看历史记录，或点击右上角「新建会话」开始。"
     },
     "launch": {
       "title": "与 {{name}} 开始新对话",
@@ -3166,7 +3215,9 @@
       "dataFailed": "登记目录失败（HTTP {{status}}）",
       "dataFailedPlain": "登记目录失败",
       "syncFailed": "巡检失败（HTTP {{status}}）",
-      "syncFailedPlain": "巡检失败"
+      "syncFailedPlain": "巡检失败",
+      "sessionsFailed": "取名下会话失败（HTTP {{status}}）",
+      "sessionsFailedPlain": "取名下会话失败"
     }
   },
   "desktop": {}

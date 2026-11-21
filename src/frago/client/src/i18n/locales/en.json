@@ -3036,14 +3036,63 @@
     "page": {
       "title": "Employees",
       "count": "{{n}} posts",
+      "countWithRunning": "{{n}} posts · {{running}} running",
       "new": "New employee",
       "empty": "No employees yet",
       "emptyDesc": "An employee is a post on this machine: which data folders it owns, which kernel starts its sessions, and what context a new session carries.",
+      "emptyFiltered": "No employees match this filter",
+      "emptyFilteredDesc": "Switch back to All to see every post, or create a new employee.",
+      "filterAria": "Filter employees by status",
+      "filterAll": "All {{n}}",
+      "filterRunning": "Running {{n}}",
+      "filterStandby": "Standby {{n}}",
       "loadFailed": "Could not load employees: {{reason}}"
     },
     "card": {
       "startWith": "Start a new session with {{name}}",
-      "edit": "Employee details"
+      "selectCard": "Select {{name}} to view sessions",
+      "edit": "Employee details",
+      "activeCount": "{{count}} running",
+      "standby": "Standby",
+      "totalSessions": "{{count}} total",
+      "totalSessionsStandby": "Standby · {{count}} total"
+    },
+    "deck": {
+      "stageAria": "Employee 3D card selection deck",
+      "prev": "Previous card",
+      "next": "Next card",
+      "boundaryFirst": "Reached the first card",
+      "boundaryLast": "Reached the last card",
+      "jumpTriggerTitle": "Quick jump or search employees (/)",
+      "jumpDialogAria": "Quick switch employee",
+      "jumpSearchPlaceholder": "Search employee name or duty…",
+      "jumpEmpty": "No matching employees",
+      "loop": "Loop",
+      "loopTitle": "Toggle deck boundary mode (bounce / loop)"
+    },
+    "sessions": {
+      "panelAria": "Selected employee sessions",
+      "titleOf": "{{name}}'s sessions",
+      "filterAria": "Filter sessions by status",
+      "filterAll": "All {{n}}",
+      "filterActive": "Running {{n}}",
+      "filterCompleted": "Completed {{n}}",
+      "editPost": "Post Details",
+      "newSession": "New session",
+      "running": "Running",
+      "needDecision": "Needs decision",
+      "error": "Error",
+      "completed": "Completed",
+      "enter": "Open session",
+      "noSummary": "No summary yet",
+      "exactTimeTitle": "Exact time: {{time}}",
+      "cwdTitle": "Working directory: {{dir}}",
+      "loadMore": "Show more sessions ({{n}} remaining)",
+      "loadingMore": "Loading more…",
+      "emptyTitle": "No sessions yet",
+      "emptyDesc": "Click “New session” above to start working with this employee's context.",
+      "filteredEmptyTitle": "No sessions in this filter",
+      "filteredEmptyDesc": "Switch to All to see past sessions, or click “New session” above to start."
     },
     "launch": {
       "title": "New session with {{name}}",
@@ -3166,7 +3215,9 @@
       "dataFailed": "Failed to register folder (HTTP {{status}})",
       "dataFailedPlain": "Failed to register folder",
       "syncFailed": "Discovery scan failed (HTTP {{status}})",
-      "syncFailedPlain": "Discovery scan failed"
+      "syncFailedPlain": "Discovery scan failed",
+      "sessionsFailed": "Failed to load employee sessions (HTTP {{status}})",
+      "sessionsFailedPlain": "Failed to load employee sessions"
     }
   },
   "desktop": {}
