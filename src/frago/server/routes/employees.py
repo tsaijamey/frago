@@ -16,9 +16,9 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -37,7 +37,7 @@ from frago.employee import (
 from frago.ontology import ContractViolationError
 from frago.server.services.employee_usage import (
     epoch_ms_to_iso,
-    get_employee_last_used_ms,
+    get_employee_usage_summary,
 )
 
 router = APIRouter()
@@ -116,9 +116,12 @@ def _post_payload(
     *,
     with_data_summary: bool = True,
     last_used_at: str | None = None,
+    session_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = record.to_dict()
     payload["last_used_at"] = last_used_at
+    if session_counts is not None:
+        payload["session_counts"] = session_counts
     if with_data_summary:
         payload["data_summary"] = _data_summary(list(record.data_slots))
     return payload
@@ -135,17 +138,93 @@ async def list_employees() -> dict[str, Any]:
     if not await run_in_threadpool(list_posts):
         await run_in_threadpool(ensure_builtin_stock_employee)
     records = await run_in_threadpool(list_posts)
-    last_used_ms = await run_in_threadpool(get_employee_last_used_ms, records)
+    last_used_ms, session_counts = await run_in_threadpool(get_employee_usage_summary, records)
     ordered = sorted(
         records,
         key=lambda r: (-(last_used_ms.get(r.member_post_id) or -1), r.member_post_id),
     )
     return {
         "employees": [
-            _post_payload(r, last_used_at=epoch_ms_to_iso(last_used_ms.get(r.member_post_id)))
+            _post_payload(
+                r,
+                last_used_at=epoch_ms_to_iso(last_used_ms.get(r.member_post_id)),
+                session_counts=session_counts.get(r.member_post_id, {"active": 0, "total": 0}),
+            )
             for r in ordered
         ],
         "total": len(ordered),
+    }
+
+
+def _is_session_active(row: dict[str, Any]) -> bool:
+    return (
+        row.get("status") == "running"
+        or row.get("lifecycle_state") in ("running", "queued", "awaiting_input")
+        or bool(row.get("need_decision"))
+    )
+
+
+def _session_activity_ts(row: dict[str, Any]) -> int:
+    for key in ("last_reply_at", "last_active_at", "created_at"):
+        val = row.get(key)
+        if isinstance(val, int | float) and val > 0:
+            return int(val)
+    return 0
+
+
+@router.get("/employees/{member_post_id}/sessions")
+async def list_employee_sessions(
+    member_post_id: str,
+    status: Literal["all", "active", "completed"] = Query("all"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    """返回指定员工名下的全部历史与运行中会话（复用工作台同源四级血缘判定）。"""
+    clean_id = member_post_id.strip()
+    record = next(
+        (r for r in await run_in_threadpool(list_posts) if r.member_post_id == clean_id),
+        None,
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Employee post '{member_post_id}' does not exist.",
+        )
+
+    from frago.server.routes.workbench import collect_workbench_session_rows
+
+    raw_rows = await collect_workbench_session_rows(filter_employee_id=clean_id)
+    deduped: list[dict[str, Any]] = []
+    seen_sids: set[str] = set()
+    for row in raw_rows:
+        sid = row.get("session_id")
+        if not sid or sid in seen_sids:
+            continue
+        seen_sids.add(sid)
+        deduped.append(row)
+
+    ordered = sorted(
+        deduped,
+        key=lambda r: (0 if _is_session_active(r) else 1, -_session_activity_ts(r)),
+    )
+    active_rows = [r for r in ordered if _is_session_active(r)]
+    completed_rows = [r for r in ordered if not _is_session_active(r)]
+    if status == "active":
+        filtered = active_rows
+    elif status == "completed":
+        filtered = completed_rows
+    else:
+        filtered = ordered
+
+    total = len(filtered)
+    sliced = filtered[offset : offset + limit]
+    return {
+        "employee_id": clean_id,
+        "sessions": sliced,
+        "total": total,
+        "active_count": len(active_rows),
+        "completed_count": len(completed_rows),
+        "has_more": (offset + len(sliced)) < total,
     }
 
 
