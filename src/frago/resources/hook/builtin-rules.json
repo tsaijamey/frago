@@ -887,6 +887,23 @@
       "priority": 210,
       "created_at": "2026-11-03T00:00:00",
       "description": "why: 2026-11-03 实测主代理连跑 3 轮 uv run python 切片读取会话 .jsonl，主上下文从 29.7 万暴涨至 36.7 万 token。how: Read 或 Bash 直接读取会话目录 .jsonl 时硬拦截，当场给出 frago session ask <id> \"<问句>\" 的单轮轻量提取模板。"
+    },
+    {
+      "id": "builtin-bash-block-system-open-web",
+      "source": "builtin",
+      "event": "PreToolUse",
+      "match": {
+        "type": "bash_regex",
+        "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?(?:open|xdg-open))\\b[ \\t]+(?:(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t\\r\\n;&|()\"'`{}<>]+)[ \\t]+)*(?:\"(?:(?i:https?|file)://[^\"\\n]+|[^\"\\n]*\\.(?i:html?)(?:[?#][^\"\\n]*)?)\"|'(?:(?i:https?|file)://[^'\\n]+|[^'\\n]*\\.(?i:html?)(?:[?#][^'\\n]*)?)'|(?:(?i:https?|file)://[^ \\t\\r\\n;&|()\"'`{}<>]+|[^ \\t\\r\\n;&|()\"'`{}<>]+\\.(?i:html?)(?:[?#][^ \\t\\r\\n;&|()\"'`{}<>]*)?))(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+      },
+      "action": {
+        "type": "deny_tool_call",
+        "reason": "【已拦截·禁止用 open / xdg-open 打开网页或本地 HTML 页面】\n`open` / `xdg-open` 只会唤起系统默认浏览器，agent 看不到页面内容、拿不到 DOM 与控制台状态，也无法截图或交互。\n\n改用受控浏览器 `frago browser`：\n  frago browser navigate \"<URL或file:///绝对路径>\" --group <分组名>\n  frago browser get-content --group <分组名>\n  frago browser exec-js --group <分组名> \"<JS>\" --return-value\n  frago browser screenshot --group <分组名> <输出图片路径>\n  frago browser group-close <分组名>\n\n本地 HTML 页面请传 `file:///绝对路径` 或本地服务 `http://127.0.0.1:<端口>/...`；未连接时先跑 `frago browser start`。\n（仅把配方页面交给人看时，改用 `frago recipe open <配方名>`。）"
+      },
+      "dedup_scope": "always",
+      "priority": 250,
+      "created_at": "2026-11-21T00:00:00",
+      "description": "why: 20260806-block-open-in-worker-sessions — worker 会话看本地 HTML 或 URL 时常先跑 open/xdg-open 走系统默认浏览器，agent 自己看不到页面白跑一轮；旧 userdir-redirect-system-open-url 仅存在于开发者本机、动作仅为 inject_literal（不拦），且漏掉 xdg-open、file:// 与 *.html/*.htm。how: PreToolUse 锚定命令起始位置（复用横向空白与子壳/包装前缀，不跨换行、不误伤引号说明与 python open()），匹配 open/xdg-open 打开 http(s)://、file:// 或 *.html/*.htm（含 ?query/#hash 与引号路径），直接 deny_tool_call 并指路 frago browser；放行 open .、PDF/图片、open -a Finder /tmp 等非网页调用。"
     }
   ]
 }

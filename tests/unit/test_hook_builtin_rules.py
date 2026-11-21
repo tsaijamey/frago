@@ -1,4 +1,4 @@
-"""Regression tests for builtin hook rules (focus: builtin-bash-git-discard-worktree-deny)."""
+"""Regression tests for builtin hook rules."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from frago.init.hook_binary import get_bundled_binary_path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILTIN_RULES_PATH = REPO_ROOT / "src" / "frago" / "resources" / "hook" / "builtin-rules.json"
 RULE_ID = "builtin-bash-git-discard-worktree-deny"
+OPEN_WEB_RULE_ID = "builtin-bash-block-system-open-web"
 
 
 def _load_rules_data() -> dict:
@@ -103,6 +104,10 @@ def test_builtin_rules_json_valid_and_preserves_other_rules() -> None:
     assert data["version"] == 1
     rules_by_id = {r["id"]: r for r in data["rules"]}
     assert RULE_ID in rules_by_id
+    assert OPEN_WEB_RULE_ID in rules_by_id
+    assert rules_by_id[OPEN_WEB_RULE_ID]["event"] == "PreToolUse"
+    assert rules_by_id[OPEN_WEB_RULE_ID]["action"]["type"] == "deny_tool_call"
+    assert "frago browser" in rules_by_id[OPEN_WEB_RULE_ID]["action"]["reason"]
     assert "builtin-session-start-irrelevant-hook-silence" in rules_by_id
 
 
@@ -296,3 +301,190 @@ def test_heredoc_column_zero_line_requires_engine_heredoc_stripping(
 ) -> None:
     matched = _match_via_frago_core(tmp_path, [command])[0]
     assert RULE_ID not in matched
+
+
+def _run_pre_tool_use_via_frago_core_engine(
+    tmp_path: Path,
+    command: str,
+    *,
+    agent_role: str | None = None,
+) -> dict:
+    home_dir = tmp_path / "home"
+    hook_dir = home_dir / ".frago" / "hook"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    (hook_dir / "builtin-rules.json").write_text(
+        BUILTIN_RULES_PATH.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    binary = get_bundled_binary_path()
+    payload = json.dumps(
+        {
+            "session_id": f"unit-test-open-web-{uuid.uuid4().hex}",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+        },
+        ensure_ascii=False,
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env.pop("FRAGO_PA", None)
+    env.pop("FRAGO_CONV_KEY", None)
+    if agent_role is None:
+        env.pop("FRAGO_AGENT_ROLE", None)
+    else:
+        env["FRAGO_AGENT_ROLE"] = agent_role
+
+    proc = subprocess.run(
+        [str(binary), "--engine"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
+    )
+    return json.loads(proc.stdout)
+
+
+OPEN_WEB_DENIED_COMMANDS = [
+    pytest.param("open http://127.0.0.1:8093/", id="open-http-loopback"),
+    pytest.param('open -a "Google Chrome" https://example.com', id="open-dash-a-https"),
+    pytest.param("cd x && open ./dist/index.html", id="and-open-local-html"),
+    pytest.param("open file:///tmp/a.html", id="open-file-url"),
+    pytest.param("xdg-open http://localhost:3000", id="xdg-open-http-localhost"),
+    pytest.param("xdg-open ./preview.htm", id="xdg-open-local-htm"),
+    pytest.param("if true; then open https://example.com; fi", id="if-then-open-https"),
+    pytest.param('open -g "http://localhost:5173"', id="open-dash-g-quoted-http"),
+    pytest.param('open "/tmp/a.html"', id="open-quoted-abs-html"),
+    pytest.param("open '/tmp/my page.html?x=1#y'", id="open-quoted-space-query-hash"),
+    pytest.param("open ./dist/index.html?foo=1#bar", id="open-local-html-query-hash"),
+    pytest.param("open -b com.google.Chrome https://example.com", id="open-dash-b-bundle"),
+    pytest.param("open -n -a Safari ./index.html", id="open-dash-n-a-html"),
+    pytest.param("open -u https://example.com", id="open-dash-u-url"),
+    pytest.param("sudo xdg-open https://example.com", id="sudo-xdg-open"),
+    pytest.param("env DISPLAY=:0 xdg-open http://localhost:3000", id="env-display-xdg-open"),
+    pytest.param("DISPLAY=:0 open https://example.com", id="inline-env-open"),
+    pytest.param('bash -c "open https://example.com"', id="bash-c-open-https"),
+    pytest.param("sh -c 'open ./dist/index.html'", id="sh-c-open-html"),
+    pytest.param("(open https://example.com)", id="subshell-open-https"),
+    pytest.param("true; open https://example.com", id="semicolon-open-https"),
+    pytest.param("false || xdg-open http://localhost:3000", id="or-xdg-open"),
+    pytest.param("/usr/bin/open https://example.com", id="abs-bin-open"),
+    pytest.param("/usr/bin/xdg-open ./index.htm", id="abs-bin-xdg-open"),
+    pytest.param("open -- ./dist/index.html", id="open-double-dash-html"),
+    pytest.param("echo ok\nopen https://example.com", id="multiline-second-line-open"),
+    pytest.param("open ./foo.txt ./index.html", id="open-multiple-args-with-html"),
+    pytest.param('open "https://example.com/?a=1&b=2"', id="open-quoted-https-ampersand"),
+]
+
+OPEN_WEB_ALLOWED_COMMANDS = [
+    pytest.param("open .", id="open-finder-dot"),
+    pytest.param("open ./doc.pdf", id="open-doc-pdf"),
+    pytest.param("open ./report.pdf", id="open-report-pdf"),
+    pytest.param("open ./photo.png", id="open-photo-png"),
+    pytest.param("open -a Finder /tmp", id="open-dash-a-finder"),
+    pytest.param("python3 -c \"open('a.html')\"", id="python3-open-html"),
+    pytest.param("python -c \"open('index.html')\"", id="python-open-index-html"),
+    pytest.param("python3 -c 'import os; open(\"a.html\")'", id="python3-semicolon-open"),
+    pytest.param("python3 -c 'import os; open (\"a.html\")'", id="python3-semicolon-space-open"),
+    pytest.param('git commit -m "open http://127.0.0.1:8093"', id="git-commit-msg-open-http"),
+    pytest.param('git commit -m "open https://example.com"', id="git-commit-msg-open-https"),
+    pytest.param('frago todo log id "xdg-open http://localhost:3000"', id="todo-log-xdg-open"),
+    pytest.param('frago todo log id "open http://127.0.0.1:8093"', id="todo-log-open"),
+    pytest.param("frago browser open http://127.0.0.1:8093", id="frago-browser-open"),
+    pytest.param("frago browser navigate http://127.0.0.1:8093 --group test", id="frago-browser-navigate"),
+    pytest.param("frago recipe open my_recipe", id="frago-recipe-open"),
+    pytest.param('echo "open https://example.com"', id="echo-open-https"),
+    pytest.param('grep -rn "xdg-open http://localhost:3000" src/', id="grep-xdg-open"),
+    pytest.param("open ./index.html.bak", id="open-html-bak"),
+    pytest.param("open ./html-report.pdf", id="open-html-prefix-pdf"),
+    pytest.param("open --env FOO=https://example.com ./report.pdf", id="open-env-url-pdf"),
+    pytest.param("openssl s_client -connect example.com:443", id="openssl-command"),
+    pytest.param("cat ./index.html | head -n 20", id="cat-html-head"),
+]
+
+
+@pytest.mark.parametrize("command", OPEN_WEB_ALLOWED_COMMANDS)
+def test_block_system_open_web_allows_safe_and_non_web_commands(
+    tmp_path: Path, command: str
+) -> None:
+    rule = _get_rule(OPEN_WEB_RULE_ID)
+    assert not _eval_bash_clause(rule["match"], command), (
+        f"Python evaluator unexpectedly matched: {command!r}"
+    )
+    matched = _match_via_frago_core(tmp_path, [command])[0]
+    assert OPEN_WEB_RULE_ID not in matched, (
+        f"frago-core unexpectedly matched {OPEN_WEB_RULE_ID}: {command!r}"
+    )
+
+
+@pytest.mark.parametrize("command", OPEN_WEB_DENIED_COMMANDS)
+def test_block_system_open_web_blocks_web_and_local_html_commands(
+    tmp_path: Path, command: str
+) -> None:
+    rule = _get_rule(OPEN_WEB_RULE_ID)
+    assert _eval_bash_clause(rule["match"], command), (
+        f"Python evaluator missed system open web command: {command!r}"
+    )
+    matched = _match_via_frago_core(tmp_path, [command])[0]
+    assert OPEN_WEB_RULE_ID in matched, (
+        f"frago-core missed {OPEN_WEB_RULE_ID} on: {command!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "agent_role"),
+    [
+        pytest.param("open http://127.0.0.1:8093/", None, id="main-open-http"),
+        pytest.param('open -a "Google Chrome" https://example.com', "worker", id="worker-open-chrome"),
+        pytest.param("cd x && open ./dist/index.html", "worker", id="worker-open-html"),
+        pytest.param("open file:///tmp/a.html", "worker", id="worker-open-file-url"),
+        pytest.param("xdg-open http://localhost:3000", "worker", id="worker-xdg-open-http"),
+        pytest.param("xdg-open ./preview.htm", "worker", id="worker-xdg-open-htm"),
+        pytest.param("if true; then open https://example.com; fi", "worker", id="worker-if-then-open"),
+        pytest.param('open -g "http://localhost:5173"', "worker", id="worker-open-g"),
+    ],
+)
+def test_block_system_open_web_engine_denies_and_redirects_to_frago_browser(
+    tmp_path: Path, command: str, agent_role: str | None
+) -> None:
+    out = _run_pre_tool_use_via_frago_core_engine(
+        tmp_path, command, agent_role=agent_role
+    )
+    hook_out = out.get("hookSpecificOutput", {})
+    assert hook_out.get("permissionDecision") == "deny", (
+        f"Expected deny for {command!r}, got {out!r}"
+    )
+    reason = hook_out.get("permissionDecisionReason", "")
+    assert "frago browser" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("open .", id="engine-allow-open-dot"),
+        pytest.param("open ./doc.pdf", id="engine-allow-open-pdf"),
+        pytest.param("open -a Finder /tmp", id="engine-allow-open-finder"),
+        pytest.param("python3 -c \"open('a.html')\"", id="engine-allow-python-open"),
+        pytest.param('git commit -m "open http://127.0.0.1:8093"', id="engine-allow-git-commit"),
+        pytest.param('frago todo log id "xdg-open http://localhost:3000"', id="engine-allow-todo-log"),
+        pytest.param("frago browser open http://127.0.0.1:8093", id="engine-allow-frago-browser-open"),
+    ],
+)
+def test_block_system_open_web_engine_allows_non_web_commands(
+    tmp_path: Path, command: str
+) -> None:
+    out = _run_pre_tool_use_via_frago_core_engine(
+        tmp_path, command, agent_role="worker"
+    )
+    hook_out = out.get("hookSpecificOutput", {})
+    assert hook_out.get("permissionDecision") != "deny", (
+        f"Unexpected deny for {command!r}: {out!r}"
+    )
