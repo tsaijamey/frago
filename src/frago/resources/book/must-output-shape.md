@@ -51,6 +51,8 @@
 
 本轮需停下来请用户拍板做选择或填答时，在收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成交互卡片（选项格式 `"KEY|短名|选它之后会发生什么"`，KEY 是短标识——字母数字加 `-`/`_`、1–8 个字符、推荐 A/B/C，不是句子，详见 `frago book answer-needed-by-human`），NEVER 手写缺少 `type` 或 `effect` 字段的残缺代码块。
 
+在回复正文引用或向用户交付任何本地文件与目录时，必须写成 GitHub 风格 Markdown 超链接 `[显示名称](file:///绝对路径)`（目录以 `/` 结尾；路径含空格或括号时将空格编码为 `%20` 或用 `<file:///...>` 包裹），以便用户点击后直接弹窗预览或浏览目录。
+
 ### 5. 压住旁支
 
 手上这件事做完，第二件事单独提一句，问要不要处理。NEVER 就地展开。

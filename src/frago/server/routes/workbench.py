@@ -1297,23 +1297,34 @@ async def probe_session_path(
     base = await asyncio.to_thread(_session_root, sid)
     resolved = await asyncio.to_thread(_norm, path, base)
     if resolved is None:
-        return {"path": path, "resolved": None, "exists": False, "is_file": False, "size": None}
+        return {
+            "path": path,
+            "resolved": None,
+            "exists": False,
+            "is_file": False,
+            "is_dir": False,
+            "size": None,
+        }
 
     target = Path(resolved)
     size: int | None = None
+    is_dir = False
     try:
         is_file = target.is_file()
+        is_dir = target.is_dir()
         # 字节数一并带上：界面那一侧拿它挡住过大的文件，省得为了一份读不完的东西
         # 先把内容拉下来。
         if is_file:
             size = target.stat().st_size
     except OSError:
         is_file = False
+        is_dir = False
     return {
         "path": path,
         "resolved": resolved,
         "exists": target.exists(),
         "is_file": is_file,
+        "is_dir": is_dir,
         "size": size,
     }
 

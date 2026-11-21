@@ -49,12 +49,14 @@ class WarmSessionPool:
         max_size: int = 8,
         runner: TmuxRunner | None = None,
         clock: Callable[[], float] = time.monotonic,
+        default_env: dict[str, str] | None = None,
     ) -> None:
         if max_size < 1:
             raise ValueError("max_size must be >= 1")
         self._max_size = max_size
         self._runner = runner
         self._clock = clock
+        self._default_env = dict(default_env) if default_env else {}
         # OrderedDict 充当 LRU：末尾为最近使用。
         self._sessions: OrderedDict[str, TmuxAgentSession] = OrderedDict()
         # 别名 → 池里的真实键。见 ``alias``。
@@ -143,6 +145,9 @@ class WarmSessionPool:
             del self._sessions[session_id]
 
         driver = load_driver(agent_type)
+        merged_env = dict(self._default_env)
+        if env:
+            merged_env.update(env)
         session = TmuxAgentSession(
             session_id=session_id,
             driver=driver,
@@ -150,7 +155,7 @@ class WarmSessionPool:
             native_session_id=native_session_id,
             conv_key=conv_key,
             runner=self._runner,
-            env=env,
+            env=merged_env or None,
             origin=origin,
         )
         # 内存池不认识这场会话，但同名 tmux 会话可能还在——服务重启就是这个状态：

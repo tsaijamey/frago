@@ -263,9 +263,13 @@ def _run_coreagent_first_turn(launch: PendingLaunch, prompt: str) -> None:
     等不到（一轮真在跑）时记录流那条路自己看得见。
     """
     from frago.server.services import coreagent_runner
+    from frago.server.services.ui_session_runner import _accepts_kw
 
     try:
-        coreagent_runner.send(launch.handle, prompt, cwd=launch.cwd)
+        kwargs: dict[str, object] = {"cwd": launch.cwd}
+        if _accepts_kw(coreagent_runner.send, "surface"):
+            kwargs["surface"] = "webui"
+        coreagent_runner.send(launch.handle, prompt, **kwargs)
     except Exception as e:  # noqa: BLE001 — 起不来照实记下，页面据此停下来报
         launch.error = f"{launch.display_name} 没起来：{e}"
         logger.warning("新建 CoreAgent 会话失败（session=%s）", launch.handle, exc_info=True)

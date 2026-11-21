@@ -388,6 +388,45 @@ def test_绑定表里查不到时退回手把原值(monkeypatch):
     assert seen == ["webui-z"]
 
 
+def test_ui_session_runner_injects_webui_surface_env():
+    """WebUI 会话启动与续接链路必须注入 FRAGO_SURFACE=webui。"""
+    runner = UiSessionRunner(cwd="/tmp")
+    assert getattr(runner._pool, "_default_env", None) == {"FRAGO_SURFACE": "webui"}
+
+    envs: list[dict[str, str] | None] = []
+
+    class EnvAwarePool(FakePool):
+        def run(
+            self,
+            prompt,
+            *,
+            agent_type,
+            session_id,
+            cwd,
+            native_session_id=False,
+            timeout_s=120.0,
+            resume_hook=None,
+            origin=None,
+            env=None,
+        ):
+            envs.append(env)
+            return super().run(
+                prompt,
+                agent_type=agent_type,
+                session_id=session_id,
+                cwd=cwd,
+                native_session_id=native_session_id,
+                timeout_s=timeout_s,
+                resume_hook=resume_hook,
+                origin=origin,
+            )
+
+    aware_pool = EnvAwarePool()
+    aware_runner = UiSessionRunner(pool=aware_pool, cwd="/tmp")
+    aware_runner.send("sid-env", "hello", agent_type="codex")
+    assert envs[-1] == {"FRAGO_SURFACE": "webui"}
+
+
 def test_send_and_submit_when_idle_propagate_tmux_send_error(monkeypatch):
     """回归：driver 确认未落地抛出 TmuxSendError 时，UiSessionRunner 显式向上传递（且 submit_when_idle 清空输入框残留）。"""
     import threading

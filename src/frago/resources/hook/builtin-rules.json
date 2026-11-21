@@ -830,6 +830,46 @@
       "description": "Fires on every prompt in a main session alongside builtin-prompt-decision-card. Keeps `frago app image` visible at the end of multi-step rendering/screenshot turns so the agent renders an adaptive image grid card instead of falling back to bare paths or raw Markdown image links."
     },
     {
+      "id": "builtin-prompt-file-links",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_STOP_CHECK",
+            "value": "off"
+          },
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "env_exists",
+                "name": "FRAGO_CONV_KEY"
+              },
+              {
+                "type": "not",
+                "clause": {
+                  "type": "env_ne",
+                  "name": "FRAGO_SURFACE",
+                  "value": "webui"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【引用或交付本地文件/目录用 file:// 链接】回复正文引用或向用户交付任何本地文件、目录时，必须使用 GitHub 风格 Markdown 超链接 `[显示名称](file:///绝对路径)`（目录以 `/` 结尾，如 `[00_下载原件/](file:///abs/path/00_下载原件/)`；路径含空格或括号时将空格编码为 `%20` 或用 `<file:///...>` 包裹），以便用户在 WebUI 点击弹窗直接预览文件或浏览目录。"
+      },
+      "dedup_scope": "always",
+      "priority": 88,
+      "created_at": "2026-11-20T00:00:00",
+      "description": "WebUI / managed-session file & directory link delivery rule. Ensures all kernels (claude, codex, coreagent, agy, opencode) emit clickable file:// Markdown links so WebUI renders underlined links that open FileViewer for both files and directories."
+    },
+    {
       "id": "builtin-bash-frago-session-search",
       "source": "builtin",
       "event": "PreToolUse",
