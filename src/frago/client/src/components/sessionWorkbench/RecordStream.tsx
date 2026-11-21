@@ -2781,12 +2781,12 @@ export default function RecordStream({
   const inspectShown = inspectOpen || inspectActive;
   const inspectCount = counts.hook + counts.tool + counts.system;
 
-  const lensUsageBits: string[] = [];
-  if (usage?.model) lensUsageBits.push(usage.model);
-  if (usage?.context !== null && usage?.context !== undefined) {
-    lensUsageBits.push(`${t('workbench.record.usage.context')} ${formatTokensK(usage.context)}`);
-  }
-  const lensUsageStr = lensUsageBits.join(' · ');
+  const lensModel = usage?.model ?? '';
+  const lensContextStr =
+    usage?.context !== null && usage?.context !== undefined
+      ? `${t('workbench.record.usage.context')} ${formatTokensK(usage.context)}`
+      : '';
+  const hasLensUsage = Boolean(lensModel || lensContextStr);
   const lensUsageTitleParts = [
     usage?.model ?? '',
     usage?.context !== null && usage?.context !== undefined
@@ -2815,6 +2815,7 @@ export default function RecordStream({
       {(records.length > 0 || hasAnyChildrenContext) && !watcherWaitingForInitial ? (
         <div
           data-testid="stream-lens"
+          data-inspect={inspectShown ? 'open' : 'closed'}
           className="wb-lens shrink-0 border-b border-border-color px-4 py-2"
         >
           {/* 主行仅保留 4 个核心视角（Watcher / Talk / All / Files，及按需挂载的 Terminal），
@@ -2971,13 +2972,31 @@ export default function RecordStream({
             </button>
           )}
 
-          {lensUsageStr ? (
+          {hasLensUsage ? (
             <span
               data-testid="lens-usage"
               className="lens-usage"
               title={lensUsageTitle}
             >
-              {lensUsageStr}
+              {lensModel ? (
+                <span
+                  data-testid="lens-usage-model"
+                  className="lens-usage-model"
+                  title={lensModel}
+                >
+                  {lensModel}
+                </span>
+              ) : null}
+              {lensModel && lensContextStr ? (
+                <span aria-hidden="true" className="lens-usage-sep">
+                  {' · '}
+                </span>
+              ) : null}
+              {lensContextStr ? (
+                <span data-testid="lens-usage-context" className="lens-usage-context">
+                  {lensContextStr}
+                </span>
+              ) : null}
             </span>
           ) : null}
         </div>

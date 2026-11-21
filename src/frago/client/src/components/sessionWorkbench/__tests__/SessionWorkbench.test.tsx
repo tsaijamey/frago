@@ -642,10 +642,53 @@ describe('RecordStream 中栏', () => {
         />
       );
       expect(screen.queryByTestId('stream-lens-usage')).toBeNull();
+      const streamLens = screen.getByTestId('stream-lens');
+      expect(streamLens.className).toContain('wb-lens');
+      expect(streamLens.getAttribute('data-inspect')).toBe('closed');
+
       const lensUsage = screen.getByTestId('lens-usage');
       expect(lensUsage.textContent).toBe('gemini-4-argon-medium · 上下文 15k');
       expect(lensUsage.getAttribute('title')).toContain('15,200');
       expect(lensUsage.getAttribute('title')).toContain('累计 28k');
+
+      const modelEl = screen.getByTestId('lens-usage-model');
+      expect(modelEl.className).toContain('lens-usage-model');
+      expect(modelEl.getAttribute('title')).toBe('gemini-4-argon-medium');
+
+      const contextEl = screen.getByTestId('lens-usage-context');
+      expect(contextEl.className).toContain('lens-usage-context');
+      expect(contextEl.textContent).toBe('上下文 15k');
+    });
+
+    it('较窄容器下长模型名独立截断并挂完整 title，上下文读数独立保底，Inspect 开关同步状态标记', () => {
+      const longModel = 'gemini-4-neon-medium-20261121-long-variant';
+      render(
+        <RecordStream
+          {...streamProps({
+            records: mixed,
+            usage: { model: longModel, context: 369_000, total: 1_200_000 },
+          })}
+        />
+      );
+
+      const streamLens = screen.getByTestId('stream-lens');
+      expect(streamLens.className).toContain('wb-lens');
+      expect(streamLens.className).not.toContain('flex-wrap');
+      expect(streamLens.getAttribute('data-inspect')).toBe('closed');
+
+      const modelEl = screen.getByTestId('lens-usage-model');
+      expect(modelEl.textContent).toBe(longModel);
+      expect(modelEl.getAttribute('title')).toBe(longModel);
+      expect(modelEl.className).toBe('lens-usage-model');
+
+      const contextEl = screen.getByTestId('lens-usage-context');
+      expect(contextEl.textContent).toBe('上下文 369k');
+      expect(contextEl.className).toBe('lens-usage-context');
+
+      fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
+      expect(streamLens.getAttribute('data-inspect')).toBe('open');
+      fireEvent.click(screen.getByTestId('lens-inspect-close'));
+      expect(streamLens.getAttribute('data-inspect')).toBe('closed');
     });
 
     it('档位条主行收敛为 进展 / Talk / All，Hooks/Tools/System 收进 Inspect 折叠组并支持展开收起', () => {

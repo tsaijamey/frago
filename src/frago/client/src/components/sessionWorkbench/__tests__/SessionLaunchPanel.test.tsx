@@ -44,6 +44,11 @@ describe('新会话启动面板', () => {
     expect(screen.getByTestId('lens-talk').textContent).toContain('对话');
     expect(screen.getByTestId('lens-all').textContent).toContain('全部');
     expect(screen.getByTestId('trail-bubble').textContent).toContain('你说');
+    // 顶部镜头栏与容器保持单行不折行语义，切换接管时不产生折行高度跳变
+    expect(screen.getByTestId('session-launch').className).toContain('streamcol');
+    const launchLens = screen.getByTestId('stream-lens');
+    expect(launchLens.className).toContain('wb-lens');
+    expect(launchLens.className).not.toContain('flex-wrap');
   });
 
   it('编号有了：第一步打勾，改等它写下第一笔', () => {

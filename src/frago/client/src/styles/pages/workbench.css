@@ -1505,14 +1505,21 @@
 .wb-lens {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px 8px;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.wb-lens::-webkit-scrollbar {
+  display: none;
 }
 
 .wb-lens-group {
-  max-width: 100%;
+  flex-shrink: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1582,14 +1589,34 @@
 
 .lens-usage {
   margin-left: auto;
+  flex: 1 1 0%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   font: 11px var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.lens-usage-model {
   min-width: 0;
-  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lens-usage-sep {
+  flex-shrink: 0;
+  white-space: pre;
+}
+
+.lens-usage-context {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Talk 过程聚合行：单行轻量内联胶囊 */
@@ -3869,6 +3896,19 @@
 }
 
 @container streamcol (max-width: 620px) {
+  .wb-lens {
+    padding-inline: 12px;
+    gap: 6px;
+  }
+
+  .wb-lens-pill {
+    padding: 0 6px;
+  }
+
+  .lens-inspect-btn {
+    padding: 0 7px;
+  }
+
   .wwrap {
     padding: 14px 14px 28px;
     gap: 14px;
@@ -3922,6 +3962,34 @@
 
   .w-runs-tbl col.col-talk {
     width: 104px !important;
+  }
+}
+
+/* 镜头栏右侧「模型名 · 上下文」窄容器阶梯降级：先平滑收起模型名（保上下文读数），
+   极窄下整段收起，绝不折成两行或顶出横向滚动条。 */
+@container streamcol (max-width: 580px) {
+  .wb-lens:not([data-inspect='open']) .lens-usage-model,
+  .wb-lens:not([data-inspect='open']) .lens-usage-sep {
+    display: none;
+  }
+}
+
+@container streamcol (max-width: 500px) {
+  .wb-lens:not([data-inspect='open']) .lens-usage {
+    display: none;
+  }
+}
+
+@container streamcol (max-width: 800px) {
+  .wb-lens[data-inspect='open'] .lens-usage-model,
+  .wb-lens[data-inspect='open'] .lens-usage-sep {
+    display: none;
+  }
+}
+
+@container streamcol (max-width: 720px) {
+  .wb-lens[data-inspect='open'] .lens-usage {
+    display: none;
   }
 }
 
