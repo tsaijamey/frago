@@ -2050,6 +2050,8 @@
       "created": "New file",
       "modified": "Modified",
       "deleted": "Deleted",
+      "directoryBadge": "Folder",
+      "backToDirectory": "Back to folder",
       "deletedHint": "This session deleted it — the file is gone, so there's nothing to open",
       "touched": "touched {{n}} times",
       "noPreview": "No preview for this one",

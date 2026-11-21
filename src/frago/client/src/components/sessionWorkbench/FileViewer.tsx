@@ -13,11 +13,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Copy,
   Check,
+  CornerLeftUp,
   FileText,
+  Folder,
   FolderOpen,
   Loader2,
   Maximize2,
@@ -25,18 +28,26 @@ import {
   Minimize2,
   Pin,
   PinOff,
+  RefreshCw,
   RotateCcw,
   Save,
   Send,
   X,
 } from 'lucide-react';
+import * as api from '@/api';
 import {
   getSessionFileContent,
   getSessionFileDiff,
   probeSessionPath,
   putSessionFileContent,
 } from '@/api';
-import type { SessionFileContent, SessionFileDiff, SessionFileRow } from '@/types/api';
+import type {
+  FileEntry,
+  FileListing,
+  SessionFileContent,
+  SessionFileDiff,
+  SessionFileRow,
+} from '@/types/api';
 import { normalizePinPath, useFilePins } from '@/stores/filePins';
 import {
   formatPackedAnnotationsPrompt,
@@ -343,6 +354,80 @@ function isAbsoluteFilePath(p: string): boolean {
   return trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\');
 }
 
+function isExplicitDirPath(p: string): boolean {
+  const trimmed = p.trim();
+  return trimmed === '/' || trimmed.endsWith('/') || trimmed.endsWith('\\');
+}
+
+function normalizeDirPath(p: string): string {
+  const trimmed = p.trim();
+  if (trimmed === '/') return '/';
+  if (/^[A-Za-z]:[\\/]?$/.test(trimmed)) return trimmed.endsWith('\\') ? trimmed : `${trimmed}/`;
+  return trimmed.replace(/[\\/]+$/, '') || '/';
+}
+
+function parentDirPath(p: string): string | null {
+  const clean = normalizeDirPath(p);
+  if (clean === '/' || /^[A-Za-z]:[\\/]?$/.test(clean)) return null;
+  const sep = clean.includes('\\') && !clean.includes('/') ? '\\' : '/';
+  const cut = clean.lastIndexOf(sep);
+  if (cut < 0) return null;
+  if (cut === 0) return '/';
+  if (sep === '\\' && /^[A-Za-z]:$/.test(clean.slice(0, cut))) return `${clean.slice(0, cut)}\\`;
+  return clean.slice(0, cut);
+}
+
+function joinDirEntry(dir: string, name: string): string {
+  const clean = normalizeDirPath(dir);
+  if (clean === '/' || clean.endsWith('\\')) return `${clean}${name}`;
+  const sep = clean.includes('\\') && !clean.includes('/') ? '\\' : '/';
+  return `${clean}${sep}${name}`;
+}
+
+function orderDirEntries(entries: FileEntry[]): FileEntry[] {
+  const rank = (entry: FileEntry) => (entry.is_dir ? 0 : 1) + (entry.name.startsWith('.') ? 2 : 0);
+  return entries
+    .map((entry, idx) => ({ entry, idx }))
+    .sort((a, b) => rank(a.entry) - rank(b.entry) || a.idx - b.idx)
+    .map(({ entry }) => entry);
+}
+
+function shortDirTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function buildDirCrumbs(dirPath: string): { label: string; path: string }[] {
+  const clean = normalizeDirPath(dirPath);
+  const homeMatch = /^(\/(?:Users|home)\/[^/]+)(?:\/(.*))?$/.exec(clean);
+  if (homeMatch) {
+    const homeRoot = homeMatch[1];
+    const rest = homeMatch[2] ?? '';
+    const out = [{ label: '~', path: homeRoot }];
+    let acc = homeRoot;
+    for (const part of rest ? rest.split('/').filter(Boolean) : []) {
+      acc += `/${part}`;
+      out.push({ label: part, path: acc });
+    }
+    return out;
+  }
+  if (clean === '/') return [{ label: '/', path: '/' }];
+  const out = [{ label: '/', path: '/' }];
+  let acc = '';
+  for (const part of clean.split('/').filter(Boolean)) {
+    acc += `/${part}`;
+    out.push({ label: part, path: acc });
+  }
+  return out;
+}
+
+function callListDirectory(dirPath: string): Promise<FileListing> | null {
+  const fn = (api as { listDirectory?: (p?: string) => Promise<FileListing> }).listDirectory;
+  return typeof fn === 'function' ? fn(dirPath) : null;
+}
+
 export default function FileViewer({
   sessionId,
   files,
@@ -364,13 +449,40 @@ export default function FileViewer({
   const toggleFilePin = useFilePins((s) => s.togglePin);
 
   const file = files[index];
+  const rawFilePath = file?.path ?? '';
+  const sourceKey = `${sessionId}\0${rawFilePath}`;
+  const [dirState, setDirState] = useState<{
+    sourceKey: string;
+    activeDir: string | null;
+    previewFile: string | null;
+    returnDir: string | null;
+  }>({
+    sourceKey,
+    activeDir: null,
+    previewFile: null,
+    returnDir: null,
+  });
+  const activeDirState =
+    dirState.sourceKey === sourceKey
+      ? dirState
+      : { sourceKey, activeDir: null, previewFile: null, returnDir: null };
+  const activeDir = activeDirState.activeDir;
+  const previewFileFromDir = activeDirState.previewFile;
+  const returnDir = activeDirState.returnDir;
+  const isDirectoryView = Boolean(activeDir && !previewFileFromDir);
+  const [dirListing, setDirListing] = useState<FileListing | null>(null);
+  const [dirLoading, setDirLoading] = useState(false);
+  const [dirError, setDirError] = useState<string | null>(null);
+  const [dirRefreshTick, setDirRefreshTick] = useState(0);
+
   const [content, setContent] = useState<SessionFileContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const path = file?.path ?? '';
+  const path = previewFileFromDir ?? rawFilePath;
+  const displayPath = isDirectoryView ? activeDir ?? rawFilePath : path;
   const pathKey = `${sessionId}\0${path}`;
   const directAbsolutePath = useMemo(
     () => (path && isAbsoluteFilePath(path) ? normalizePinPath(path) : null),
@@ -383,14 +495,23 @@ export default function FileViewer({
   } | null>(null);
   const currentProbed = probedState?.key === pathKey ? probedState : null;
   const effectivePath = directAbsolutePath ?? currentProbed?.resolved ?? null;
-  const pinTargetPath = effectivePath;
+  const pinTargetPath = isDirectoryView && activeDir ? normalizePinPath(activeDir) : effectivePath;
   const isPinned = Boolean(
     pinTargetPath && filePins.some((item) => normalizePinPath(item.path) === pinTargetPath)
   );
-  const lang = useMemo(() => langOf(path), [path]);
-  const previewKind = useMemo(() => previewKindOf(path), [path]);
-  const mediaKind = useMemo(() => mediaKindOf(path), [path]);
-  const canEdit = useMemo(() => isEditableTextFile(path), [path]);
+  const lang = useMemo(() => (isDirectoryView ? '' : langOf(path)), [isDirectoryView, path]);
+  const previewKind = useMemo(
+    () => (isDirectoryView ? null : previewKindOf(path)),
+    [isDirectoryView, path]
+  );
+  const mediaKind = useMemo(
+    () => (isDirectoryView ? null : mediaKindOf(path)),
+    [isDirectoryView, path]
+  );
+  const canEdit = useMemo(
+    () => (isDirectoryView ? false : isEditableTextFile(path)),
+    [isDirectoryView, path]
+  );
   const fileRawUrl = useCallback(
     (p: string) => `/api/file?disposition=inline&path=${encodeURIComponent(p)}`,
     []
@@ -427,31 +548,133 @@ export default function FileViewer({
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const codeContainerRef = useRef<HTMLDivElement | null>(null);
   const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const prefetchedDirRef = useRef<{ key: string; listing: FileListing } | null>(null);
   const [iframeLoadTick, setIframeLoadTick] = useState(0);
 
-  // 现取文件内容；切换文件时收起未保存的行内批注草稿，并根据是否支持文档渲染预览设置默认模式。
+  // 现取文件内容或目录列表；切换目标时收起未保存的行内批注草稿，并根据目标类型设置视图。
   useEffect(() => {
-    if (!path) return;
+    if (!rawFilePath) return;
     let alive = true;
+
+    const loadDirectory = (targetDir: string) => {
+      const normalized = normalizeDirPath(targetDir);
+      const cacheKey = `${sourceKey}\0${normalized}\0${dirRefreshTick}`;
+      setDirError(null);
+      setContent(null);
+      setError(null);
+      setLoading(false);
+      setDraftRange(null);
+      setDraftNote('');
+      setPendingSelection(null);
+      if (prefetchedDirRef.current && prefetchedDirRef.current.key === cacheKey) {
+        setDirListing(prefetchedDirRef.current.listing);
+        setDirLoading(false);
+        prefetchedDirRef.current = null;
+        return;
+      }
+      setDirListing(null);
+      setDirLoading(true);
+      const req = callListDirectory(normalized);
+      if (!req) {
+        setDirLoading(false);
+        setDirError(t('files.listFailed'));
+        return;
+      }
+      req
+        .then((listing) => {
+          if (!alive) return;
+          const resolvedDir = normalizeDirPath(listing.path || normalized);
+          const resolvedListing = { ...listing, path: resolvedDir };
+          setDirListing(resolvedListing);
+          if (resolvedDir !== normalized) {
+            prefetchedDirRef.current = {
+              key: `${sourceKey}\0${resolvedDir}\0${dirRefreshTick}`,
+              listing: resolvedListing,
+            };
+          }
+          setDirState((prev) =>
+            prev.sourceKey === sourceKey && prev.previewFile
+              ? prev
+              : { sourceKey, activeDir: resolvedDir, previewFile: null, returnDir: null }
+          );
+        })
+        .catch((e: unknown) => {
+          if (alive) setDirError(e instanceof Error ? e.message : t('files.listFailed'));
+        })
+        .finally(() => {
+          if (alive) setDirLoading(false);
+        });
+    };
+
+    if (!previewFileFromDir && activeDir) {
+      loadDirectory(activeDir);
+      return () => {
+        alive = false;
+      };
+    }
+
+    if (!previewFileFromDir && isExplicitDirPath(rawFilePath)) {
+      if (isAbsoluteFilePath(rawFilePath)) {
+        const normalized = normalizeDirPath(rawFilePath);
+        setDirState({ sourceKey, activeDir: normalized, previewFile: null, returnDir: null });
+      } else if (sessionId && typeof probeSessionPath === 'function') {
+        setDirLoading(true);
+        setDirError(null);
+        setDirListing(null);
+        probeSessionPath(sessionId, rawFilePath)
+          .then((probe) => {
+            if (!alive) return;
+            if (probe?.resolved && probe?.exists) {
+              const normalized = normalizeDirPath(probe.resolved);
+              setDirState({
+                sourceKey,
+                activeDir: normalized,
+                previewFile: null,
+                returnDir: null,
+              });
+            } else {
+              setDirLoading(false);
+              setDirError(t('files.listFailed'));
+            }
+          })
+          .catch((e: unknown) => {
+            if (alive) {
+              setDirLoading(false);
+              setDirError(e instanceof Error ? e.message : t('files.listFailed'));
+            }
+          });
+      } else {
+        setDirError(t('files.listFailed'));
+      }
+      return () => {
+        alive = false;
+      };
+    }
+
     const effectKey = `${sessionId}\0${path}`;
     const directAbsolute = isAbsoluteFilePath(path) ? normalizePinPath(path) : null;
     const shouldProbe =
       !directAbsolute && Boolean(sessionId) && typeof probeSessionPath === 'function';
-    const probePromise: Promise<string | null> = shouldProbe
+    const probePromise: Promise<{ resolved: string | null; isDir: boolean }> = shouldProbe
       ? probeSessionPath(sessionId, path)
-          .then((probe) =>
-            probe?.resolved && probe?.exists && isAbsoluteFilePath(probe.resolved)
-              ? normalizePinPath(probe.resolved)
-              : null
-          )
-          .catch(() => null)
-      : Promise.resolve(directAbsolute);
-    void probePromise.then((resolved) => {
+          .then((probe) => ({
+            resolved:
+              probe?.resolved && probe?.exists && isAbsoluteFilePath(probe.resolved)
+                ? normalizePinPath(probe.resolved)
+                : null,
+            isDir: Boolean(probe?.is_dir),
+          }))
+          .catch(() => ({ resolved: null, isDir: false }))
+      : Promise.resolve({ resolved: directAbsolute, isDir: false });
+    void probePromise.then(({ resolved }) => {
       if (alive && shouldProbe) {
         setProbedState({ key: effectKey, resolved, done: true });
       }
     });
 
+    setDirListing(null);
+    setDirError(null);
+    setDirLoading(false);
     setContent(null);
     setError(null);
     setMode(initialMode ?? (previewKindOf(path) ? 'preview' : 'file'));
@@ -472,8 +695,41 @@ export default function FileViewer({
       };
     }
     setLoading(true);
-    getSessionFileContent(sessionId, path)
-      .catch(async (err: unknown) => {
+
+    let switchedToDirectory = false;
+
+    const tryLoadAsDirectory = async (candidatePath: string): Promise<boolean> => {
+      const req = callListDirectory(normalizeDirPath(candidatePath));
+      if (!req) return false;
+      try {
+        const listing = await req;
+        if (!alive) return true;
+        switchedToDirectory = true;
+        const resolvedDir = normalizeDirPath(listing.path || candidatePath);
+        const resolvedListing = { ...listing, path: resolvedDir };
+        prefetchedDirRef.current = {
+          key: `${sourceKey}\0${resolvedDir}\0${dirRefreshTick}`,
+          listing: resolvedListing,
+        };
+        setDirListing(resolvedListing);
+        setDirState({ sourceKey, activeDir: resolvedDir, previewFile: null, returnDir: null });
+        setError(null);
+        setLoading(false);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const runFileLoad = async () => {
+      if (!previewFileFromDir && shouldProbe) {
+        const probed = await probePromise;
+        if (!alive) return;
+        if (probed.isDir && probed.resolved) {
+          if (await tryLoadAsDirectory(probed.resolved)) return;
+        }
+      }
+      const body = await getSessionFileContent(sessionId, path).catch(async (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         if (
           typeof fetch === 'function' &&
@@ -481,10 +737,15 @@ export default function FileViewer({
             msg.includes('403') ||
             msg.includes('Refused'))
         ) {
-          const fallbackPath = directAbsolute ?? (await probePromise);
+          const fallbackPath = directAbsolute ?? (await probePromise).resolved;
           if (!fallbackPath) throw err;
           const res = await fetch(fileRawUrl(fallbackPath));
-          if (!res.ok) throw err;
+          if (!res.ok) {
+            if (!previewFileFromDir && (await tryLoadAsDirectory(fallbackPath))) {
+              return null;
+            }
+            throw err;
+          }
           const rawText = await res.text();
           const isBinary = rawText.slice(0, 4096).includes('\u0000');
           return {
@@ -495,23 +756,37 @@ export default function FileViewer({
           };
         }
         throw err;
-      })
-      .then((body) => {
-        if (alive) {
-          setContent(body);
-          setEditText(body.text ?? '');
-        }
-      })
+      });
+      if (!alive || switchedToDirectory || !body) return;
+      setContent(body);
+      setEditText(body.text ?? '');
+    };
+
+    void runFileLoad()
       .catch((e: unknown) => {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
+        if (alive && !switchedToDirectory) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       })
       .finally(() => {
         if (alive) setLoading(false);
       });
+
     return () => {
       alive = false;
     };
-  }, [sessionId, path, fileRawUrl]);
+  }, [
+    sessionId,
+    rawFilePath,
+    path,
+    sourceKey,
+    activeDir,
+    previewFileFromDir,
+    dirRefreshTick,
+    fileRawUrl,
+    initialMode,
+    t,
+  ]);
 
   useEffect(
     () => () => {
@@ -522,7 +797,7 @@ export default function FileViewer({
 
   // 改动那一档：切过去才取（若刚刚在 Edit 模式保存过且服务端已随保存带回最新 diff，直接使用最新结果）。
   useEffect(() => {
-    if (mode !== 'changes' || !path) return;
+    if (isDirectoryView || mode !== 'changes' || !path) return;
     if (diff !== null) return;
     let alive = true;
     setDiffLoading(true);
@@ -600,16 +875,70 @@ export default function FileViewer({
     }
   }, [draftRange]);
 
+  const activeRevealPath = isDirectoryView
+    ? (activeDir ?? rawFilePath)
+    : (effectivePath ?? path);
+
+  const enterDirectory = useCallback(
+    (nextDir: string) => {
+      setDirState({
+        sourceKey,
+        activeDir: normalizeDirPath(nextDir),
+        previewFile: null,
+        returnDir: null,
+      });
+    },
+    [sourceKey]
+  );
+
+  const openFileFromDirectory = useCallback(
+    (targetFile: string) => {
+      const originDir = activeDir ?? (dirListing?.path ? normalizeDirPath(dirListing.path) : null);
+      setDirState({
+        sourceKey,
+        activeDir: originDir,
+        previewFile: targetFile,
+        returnDir: originDir,
+      });
+    },
+    [sourceKey, activeDir, dirListing]
+  );
+
+  const backToDirectory = useCallback(() => {
+    const target = returnDir ?? activeDir;
+    if (!target) return;
+    setDirState({
+      sourceKey,
+      activeDir: normalizeDirPath(target),
+      previewFile: null,
+      returnDir: null,
+    });
+  }, [sourceKey, returnDir, activeDir]);
+
+  const orderedDirEntries = useMemo(
+    () => (dirListing ? orderDirEntries(dirListing.entries) : []),
+    [dirListing]
+  );
+  const currentBrowseDir = dirListing?.path ?? activeDir ?? '';
+  const dirParent = useMemo(
+    () => (currentBrowseDir ? parentDirPath(currentBrowseDir) : null),
+    [currentBrowseDir]
+  );
+  const dirCrumbs = useMemo(
+    () => (currentBrowseDir ? buildDirCrumbs(currentBrowseDir) : []),
+    [currentBrowseDir]
+  );
+
   const copyPath = useCallback(() => {
     void navigator.clipboard
-      ?.writeText(effectivePath ?? path)
+      ?.writeText(activeRevealPath)
       .then(() => {
         setCopied(true);
         if (copyTimer.current) clearTimeout(copyTimer.current);
         copyTimer.current = setTimeout(() => setCopied(false), 1_500);
       })
       .catch(() => {});
-  }, [effectivePath, path]);
+  }, [activeRevealPath]);
 
   const text = content?.text ?? null;
   const html = useHighlightedHtml(text, lang);
@@ -1002,7 +1331,7 @@ export default function FileViewer({
       }`}
       role="dialog"
       aria-modal="true"
-      aria-label={baseOf(file.path)}
+      aria-label={baseOf(displayPath) || displayPath}
     >
       <div
         data-testid="file-viewer-backdrop"
@@ -1018,39 +1347,68 @@ export default function FileViewer({
           maximized
             ? 'h-full w-full rounded-none'
             : `h-[86vh] max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] rounded-[12px] ${
-                mode === 'changes' ? 'w-[92vw]' : 'w-[88vw]'
+                !isDirectoryView && mode === 'changes' ? 'w-[92vw]' : 'w-[88vw]'
               }`
         }`}
       >
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color px-3.5">
-          <FileText size={14} className="shrink-0 text-text-muted" />
+          {previewFileFromDir && returnDir ? (
+            <button
+              type="button"
+              data-testid="file-viewer-back-to-dir"
+              onClick={backToDirectory}
+              title={t('workbench.files.backToDirectory')}
+              className="inline-flex h-[24px] shrink-0 items-center gap-1 rounded-[6px] border border-border-color px-2 text-[11px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            >
+              <ArrowLeft size={12} />
+              <span>{t('workbench.files.backToDirectory')}</span>
+            </button>
+          ) : null}
+          {isDirectoryView ? (
+            <FolderOpen size={14} className="shrink-0 text-text-muted" />
+          ) : (
+            <FileText size={14} className="shrink-0 text-text-muted" />
+          )}
           <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
-            <span className="text-text-dim" title={dirOf(file.path)}>
-              {withTilde(dirOf(file.path))}
+            <span className="text-text-dim" title={dirOf(displayPath)}>
+              {withTilde(dirOf(displayPath))}
             </span>
-            <b className="ml-1 font-medium text-text-primary">{baseOf(file.path)}</b>
-            {line ? (
+            <b className="ml-1 font-medium text-text-primary">
+              {baseOf(displayPath) || displayPath}
+            </b>
+            {!isDirectoryView && !previewFileFromDir && line ? (
               <span data-testid="file-viewer-line-anchor" className="ml-1 text-text-muted">
                 #{line}
               </span>
             ) : null}
           </span>
 
-          <span
-            data-testid="file-viewer-badge"
-            className={`shrink-0 rounded-[4px] px-1.5 py-[1px] text-[11px] ${
-              FILE_BADGE[file.action].tone
-            }`}
-          >
-            {t(FILE_BADGE[file.action].label)}
-          </span>
-          {file.count > 1 ? (
-            <span className="shrink-0 font-mono text-[11px] text-text-muted">
-              {t('workbench.files.touched', { n: file.count })}
+          {isDirectoryView ? (
+            <span
+              data-testid="file-viewer-badge"
+              className="shrink-0 rounded-[4px] bg-bg-hover px-1.5 py-[1px] text-[11px] text-text-secondary"
+            >
+              {t('workbench.files.directoryBadge')}
             </span>
-          ) : null}
+          ) : (
+            <>
+              <span
+                data-testid="file-viewer-badge"
+                className={`shrink-0 rounded-[4px] px-1.5 py-[1px] text-[11px] ${
+                  FILE_BADGE[file.action].tone
+                }`}
+              >
+                {t(FILE_BADGE[file.action].label)}
+              </span>
+              {file.count > 1 && !previewFileFromDir ? (
+                <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                  {t('workbench.files.touched', { n: file.count })}
+                </span>
+              ) : null}
+            </>
+          )}
 
-          {text !== null ? (
+          {!isDirectoryView && text !== null ? (
             <span
               data-testid="file-viewer-mode"
               className="ml-1 flex shrink-0 items-center rounded-[6px] bg-bg-hover p-[2px]"
@@ -1082,7 +1440,7 @@ export default function FileViewer({
             </span>
           ) : null}
 
-          {mode !== 'edit' && hasSavedEditInSession ? (
+          {!isDirectoryView && mode !== 'edit' && hasSavedEditInSession ? (
             <button
               type="button"
               data-testid="file-viewer-edit-send"
@@ -1099,7 +1457,7 @@ export default function FileViewer({
             </button>
           ) : null}
 
-          {mode !== 'changes' && mode !== 'edit' ? (
+          {!isDirectoryView && mode !== 'changes' && mode !== 'edit' ? (
             <button
               type="button"
               data-testid="file-viewer-annotate-toggle"
@@ -1147,7 +1505,7 @@ export default function FileViewer({
               aria-label={isPinned ? t('files.unpin') : t('files.pin')}
               onClick={() => {
                 if (!pinTargetPath) return;
-                toggleFilePin({ path: pinTargetPath, is_dir: false });
+                toggleFilePin({ path: pinTargetPath, is_dir: isDirectoryView });
               }}
               className={`${iconBtn} disabled:cursor-not-allowed disabled:opacity-40 ${
                 isPinned ? 'text-text-primary' : ''
@@ -1168,7 +1526,7 @@ export default function FileViewer({
               type="button"
               data-testid="file-viewer-reveal"
               title={t('workbench.files.openFolderHint')}
-              onClick={() => onReveal(effectivePath ?? file.path)}
+              onClick={() => onReveal(activeRevealPath)}
               className={iconBtn}
             >
               <FolderOpen size={14} />
@@ -1201,9 +1559,9 @@ export default function FileViewer({
 
         <div
           className={`grid min-h-0 flex-1 tablet:grid-cols-1 ${
-            mode === 'changes'
+            !isDirectoryView && mode === 'changes'
               ? 'grid-cols-1'
-              : mode === 'edit' || !annotationsOpen
+              : isDirectoryView || mode === 'edit' || !annotationsOpen
                 ? 'grid-cols-[196px_minmax(0,1fr)]'
                 : 'grid-cols-[196px_minmax(0,1fr)_308px]'
           }`}
@@ -1211,7 +1569,7 @@ export default function FileViewer({
           {/* 左栏：会话改动文件导航（带各文件批注计数标） */}
           <div
             className={`min-h-0 overflow-auto border-r border-border-color bg-bg-secondary px-[6px] py-2 tablet:hidden ${
-              mode === 'changes' ? 'hidden' : ''
+              !isDirectoryView && mode === 'changes' ? 'hidden' : ''
             }`}
           >
             {files.map((row, i) => {
@@ -1228,7 +1586,7 @@ export default function FileViewer({
                       : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate">{baseOf(row.path)}</span>
+                  <span className="min-w-0 flex-1 truncate">{baseOf(row.path) || row.path}</span>
                   {fileAnnCount > 0 ? (
                     <span
                       data-testid="file-viewer-nav-ann-count"
@@ -1242,13 +1600,159 @@ export default function FileViewer({
             })}
           </div>
 
-          {/* 中栏：代码与行内批注区 */}
+          {/* 中栏：目录列表 / 代码与行内批注区 */}
           <div
             ref={codeContainerRef}
-            onMouseUp={mode === 'file' && text !== null ? handleCodeMouseUp : undefined}
+            onMouseUp={
+              !isDirectoryView && mode === 'file' && text !== null ? handleCodeMouseUp : undefined
+            }
             className="min-h-0 min-w-0 overflow-auto bg-bg-base"
           >
-            {mode === 'changes' ? (
+            {isDirectoryView ? (
+              <div
+                data-testid="file-viewer-directory"
+                className="flex h-full min-h-0 flex-col bg-bg-base"
+              >
+                <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-color bg-bg-secondary px-3.5 py-2">
+                  <button
+                    type="button"
+                    data-testid="file-viewer-dir-up"
+                    disabled={!dirParent || dirLoading}
+                    onClick={() => {
+                      if (dirParent) enterDirectory(dirParent);
+                    }}
+                    title={t('files.up')}
+                    className="inline-flex h-[26px] shrink-0 items-center gap-1 rounded-[6px] border border-border-color bg-bg-base px-2 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <CornerLeftUp size={13} strokeWidth={1.5} />
+                    <span>{t('files.up')}</span>
+                  </button>
+
+                  <nav
+                    data-testid="file-viewer-dir-crumbs"
+                    aria-label={currentBrowseDir}
+                    className="flex min-w-0 flex-1 flex-wrap items-center gap-1 font-mono text-[12px] text-text-secondary"
+                  >
+                    {dirCrumbs.map((crumb, idx) => {
+                      const isLast = idx === dirCrumbs.length - 1;
+                      return (
+                        <span key={crumb.path} className="inline-flex items-center gap-1">
+                          {idx > 0 ? <span className="text-text-dim">/</span> : null}
+                          <button
+                            type="button"
+                            disabled={isLast}
+                            onClick={() => enterDirectory(crumb.path)}
+                            className={`rounded-[4px] px-1 py-[1px] ${
+                              isLast
+                                ? 'cursor-default font-medium text-text-primary'
+                                : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                            }`}
+                          >
+                            {crumb.label}
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </nav>
+
+                  {dirListing ? (
+                    <span
+                      data-testid="file-viewer-dir-count"
+                      className="shrink-0 font-mono text-[11px] text-text-muted"
+                    >
+                      {t('files.counting', { n: orderedDirEntries.length })}
+                    </span>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    data-testid="file-viewer-dir-refresh"
+                    disabled={dirLoading}
+                    onClick={() => setDirRefreshTick((v) => v + 1)}
+                    title={t('files.refresh')}
+                    className={iconBtn}
+                  >
+                    <RefreshCw size={13} className={dirLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-auto p-2">
+                  {dirLoading && !dirListing ? (
+                    <p className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
+                      <Loader2 size={14} className="animate-spin" />
+                      {t('files.listing')}
+                    </p>
+                  ) : dirError ? (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center text-[12px] leading-relaxed text-text-muted">
+                      <FolderOpen size={28} strokeWidth={1.4} className="text-text-dim" />
+                      <span>{t('files.listFailed')}</span>
+                      <span className="max-w-[380px]">{dirError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setDirRefreshTick((v) => v + 1)}
+                        className="mt-1 rounded-[6px] border border-border-color px-2.5 py-1 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        {t('workbench.files.retry', { defaultValue: '重试' })}
+                      </button>
+                    </div>
+                  ) : orderedDirEntries.length === 0 ? (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center text-[12px] text-text-muted">
+                      <FolderOpen size={28} strokeWidth={1.4} className="text-text-dim" />
+                      <span>{t('files.empty')}</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col divide-y divide-border-color rounded-[8px] border border-border-color bg-bg-card">
+                      {orderedDirEntries.map((entry) => {
+                        const targetPath = joinDirEntry(currentBrowseDir, entry.name);
+                        return (
+                          <button
+                            key={targetPath}
+                            type="button"
+                            data-testid="file-viewer-dir-entry"
+                            data-entry-type={entry.is_dir ? 'dir' : 'file'}
+                            data-entry-name={entry.name}
+                            onClick={() => {
+                              if (entry.is_dir) enterDirectory(targetPath);
+                              else openFileFromDirectory(targetPath);
+                            }}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-bg-hover"
+                          >
+                            {entry.is_dir ? (
+                              <Folder
+                                size={15}
+                                strokeWidth={1.5}
+                                className="shrink-0 text-text-secondary"
+                              />
+                            ) : (
+                              <FileText
+                                size={15}
+                                strokeWidth={1.5}
+                                className="shrink-0 text-text-muted"
+                              />
+                            )}
+                            <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-text-primary">
+                              {entry.name}
+                              {entry.is_dir ? '/' : ''}
+                            </span>
+                            <span className="w-[72px] shrink-0 text-right font-mono text-[12px] text-text-muted">
+                              {entry.is_dir || entry.size === null ? '—' : humanSize(entry.size)}
+                            </span>
+                            <span className="w-[104px] shrink-0 text-right font-mono text-[12px] text-text-dim tablet:hidden">
+                              {shortDirTime(entry.modified)}
+                            </span>
+                            <ChevronRight
+                              size={14}
+                              strokeWidth={1.5}
+                              className="shrink-0 text-text-dim"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : mode === 'changes' ? (
               <FileDiff diff={diff} loading={diffLoading} error={diffError} />
             ) : mediaKind && isProbingMediaPath ? (
               <p className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
@@ -1684,7 +2188,7 @@ export default function FileViewer({
           </div>
 
           {/* 右栏：会话级批注清单、落盘溯源路径与打包填入 Composer */}
-          {mode !== 'changes' && mode !== 'edit' && annotationsOpen ? (
+          {!isDirectoryView && mode !== 'changes' && mode !== 'edit' && annotationsOpen ? (
             <aside
               data-testid="file-viewer-annotations-rail"
               className="flex min-h-0 flex-col border-l border-border-color bg-bg-secondary tablet:hidden"

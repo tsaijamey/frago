@@ -1457,6 +1457,7 @@ export interface PathProbe {
   resolved: string | null;
   exists: boolean;
   is_file: boolean;
+  is_dir?: boolean;
   /** 是文件时的字节数；否则 null。浮层拿它挡住过大的文件。 */
   size: number | null;
 }

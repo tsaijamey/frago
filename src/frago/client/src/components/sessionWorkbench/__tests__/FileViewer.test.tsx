@@ -15,6 +15,7 @@ const putSessionFileContent = vi.fn();
 const getSessionFileAnnotations = vi.fn();
 const putSessionFileAnnotations = vi.fn();
 const probeSessionPath = vi.fn();
+const listDirectory = vi.fn();
 vi.mock('@/api', () => ({
   getSessionFileContent: (sid: string, path: string) => getSessionFileContent(sid, path),
   getSessionFileDiff: (sid: string, path: string) => getSessionFileDiff(sid, path),
@@ -23,6 +24,7 @@ vi.mock('@/api', () => ({
   getSessionFileAnnotations: (sid: string) => getSessionFileAnnotations(sid),
   putSessionFileAnnotations: (sid: string, body: unknown) => putSessionFileAnnotations(sid, body),
   probeSessionPath: (sid: string, path: string) => probeSessionPath(sid, path),
+  listDirectory: (path: string) => listDirectory(path),
 }));
 
 const loadHighlighter = vi.fn();
@@ -60,7 +62,9 @@ beforeEach(() => {
   getSessionFileAnnotations.mockReset();
   putSessionFileAnnotations.mockReset();
   probeSessionPath.mockReset();
+  listDirectory.mockReset();
   loadHighlighter.mockReset();
+  listDirectory.mockResolvedValue({ path: '/w', entries: [] });
   neverHighlight();
   probeSessionPath.mockResolvedValue({
     path: '/w/src/a.py',
@@ -930,3 +934,140 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     expect(useFilePins.getState().pins).toEqual([]);
   });
 });
+
+describe('FileViewer 目录浏览与原位预览', () => {
+  it('打开以 / 结尾的 file:// 目录链接时在弹窗内列出目录项，支持子目录钻取、文件原位预览与返回目录及 Pin 目录', async () => {
+    const rootDir = '/Users/frago/.frago/data/00_下载原件-20261120/';
+    const normalizedRoot = '/Users/frago/.frago/data/00_下载原件-20261120';
+    const subDir = `${normalizedRoot}/sub`;
+    const noteFile = `${normalizedRoot}/notes.md`;
+
+    listDirectory.mockImplementation(async (dirPath: string) => {
+      if (dirPath === normalizedRoot || dirPath === rootDir) {
+        return {
+          path: normalizedRoot,
+          entries: [
+            { name: 'sub', is_dir: true, size: 0, modified: 1_753_800_000 },
+            { name: 'notes.md', is_dir: false, size: 128, modified: 1_753_800_010 },
+          ],
+        };
+      }
+      if (dirPath === subDir) {
+        return {
+          path: subDir,
+          entries: [{ name: 'deep.txt', is_dir: false, size: 16, modified: 1_753_800_020 }],
+        };
+      }
+      return { path: dirPath, entries: [] };
+    });
+
+    getSessionFileContent.mockImplementation(async (_sid: string, filePath: string) => {
+      if (filePath === noteFile) {
+        return {
+          path: noteFile,
+          size: 16,
+          text: '# 目录笔记\n\n原位预览',
+          reason: null,
+        };
+      }
+      throw new Error(`Unexpected path: ${filePath}`);
+    });
+
+    open({
+      files: [{ path: rootDir, action: 'modified', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    const dirView = await screen.findByTestId('file-viewer-directory');
+    expect(listDirectory).toHaveBeenCalledWith(normalizedRoot);
+    expect(getSessionFileContent).not.toHaveBeenCalled();
+    expect(dirView.textContent).toContain('sub');
+    expect(dirView.textContent).toContain('notes.md');
+    expect(screen.getByTestId('file-viewer-badge').textContent).toBe(
+      i18n.t('workbench.files.directoryBadge')
+    );
+
+    // Pin 目录：写入 is_dir: true
+    const pinBtn = screen.getByTestId('file-viewer-pin') as HTMLButtonElement;
+    expect(pinBtn.disabled).toBe(false);
+    fireEvent.click(pinBtn);
+    expect(useFilePins.getState().pins).toEqual([{ path: normalizedRoot, is_dir: true }]);
+
+    // 1. 点击子目录钻取，再点「返回上级」回来
+    const entries = screen.getAllByTestId('file-viewer-dir-entry');
+    fireEvent.click(entries[0]); // sub
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith(subDir));
+    expect(screen.getByTestId('file-viewer-directory').textContent).toContain('deep.txt');
+
+    fireEvent.click(screen.getByTestId('file-viewer-dir-up'));
+    await waitFor(() =>
+      expect(screen.getByTestId('file-viewer-directory').textContent).toContain('notes.md')
+    );
+
+    // 2. 点击目录内文件：原地切换为文件预览并出现「返回目录」按钮
+    const refreshedEntries = screen.getAllByTestId('file-viewer-dir-entry');
+    fireEvent.click(refreshedEntries[1]); // notes.md
+    const mdPreview = await screen.findByTestId('file-viewer-md-preview');
+    expect(mdPreview.textContent).toContain('原位预览');
+
+    const backBtn = screen.getByTestId('file-viewer-back-to-dir');
+    expect(backBtn.textContent).toContain(i18n.t('workbench.files.backToDirectory'));
+    fireEvent.click(backBtn);
+
+    await screen.findByTestId('file-viewer-directory');
+    expect(screen.getByTestId('file-viewer-directory').textContent).toContain('notes.md');
+  });
+
+  it('不带尾斜杠的绝对目录路径在 /api/file 返回非 ok 时自动回退为目录列表', async () => {
+    const absDirNoSlash = '/Users/frago/.frago/data/00_下载原件-20261120';
+    getSessionFileContent.mockRejectedValueOnce(
+      new Error(`403: Refused: ${absDirNoSlash} is not a file this session changed`)
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    listDirectory.mockResolvedValueOnce({
+      path: absDirNoSlash,
+      entries: [{ name: 'contract.pdf', is_dir: false, size: 2048, modified: 1_753_800_000 }],
+    });
+
+    open({
+      files: [{ path: absDirNoSlash, action: 'modified', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    const dirView = await screen.findByTestId('file-viewer-directory');
+    expect(listDirectory).toHaveBeenCalledWith(absDirNoSlash);
+    expect(dirView.textContent).toContain('contract.pdf');
+  });
+
+  it('相对路径经过 probeSessionPath 判定 is_dir=true 时也直接展示目录列表', async () => {
+    const relDir = '00_下载原件';
+    const resolvedDir = '/w/00_下载原件';
+    probeSessionPath.mockResolvedValueOnce({
+      path: relDir,
+      resolved: resolvedDir,
+      exists: true,
+      is_file: false,
+      is_dir: true,
+      size: null,
+    });
+    listDirectory.mockResolvedValueOnce({
+      path: resolvedDir,
+      entries: [{ name: 'brief.md', is_dir: false, size: 64, modified: 1_753_800_000 }],
+    });
+
+    open({
+      files: [{ path: relDir, action: 'modified', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    await waitFor(() => expect(probeSessionPath).toHaveBeenCalledWith('sid-1', relDir));
+    const dirView = await screen.findByTestId('file-viewer-directory');
+    expect(listDirectory).toHaveBeenCalledWith(resolvedDir);
+    expect(dirView.textContent).toContain('brief.md');
+  });
+});
+

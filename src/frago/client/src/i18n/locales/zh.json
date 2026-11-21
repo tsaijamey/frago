@@ -2050,6 +2050,8 @@
       "created": "新建",
       "modified": "改过",
       "deleted": "删掉",
+      "directoryBadge": "目录",
+      "backToDirectory": "返回目录",
       "deletedHint": "这一场把它删了，文件已经不在，点不开",
       "touched": "动过 {{n}} 次",
       "noPreview": "这一份看不了内容",
