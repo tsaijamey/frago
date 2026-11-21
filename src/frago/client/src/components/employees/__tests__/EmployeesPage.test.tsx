@@ -7,11 +7,12 @@
  */
 
 import { beforeEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import EmployeesPage from '../EmployeesPage';
 import i18n from '@/i18n';
 import { usePageStore } from '@/stores/pageStore';
 import type { EmployeePost } from '@/hooks/useEmployees';
+import { useEmployeeSessions } from '@/hooks/useEmployeeSessions';
 
 // 断言写的是中文界面上的话（页头、摘要、报错），所以先把语言钉在中文：i18n 的默认语言
 // 是英文，不切的话这些用例验的是一套没人看见的文案。
@@ -114,6 +115,7 @@ function makeDetail(over: Record<string, unknown> = {}) {
 function mockServer(handlers: {
   list?: () => Response;
   detail?: () => Response;
+  sessions?: (employeeId: string, url: string) => Response;
   create?: (body: unknown) => Response;
   update?: (body: unknown) => Response;
   sync?: () => Response;
@@ -121,6 +123,24 @@ function mockServer(handlers: {
 }) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const sessionsMatch = /\/api\/employees\/([^/?]+)\/sessions(?:\?|$)/.exec(url);
+    if (sessionsMatch && (!init?.method || init.method === 'GET')) {
+      const empId = decodeURIComponent(sessionsMatch[1]);
+      return Promise.resolve(
+        handlers.sessions?.(empId, url) ??
+          new Response(
+            JSON.stringify({
+              employee_id: empId,
+              sessions: [],
+              total: 0,
+              active_count: 0,
+              completed_count: 0,
+              has_more: false,
+            }),
+            { status: 200 }
+          )
+      );
+    }
     if (url.includes('/sync-ledger')) {
       return Promise.resolve(handlers.sync?.() ?? new Response(JSON.stringify({ added: 0 }), { status: 200 }));
     }
@@ -201,36 +221,105 @@ beforeEach(() => {
     currentPage: 'employees',
     workbenchSessionId: null,
     pendingWorkbenchLaunch: null,
+    promotedTodayIds: [],
   });
 });
 
 describe('员工页', () => {
-  it('卡片表面只有名字与一行摘要，岗位说明与目录清单不上卡片', async () => {
+  it('卡片表面只有名字与一行摘要，岗位说明与目录清单不上卡片，页头无品牌绿按钮', async () => {
     vi.stubGlobal('fetch', mockServer({}));
     const { container } = render(<EmployeesPage />);
 
-    expect(await screen.findByText('Stock 投研与策略专员')).toBeTruthy();
+    expect(await screen.findByTestId('employee-card-stock')).toBeTruthy();
     // 摘要取 description 的第一句，止于第一个句号。
-    expect(screen.getByText('专门负责股票与 ETF 全场景投研工作')).toBeTruthy();
+    expect(screen.getAllByText('专门负责股票与 ETF 全场景投研工作').length).toBeGreaterThanOrEqual(1);
     // 岗位说明原文一个字都不许出现在卡片区。
     expect(container.textContent).not.toContain('这一段是几百字的岗位说明');
     // 纳管目录也不在卡片上。
     expect(container.textContent).not.toContain('~/.frago/data/stock');
+    // 页头禁止出现实心绿按钮（仅下方上下文头栏有一颗新建会话绿按钮）。
+    expect(screen.queryByTestId('page-header-primary')).toBeNull();
+    expect(screen.getByTestId('employee-launch-btn').className).toContain('emp-btn-primary');
     vi.unstubAllGlobals();
   });
 
-  it('整卡点下去开起会话弹窗，铅笔点下去开详情弹窗，两件事不互相触发', async () => {
-    vi.stubGlobal('fetch', mockServer({}));
+  it('下方头栏新建会话与编辑岗位按钮互不触发，点击侧卡切换选中员工与名下会话', async () => {
+    const sessionCalls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        list: () =>
+          new Response(
+            JSON.stringify({
+              employees: [
+                makePost({ member_post_id: 'stock', title: 'Stock 投研与策略专员' }),
+                makePost({ member_post_id: 'ops', title: '运维专员', description: '专职系统巡检' }),
+              ],
+              total: 2,
+            }),
+            { status: 200 }
+          ),
+        sessions: (empId) => {
+          sessionCalls.push(empId);
+          return new Response(
+            JSON.stringify({
+              employee_id: empId,
+              sessions:
+                empId === 'ops'
+                  ? [
+                      {
+                        session_id: 'ops-s1',
+                        family: 'claude-code',
+                        title: '巡检磁盘告警',
+                        directory: '/tmp/ops',
+                        created_at: 1_700_000_000_000,
+                        last_active_at: 1_700_000_100_000,
+                        last_reply_at: 1_700_000_100_000,
+                        status: 'running',
+                        lifecycle_state: 'running',
+                        digest_done: '正在排查 /var/log 占比',
+                        digest_stuck: null,
+                        in_tmux: true,
+                        alive: true,
+                        has_running_worker: false,
+                        need_decision: false,
+                        employee_id: 'ops',
+                        employee_title: '运维专员',
+                        employee_color: 'ocean',
+                      },
+                    ]
+                  : [],
+              total: empId === 'ops' ? 1 : 0,
+              active_count: empId === 'ops' ? 1 : 0,
+              completed_count: 0,
+              has_more: false,
+            }),
+            { status: 200 }
+          );
+        },
+      })
+    );
     render(<EmployeesPage />);
-    const card = await screen.findByTestId('employee-card-stock');
+    expect(await screen.findByTestId('employee-card-stock')).toBeTruthy();
 
-    fireEvent.click(card);
+    // 切换点中侧卡 ops，下方名下会话面板同步更新
+    fireEvent.click(screen.getByTestId('employee-card-ops'));
+    expect(await screen.findByText('运维专员 的会话')).toBeTruthy();
+    expect(await screen.findByText('巡检磁盘告警')).toBeTruthy();
+    expect(sessionCalls).toContain('ops');
+
+    // 切回 stock，点击新建会话唯一绿按钮打开起会话窗
+    fireEvent.click(screen.getByTestId('employee-card-stock'));
+    await waitFor(() => {
+      expect(screen.getByTestId('employee-sessions-title').textContent).toContain('Stock 投研与策略专员');
+    });
+
+    fireEvent.click(screen.getByTestId('employee-launch-btn'));
     expect(await screen.findByTestId('employee-start-session')).toBeTruthy();
-    // 起会话那个窗开着时，详情窗不该也冒出来。
     expect(screen.queryByTestId('employee-save')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
-    fireEvent.click(screen.getByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    fireEvent.click(screen.getByTestId('employee-edit-btn'));
     expect(await screen.findByTestId('employee-save')).toBeTruthy();
     expect(screen.queryByTestId('employee-start-session')).toBeNull();
     vi.unstubAllGlobals();
@@ -260,7 +349,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
     fireEvent.change(await screen.findByLabelText('想让他做什么'), {
       target: { value: '看看最近的 DMA 信号' },
     });
@@ -302,7 +391,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     const start = (await screen.findByTestId('employee-start-session')) as HTMLButtonElement;
     // 人截了张图想说"看这个"，一个字没打时按钮得是灰的——先确认它确实灰着。
@@ -329,7 +418,7 @@ describe('员工页', () => {
   it('剪贴板走 items 载体或在弹窗容器内粘贴截图时，同样能贴入附件并发送', async () => {
     vi.stubGlobal('fetch', mockServer({}));
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     const toggle = await screen.findByTestId('employee-context-toggle');
     const png = new File(['fake-png-bytes'], 'clipboard-item.png', { type: 'image/png' });
@@ -365,7 +454,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
     fireEvent.change(await screen.findByLabelText('想让他做什么'), {
       target: { value: '帮我查一下体检报告' },
     });
@@ -411,7 +500,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     const folder = (await screen.findByLabelText('在哪个目录里干活')) as HTMLInputElement;
     expect(folder.value).toBe('/Users/frago/Repos/frago');
@@ -470,7 +559,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     // 从前这一档底下写的是一句"这个岗位没配目录，这一栏必须填"，人点卡片起会话先撞上一句
     // 要他去填的话——而这一栏本来就该有默认值。
@@ -490,7 +579,7 @@ describe('员工页', () => {
   it('人清空这一栏不是错，底下改成说它会用哪个目录', async () => {
     vi.stubGlobal('fetch', mockServer({}));
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     const folder = (await screen.findByLabelText('在哪个目录里干活')) as HTMLInputElement;
     fireEvent.change(folder, { target: { value: '' } });
@@ -503,7 +592,7 @@ describe('员工页', () => {
   it('语境预览平时收着一行摘要，点开才把服务端拼的那段原文摆出来', async () => {
     vi.stubGlobal('fetch', mockServer({}));
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByTestId('employee-card-stock'));
+    fireEvent.click(await screen.findByTestId('employee-launch-btn'));
 
     const toggle = await screen.findByTestId('employee-context-toggle');
     expect(toggle.textContent).toContain('1 个数据目录');
@@ -624,7 +713,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    fireEvent.click(await screen.findByTestId('employee-edit-btn'));
 
     expect(await screen.findByTestId('employee-chip-recipe-cn_stock_data_feed')).toBeTruthy();
     fireEvent.click(screen.getByTestId('employee-chip-recipe-cn_stock_data_feed-remove'));
@@ -653,7 +742,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    fireEvent.click(await screen.findByTestId('employee-edit-btn'));
     fireEvent.click(await screen.findByTestId('employee-sync-ledger'));
 
     await waitFor(() => {
@@ -683,7 +772,7 @@ describe('员工页', () => {
     const card = await screen.findByTestId('employee-card-stock');
     expect(card.getAttribute('data-emp-color')).toBe('amber');
 
-    fireEvent.click(screen.getByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    fireEvent.click(screen.getByTestId('employee-edit-btn'));
     expect(await screen.findByTestId('employee-color-picker')).toBeTruthy();
     expect(screen.getByTestId('employee-color-map-preview')).toBeTruthy();
 
@@ -731,7 +820,7 @@ describe('员工页', () => {
     );
 
     render(<EmployeesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    fireEvent.click(await screen.findByTestId('employee-edit-btn'));
 
     // 默认技能标签展示已有项
     expect(await screen.findByTestId('employee-chip-skill-git-push')).toBeTruthy();
@@ -758,7 +847,7 @@ describe('员工页', () => {
     vi.unstubAllGlobals();
   });
 
-  it('员工卡片 .stag 徽章按 active_session_ids 展示 Ready 与 N active', async () => {
+  it('员工卡片状态徽章按 session_counts 与 active_session_ids 展示待命与 N 进行中', async () => {
     vi.stubGlobal(
       'fetch',
       mockServer({
@@ -766,8 +855,13 @@ describe('员工页', () => {
           new Response(
             JSON.stringify({
               employees: [
-                makePost({ member_post_id: 'stock', active_session_ids: [] }),
-                makePost({ member_post_id: 'ops', title: '运维专员', active_session_ids: ['s1', 's2'] }),
+                makePost({ member_post_id: 'stock', active_session_ids: [], session_counts: { active: 0, total: 0 } }),
+                makePost({
+                  member_post_id: 'ops',
+                  title: '运维专员',
+                  active_session_ids: ['s1', 's2'],
+                  session_counts: { active: 2, total: 5 },
+                }),
               ],
               total: 2,
             }),
@@ -779,10 +873,199 @@ describe('员工页', () => {
     render(<EmployeesPage />);
     const stockTag = await screen.findByTestId('employee-status-tag-stock');
     const opsTag = screen.getByTestId('employee-status-tag-ops');
-    expect(stockTag.textContent).toBe('Ready');
-    expect(stockTag.className).not.toContain('stag--active');
-    expect(opsTag.textContent).toBe('2 active');
-    expect(opsTag.className).toContain('stag--active');
+    expect(stockTag.textContent).toBe('待命');
+    expect(stockTag.className).not.toContain('live');
+    expect(opsTag.textContent).toBe('2 进行中');
+    expect(opsTag.className).toContain('live');
+    expect(screen.getByText('· 共 5 场')).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it('从员工名下会话点击进入 24 小时前历史会话时同步纳入左栏可见集合并跳到工作台', async () => {
+    const oldTs = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        sessions: () =>
+          new Response(
+            JSON.stringify({
+              employee_id: 'stock',
+              sessions: [
+                {
+                  session_id: 'old-hist-sid',
+                  family: 'claude-code',
+                  title: '五天前的深度复盘',
+                  directory: '/Users/frago/Repos/frago',
+                  created_at: oldTs,
+                  last_active_at: oldTs,
+                  last_reply_at: oldTs,
+                  status: 'done',
+                  lifecycle_state: 'completed',
+                  digest_done: '已完成复盘归档',
+                  digest_stuck: null,
+                  in_tmux: false,
+                  alive: false,
+                  has_running_worker: false,
+                  need_decision: false,
+                  employee_id: 'stock',
+                  employee_title: 'Stock 投研与策略专员',
+                  employee_color: 'amber',
+                },
+              ],
+              total: 1,
+              active_count: 0,
+              completed_count: 1,
+              has_more: false,
+            }),
+            { status: 200 }
+          ),
+      })
+    );
+
+    render(<EmployeesPage />);
+    fireEvent.click(await screen.findByTestId('enter-session-old-hist-sid'));
+
+    expect(usePageStore.getState().currentPage).toBe('session_workbench');
+    expect(usePageStore.getState().workbenchSessionId).toBe('old-hist-sid');
+    expect(usePageStore.getState().promotedTodayIds).toContain('old-hist-sid');
+    vi.unstubAllGlobals();
+  });
+
+  it('下方头栏次要按钮为「岗位详情」，且刷新保留已展开的第 21+ 条分页并中止过期 loadMore', async () => {
+    const requestedUrls: string[] = [];
+    const makeList = (start: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        session_id: `s-${start + i}`,
+        family: 'claude-code',
+        title: `会话 ${start + i}`,
+        directory: '/Users/frago/Repos/frago',
+        created_at: 1_700_000_000_000 - (start + i) * 1000,
+        last_active_at: 1_700_000_000_000 - (start + i) * 1000,
+        last_reply_at: 1_700_000_000_000 - (start + i) * 1000,
+        status: 'done',
+        lifecycle_state: 'completed',
+        digest_done: '已完成',
+        digest_stuck: null,
+        in_tmux: false,
+        alive: false,
+        has_running_worker: false,
+        need_decision: false,
+        employee_id: 'stock',
+        employee_title: 'Stock 投研与策略专员',
+        employee_color: 'amber',
+      }));
+
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        sessions: (_empId, url) => {
+          requestedUrls.push(url);
+          const qs = new URL(url, 'http://localhost').searchParams;
+          const limit = Number(qs.get('limit') ?? 20);
+          const offset = Number(qs.get('offset') ?? 0);
+          const all = makeList(0, 25);
+          const slice = all.slice(offset, offset + limit);
+          return new Response(
+            JSON.stringify({
+              employee_id: 'stock',
+              sessions: slice,
+              total: 25,
+              active_count: 0,
+              completed_count: 25,
+              has_more: offset + slice.length < 25,
+            }),
+            { status: 200 }
+          );
+        },
+      })
+    );
+
+    render(<EmployeesPage />);
+    expect(await screen.findByTestId('employee-sessions-load-more')).toBeTruthy();
+    expect(screen.getByTestId('employee-edit-btn').textContent?.trim()).toBe('岗位详情');
+
+    // 展开到第 25 条
+    fireEvent.click(screen.getByTestId('employee-sessions-load-more'));
+    await waitFor(() => {
+      expect(screen.getByTestId('employee-session-row-s-24')).toBeTruthy();
+    });
+
+    // 触发刷新（模拟 30s 自动刷新调用 reloadAll），请求 limit 应保留 25 而非退回 20
+    requestedUrls.length = 0;
+    fireEvent.click(screen.getByTestId('employees-refresh-btn'));
+    await waitFor(() => {
+      expect(requestedUrls.some((u) => u.includes('limit=25&offset=0'))).toBe(true);
+    });
+    expect(screen.getByTestId('employee-session-row-s-24')).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it('useEmployeeSessions 在切换员工或卸载时 abort 正在进行的 loadMore 请求', async () => {
+    const signals: AbortSignal[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.signal) signals.push(init.signal);
+      const qs = new URL(url, 'http://localhost').searchParams;
+      const offset = Number(qs.get('offset') ?? 0);
+      if (offset > 0) {
+        return new Promise<Response>(() => {
+          // 挂起 loadMore 请求以验证 abort() 被触发
+        });
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            employee_id: 'stock',
+            sessions: [
+              {
+                session_id: 's-init',
+                family: 'claude-code',
+                title: '首条',
+                directory: '/tmp',
+                created_at: 1_700_000_000_000,
+                last_active_at: 1_700_000_000_000,
+                status: 'done',
+                lifecycle_state: 'completed',
+              },
+            ],
+            total: 2,
+            active_count: 0,
+            completed_count: 2,
+            has_more: true,
+          }),
+          { status: 200 }
+        )
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender, unmount } = renderHook(
+      ({ empId }: { empId: string }) => useEmployeeSessions(empId, 'all', 1),
+      { initialProps: { empId: 'stock' } }
+    );
+
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+    act(() => {
+      void result.current.loadMore();
+    });
+    const loadMoreSignal = signals[signals.length - 1];
+    expect(loadMoreSignal.aborted).toBe(false);
+
+    // 切换员工应立即 abort 上一个 loadMore
+    rerender({ empId: 'ops' });
+    expect(loadMoreSignal.aborted).toBe(true);
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => {
+      void result.current.loadMore();
+    });
+    const secondLoadMoreSignal = signals[signals.length - 1];
+    expect(secondLoadMoreSignal.aborted).toBe(false);
+
+    // 卸载同样应 abort 正在进行的 loadMore
+    unmount();
+    expect(secondLoadMoreSignal.aborted).toBe(true);
     vi.unstubAllGlobals();
   });
 });

@@ -1,104 +1,256 @@
 /**
- * 员工页 —— 这台机器上有哪些岗位，点一张卡片就能起一场带着他业务语境的会话。
+ * 员工页 —— 上区 3D 扑克牌选卡舞台 + 下区选中员工名下全部会话的双区驾驶舱。
  *
- * ## 页面只有一层：卡片网格
- *
- * 每张卡片表面只放四样东西：缩写、名字、一行职责、右边的编辑按钮。岗位说明与领地底账在
- * 编辑弹窗里。原型（`#teams` 的 minimal card）定下来的就是这个密度：卡片是**入口**，不是
- * 档案柜。
- *
- * ## 整卡点下去是起会话，不是进详情
- *
- * 这一页的存在理由就是「点一下就开始干活」。看详情是次要动作，所以它退到右边那颗铅笔上
- * ——两个动作各占一处，点错哪一处都还看得见另一处。
- *
- * ## 起完会话之后
- *
- * 弹窗把编号等到了才回调（要认领的那两家由它自己等），所以这里拿到的编号一定是真的。切到
- * 会话页并选中那一场，记录流由会话页自己拉——**NEVER 在这一页另起一套拉记录的路径**：同一
- * 场会话在两个地方各拉一份，两边看到的进度迟早不一样。
+ * - 页头仅承载页面级动作：状态筛选（全部 / 运行中 / 待命）+ 刷新 + 中性描边「+ 新建员工」。
+ * - 全屏唯一一颗实心品牌绿主动作按钮固定在下方选中员工上下文头栏的「+ 新建会话」。
+ * - 点击非居中卡片切换选中并实时加载名下全部会话；点击任意会话（含 24 小时前历史会话）
+ *   同步将其纳入左栏可见集合并直达 `#/sessions/<id>`。
  */
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Briefcase, Loader2, Pencil, Plus, RefreshCw } from 'lucide-react';
+import { Briefcase, Loader2, Plus, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/layout/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
 import { usePageStore } from '@/stores/pageStore';
 import { useEmployeeList, type EmployeePost } from '@/hooks/useEmployees';
+import {
+  useEmployeeSessions,
+  type EmployeeSessionFilter,
+} from '@/hooks/useEmployeeSessions';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
+import EmployeeCardDeck from './EmployeeCardDeck';
+import EmployeeSessionsPanel from './EmployeeSessionsPanel';
 import LaunchEmployeeDialog from './LaunchEmployeeDialog';
 import EmployeeDetailDialog from './EmployeeDetailDialog';
-import { employeeInitials, employeeSummary, employeeSummaryParts, resolveEmployeeColor } from './employeeMeta';
 
-/** 这一页的数据是本机磁盘上的编制，变得不快。半分钟一次够用，切回来时另有一次。 */
 const REFRESH_MS = 30_000;
+
+type EmployeeStatusFilter = 'all' | 'running' | 'standby';
+
+function employeeActiveCount(post: EmployeePost): number {
+  return post.session_counts?.active ?? post.active_session_ids?.length ?? 0;
+}
 
 export default function EmployeesPage() {
   const { t } = useTranslation();
+  const switchPage = usePageStore((s) => s.switchPage);
+  const promoteSessionToToday = usePageStore((s) => s.promoteSessionToToday);
   const launchWorkbenchSession = usePageStore((s) => s.launchWorkbenchSession);
 
-  const { employees, loading, error, reload } = useEmployeeList(true);
-  useAutoRefresh(reload, { intervalMs: REFRESH_MS });
+  const { employees, loading, error, reload: reloadEmployees } = useEmployeeList(true);
+
+  const [empFilter, setEmpFilter] = useState<EmployeeStatusFilter>('all');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sessionFilter, setSessionFilter] = useState<EmployeeSessionFilter>('all');
 
   const [launchFor, setLaunchFor] = useState<EmployeePost | null>(null);
   const [detailFor, setDetailFor] = useState<EmployeePost | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const cards = employees;
+  const firstEnterButtonRef = useRef<HTMLButtonElement>(null);
+
+  const runningCount = useMemo(
+    () => employees.filter((e) => employeeActiveCount(e) > 0).length,
+    [employees]
+  );
+  const standbyCount = Math.max(0, employees.length - runningCount);
+
+  const filteredEmployees = useMemo(() => {
+    if (empFilter === 'running') {
+      return employees.filter((e) => employeeActiveCount(e) > 0);
+    }
+    if (empFilter === 'standby') {
+      return employees.filter((e) => employeeActiveCount(e) === 0);
+    }
+    return employees;
+  }, [employees, empFilter]);
+
+  useEffect(() => {
+    if (!filteredEmployees.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !filteredEmployees.some((e) => e.member_post_id === selectedId)) {
+      setSelectedId(filteredEmployees[0].member_post_id);
+      setSessionFilter('all');
+    }
+  }, [filteredEmployees, selectedId]);
+
+  const selectedEmployee = useMemo(
+    () =>
+      filteredEmployees.find((e) => e.member_post_id === selectedId) ??
+      filteredEmployees[0] ??
+      null,
+    [filteredEmployees, selectedId]
+  );
+
+  const sessionsState = useEmployeeSessions(
+    selectedEmployee?.member_post_id ?? null,
+    sessionFilter
+  );
+
+  const reloadAll = useCallback(() => {
+    reloadEmployees();
+    sessionsState.reload();
+  }, [reloadEmployees, sessionsState]);
+
+  useAutoRefresh(reloadAll, { intervalMs: REFRESH_MS });
+
+  const handleSelectEmployee = useCallback((memberPostId: string) => {
+    setSelectedId(memberPostId);
+    setSessionFilter('all');
+  }, []);
+
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      promoteSessionToToday(sessionId);
+      switchPage('session_workbench', sessionId);
+    },
+    [promoteSessionToToday, switchPage]
+  );
+
+  const handleActivateCenter = useCallback(() => {
+    firstEnterButtonRef.current?.focus();
+  }, []);
+
+  const modalOpen = launchFor !== null || detailFor !== null || creating;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col emp-page-header">
       <PageHeader
         title={t('employees.page.title')}
-        meta={loading && !cards.length ? undefined : t('employees.page.count', { n: cards.length })}
-        secondary={
-          <button
-            type="button"
-            className="page-header-btn page-header-btn--icon"
-            onClick={reload}
-            title={t('common.refresh')}
-            aria-label={t('common.refresh')}
-          >
-            <RefreshCw size={14} strokeWidth={1.5} />
-          </button>
+        meta={
+          loading && !employees.length
+            ? undefined
+            : runningCount > 0
+              ? t('employees.page.countWithRunning', {
+                  n: employees.length,
+                  running: runningCount,
+                })
+              : t('employees.page.count', { n: employees.length })
         }
-        primary={{
-          label: t('employees.page.new'),
-          icon: <Plus size={14} strokeWidth={1.5} />,
-          onClick: () => setCreating(true),
-        }}
+        secondary={
+          <>
+            {employees.length > 0 ? (
+              <div
+                className="emp-seg"
+                role="group"
+                aria-label={t('employees.page.filterAria')}
+                data-testid="employees-status-filter"
+              >
+                <button
+                  type="button"
+                  className={`emp-seg-btn ${empFilter === 'all' ? 'on' : ''}`}
+                  data-testid="employees-filter-all"
+                  onClick={() => setEmpFilter('all')}
+                >
+                  {t('employees.page.filterAll', { n: employees.length })}
+                </button>
+                <button
+                  type="button"
+                  className={`emp-seg-btn ${empFilter === 'running' ? 'on' : ''}`}
+                  data-testid="employees-filter-running"
+                  onClick={() => setEmpFilter('running')}
+                >
+                  {t('employees.page.filterRunning', { n: runningCount })}
+                </button>
+                <button
+                  type="button"
+                  className={`emp-seg-btn ${empFilter === 'standby' ? 'on' : ''}`}
+                  data-testid="employees-filter-standby"
+                  onClick={() => setEmpFilter('standby')}
+                >
+                  {t('employees.page.filterStandby', { n: standbyCount })}
+                </button>
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              className="page-header-btn page-header-btn--icon"
+              onClick={reloadAll}
+              title={t('common.refresh')}
+              aria-label={t('common.refresh')}
+              data-testid="employees-refresh-btn"
+            >
+              <RefreshCw size={14} strokeWidth={1.5} />
+            </button>
+
+            <button
+              type="button"
+              className="page-header-btn"
+              onClick={() => setCreating(true)}
+              data-testid="new-employee-btn"
+            >
+              <Plus size={14} strokeWidth={1.5} />
+              {t('employees.page.new')}
+            </button>
+          </>
+        }
       />
 
       {error ? (
-        <div className="mx-5 mt-3 break-words rounded-[8px] bg-accent-error-10 px-3 py-2 text-[12px] text-accent-error">
+        <div
+          className="mx-5 mt-3 break-words rounded-[8px] bg-accent-error-10 px-3 py-2 text-[12px] text-accent-error"
+          data-testid="employees-error-banner"
+        >
           {t('employees.page.loadFailed', { reason: error })}
         </div>
       ) : null}
 
-      <div className="page-scroll">
-        {loading && !cards.length && !error ? (
+      <div className="emp-workspace">
+        {loading && !employees.length && !error ? (
           <p className="flex items-center gap-2 px-5 py-4 text-[13px] text-text-muted">
             <Loader2 size={14} className="cs-spin" />
             {t('common.loading')}
           </p>
-        ) : !cards.length && !error ? (
-          <EmptyState
-            Icon={Briefcase}
-            title={t('employees.page.empty')}
-            description={t('employees.page.emptyDesc')}
-          />
-        ) : (
-          <div className="grid grid-cols-1 gap-2.5 p-[18px_22px] tablet:grid-cols-2 desktop:grid-cols-2">
-            {cards.map((post) => (
-              <EmployeeCard
-                key={post.member_post_id}
-                post={post}
-                onLaunch={() => setLaunchFor(post)}
-                onEdit={() => setDetailFor(post)}
-              />
-            ))}
+        ) : !employees.length && !error ? (
+          <div className="page-scroll">
+            <EmptyState
+              Icon={Briefcase}
+              title={t('employees.page.empty')}
+              description={t('employees.page.emptyDesc')}
+            />
           </div>
+        ) : !filteredEmployees.length ? (
+          <div className="page-scroll">
+            <EmptyState
+              Icon={Briefcase}
+              title={t('employees.page.emptyFiltered')}
+              description={t('employees.page.emptyFilteredDesc')}
+            />
+          </div>
+        ) : (
+          <>
+            <EmployeeCardDeck
+              employees={filteredEmployees}
+              activeId={selectedEmployee?.member_post_id ?? null}
+              onSelect={handleSelectEmployee}
+              onActivateCenter={handleActivateCenter}
+              modalOpen={modalOpen}
+            />
+
+            <EmployeeSessionsPanel
+              employee={selectedEmployee}
+              sessions={sessionsState.sessions}
+              total={sessionsState.total}
+              activeCount={sessionsState.activeCount}
+              completedCount={sessionsState.completedCount}
+              hasMore={sessionsState.hasMore}
+              filter={sessionFilter}
+              onFilterChange={setSessionFilter}
+              loading={sessionsState.loading}
+              loadingMore={sessionsState.loadingMore}
+              error={sessionsState.error}
+              onRetry={sessionsState.reload}
+              onLoadMore={sessionsState.loadMore}
+              onEditEmployee={(post) => setDetailFor(post)}
+              onLaunchSession={(post) => setLaunchFor(post)}
+              onOpenSession={handleOpenSession}
+              firstEnterButtonRef={firstEnterButtonRef}
+            />
+          </>
         )}
       </div>
 
@@ -106,7 +258,6 @@ export default function EmployeesPage() {
         post={launchFor}
         onClose={() => setLaunchFor(null)}
         onCreated={(launch, text) => {
-          // 统一交由会话工作台的成熟启动管线（useSessionLaunch + SessionLaunchPanel + SessionRail）接管。
           launchWorkbenchSession(launch, text);
         }}
       />
@@ -118,104 +269,14 @@ export default function EmployeesPage() {
           setDetailFor(null);
           setCreating(false);
         }}
-        onSaved={reload}
-        /**
-         * 新建成功就当场换成这个员工的详情：服务端返回前已经跑完首次巡检，那份编制里带着
-         * 刚认下的资源，人不用自己再找回来。清单由 `onSaved` 那边重取，这里只管切态。
-         */
+        onSaved={reloadAll}
         onCreated={(created) => {
           setCreating(false);
           setDetailFor(created);
+          setEmpFilter('all');
+          setSelectedId(created.member_post_id);
         }}
       />
-    </div>
-  );
-}
-
-/**
- * 一张员工卡片。整卡可点，右边那颗编辑胶囊是改配置。
- *
- * 编辑那颗按钮要 `stopPropagation`：不然点它先触发整卡的起会话，人会看见两个窗一起冒出来
- * ——一个是他要的，另一个是他刚点掉的。
- */
-function EmployeeCard({
-  post,
-  onLaunch,
-  onEdit,
-}: {
-  post: EmployeePost;
-  onLaunch: () => void;
-  onEdit: () => void;
-}) {
-  const { t } = useTranslation();
-  const summaryParts = employeeSummaryParts(employeeSummary(post));
-  const empColor = resolveEmployeeColor(post.color, post.member_post_id);
-  const activeCount = post.active_session_ids?.length ?? 0;
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      /* 键盘焦点走全站同一套双环（外扩 3px + 内收 1px）。此前这里自己写了 `ring-2`，
-         它比全局那条 `:focus-visible` 更具体，于是把内收那圈顶掉了——卡片一旦落进
-         会裁剪的容器（窄屏滚动、外层 overflow），焦点环就只剩半圈。 */
-      className="emp-card mcard group focus:outline-none"
-      onClick={onLaunch}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onLaunch();
-        }
-      }}
-      title={t('employees.card.startWith', { name: post.title })}
-      data-testid={`employee-card-${post.member_post_id}`}
-      data-emp-color={empColor}
-    >
-      <span className="emp-card-badge mav">{employeeInitials(post.member_post_id)}</span>
-
-      <div className="mwho min-w-0 flex-1">
-        <div className="mnm flex items-center gap-1.5">
-          <span className="min-w-0 truncate text-[13px] font-semibold text-text-primary">
-            {post.title}
-          </span>
-          <span
-            data-testid={`employee-status-tag-${post.member_post_id}`}
-            className={activeCount > 0 ? 'stag stag--active' : 'stag'}
-          >
-            {activeCount > 0
-              ? t('employees.card.activeCount', {
-                  count: activeCount,
-                  defaultValue: `${activeCount} active`,
-                })
-              : t('employees.card.ready', { defaultValue: 'Ready' })}
-          </span>
-        </div>
-        {/* 极简密度：一句话职责单行截断，完整说明与领地细节收进弹窗。 */}
-        {summaryParts.length > 0 ? (
-          <div className="emp-card-summary mrole truncate">
-            {summaryParts.map((part, i) =>
-              part.code ? <code key={i}>{part.text}</code> : <span key={i}>{part.text}</span>,
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 编辑动作：一枚轻量动作胶囊。静置时只有一枚弱色铅笔（没有底、没有边），
-          鼠标停在卡上或键盘把焦点移进来时才长出一圈描边与底色。
-          **不用 `opacity: 0` 藏起来**：那会在卡片右边缘留一块看不见却能点的区域，
-          人想点整卡起会话，落到那里却开了详情窗。 */}
-      <button
-        type="button"
-        className="emp-card-edit medit"
-        title={t('employees.card.edit')}
-        aria-label={`${t('employees.card.edit')} ${post.title}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onEdit();
-        }}
-      >
-        <Pencil size={13} strokeWidth={1.5} />
-      </button>
     </div>
   );
 }

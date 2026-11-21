@@ -73,11 +73,17 @@ export interface PageSlice {
    * 切进 `session_workbench` 后由 `SessionWorkbenchPage` 接手交给 `useSessionLaunch`（左栏启动卡 + 中栏启动面板）。
    */
   pendingWorkbenchLaunch: { launch: PendingLaunch; text: string } | null;
+  /**
+   * 跨页点选（如员工页名下 24 小时前历史会话）豁免 `withinToday` 过滤的会话编号列表，
+   * 确保跳入工作台后左栏立刻可见并高亮聚焦，不丢失上下文。
+   */
+  promotedTodayIds: string[];
 
   switchPage: (page: PageType, id?: string) => void;
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
   applyRoute: (page: PageType, id?: string | null) => void;
   setWorkbenchSessionId: (id: string | null) => void;
+  promoteSessionToToday: (sessionId: string) => void;
   setDesktopSessionId: (id: string | null, opts?: { clearExplicit?: boolean }) => void;
   launchWorkbenchSession: (launch: PendingLaunch, text: string) => void;
   consumePendingWorkbenchLaunch: () => { launch: PendingLaunch; text: string } | null;
@@ -140,6 +146,8 @@ export const usePageStore = create<PageSlice>((set, get) => ({
   desktopExplicitSessionId: null,
   workbenchSessionId: initial.page === 'session_workbench' ? initial.id : null,
   pendingWorkbenchLaunch: null,
+  promotedTodayIds:
+    initial.page === 'session_workbench' && initial.id ? [initial.id] : [],
 
   switchPage: (page, id) => {
     const nextWorkbenchSessionId =
@@ -150,6 +158,12 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       currentPage: page,
       ...idFields(page, id),
       workbenchSessionId: nextWorkbenchSessionId,
+      promotedTodayIds:
+        page === 'session_workbench' &&
+        nextWorkbenchSessionId &&
+        !state.promotedTodayIds.includes(nextWorkbenchSessionId)
+          ? [...state.promotedTodayIds, nextWorkbenchSessionId]
+          : state.promotedTodayIds,
       desktopSessionId:
         page === 'desktop' && id !== undefined ? id || null : state.desktopSessionId,
       desktopExplicitSessionId:
@@ -170,6 +184,10 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       ...idFields(page, id),
       workbenchSessionId:
         page === 'session_workbench' ? (id ?? null) : state.workbenchSessionId,
+      promotedTodayIds:
+        page === 'session_workbench' && id && !state.promotedTodayIds.includes(id)
+          ? [...state.promotedTodayIds, id]
+          : state.promotedTodayIds,
     }));
   },
 
@@ -178,6 +196,15 @@ export const usePageStore = create<PageSlice>((set, get) => ({
     if (get().currentPage === 'session_workbench') {
       writeLocationRoute(pathForPage('session_workbench', id));
     }
+  },
+  promoteSessionToToday: (sessionId) => {
+    const clean = sessionId.trim();
+    if (!clean) return;
+    set((state) =>
+      state.promotedTodayIds.includes(clean)
+        ? state
+        : { promotedTodayIds: [...state.promotedTodayIds, clean] }
+    );
   },
   setDesktopSessionId: (id, opts) =>
     set((state) => ({

@@ -130,7 +130,11 @@ export default function SessionWorkbenchPage() {
    * 下一趟轮询才出现。
    */
   const rawToday = useSessionToday();
-  const rawPickedToday = useMemo(() => new Set(rawToday.picked), [rawToday.picked]);
+  const promotedTodayIds = usePageStore((s) => s.promotedTodayIds);
+  const rawPickedToday = useMemo(
+    () => new Set([...rawToday.picked, ...promotedTodayIds]),
+    [rawToday.picked, promotedTodayIds]
+  );
   const sessions = useWorkbenchSessions(isForYou, rawPickedToday);
   const pickedToday = useMemo(
     () => expandSessionGroupIds(sessions.sessions, rawToday.picked),

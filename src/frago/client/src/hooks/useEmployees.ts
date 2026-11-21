@@ -38,6 +38,11 @@ export interface EmployeePost {
   created_at: string;
   updated_at: string;
   last_used_at?: string | null;
+  /** 该员工名下会话统计（active: 运行中/待拍板；total: 历史与在办总会话数）。 */
+  session_counts?: {
+    active: number;
+    total: number;
+  };
   /** 清单接口顺带给的一行总览：几个槽位、每个槽位几项、合计几项。 */
   data_summary: {
     slot_count: number;
