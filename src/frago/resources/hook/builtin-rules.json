@@ -757,6 +757,16 @@
             "value": "off"
           },
           {
+            "type": "env_ne",
+            "name": "FRAGO_SESSION_ORIGIN",
+            "value": "schedule"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_UNATTENDED",
+            "value": "1"
+          },
+          {
             "type": "any_of",
             "clauses": [
               {
@@ -782,7 +792,7 @@
       "dedup_scope": "always",
       "priority": 90,
       "created_at": "2026-09-28T00:00:00",
-      "description": "Fires on every prompt in a main session (workers answer to a terminal, not the page). The decision card only appears if the agent writes the block, and a reminder given once at session start is too far from the moment the agent stops to ask; one line every turn keeps it next to that moment. The Stop-side decision-card pass pushes back any turn that waited on a pickable answer without the block."
+      "description": "Fires on every prompt in a main session (workers answer to a terminal, not the page). Excluded for unattended/schedule sessions. The decision card only appears if the agent writes the block, and a reminder given once at session start is too far from the moment the agent stops to ask; one line every turn keeps it next to that moment. The Stop-side decision-card pass pushes back any turn that waited on a pickable answer without the block."
     },
     {
       "id": "builtin-prompt-image-grid",
@@ -800,6 +810,16 @@
             "type": "env_ne",
             "name": "FRAGO_STOP_CHECK",
             "value": "off"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_SESSION_ORIGIN",
+            "value": "schedule"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_UNATTENDED",
+            "value": "1"
           },
           {
             "type": "any_of",
@@ -827,7 +847,51 @@
       "dedup_scope": "always",
       "priority": 89,
       "created_at": "2026-10-23T00:00:00",
-      "description": "Fires on every prompt in a main session alongside builtin-prompt-decision-card. Keeps `frago app image` visible at the end of multi-step rendering/screenshot turns so the agent renders an adaptive image grid card instead of falling back to bare paths or raw Markdown image links."
+      "description": "Fires on every prompt in a main session alongside builtin-prompt-decision-card. Excluded for unattended/schedule sessions. Keeps `frago app image` visible at the end of multi-step rendering/screenshot turns so the agent renders an adaptive image grid card instead of falling back to bare paths or raw Markdown image links."
+    },
+    {
+      "id": "builtin-prompt-unattended-schedule-autonomy",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "not",
+                "clause": {
+                  "type": "env_ne",
+                  "name": "FRAGO_SESSION_ORIGIN",
+                  "value": "schedule"
+                }
+              },
+              {
+                "type": "not",
+                "clause": {
+                  "type": "env_ne",
+                  "name": "FRAGO_UNATTENDED",
+                  "value": "1"
+                }
+              }
+            ]
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_ALLOW_INTERACTIVE_ASK",
+            "value": "1"
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【定时/无人值守运行守则】当前处于定时排程（schedule）或无人值守（unattended）模式，没有真人在线等待点选。严禁调用 `frago app ask`，严禁输出 `answer-needed-by-human` 交互区块或停下等待拍板。决策按三档收敛：1) 可逆、低风险、有本机先例或明确口径的小事（如归类、打标签、状态同步、补充幂等日志）直接自主执行并留痕；2) 缺失前置条件或依据不足的事项，保持原状不猜不改并记录缺口；3) 真正不可逆、高风险或超出授权边界的事项（如真删数据、大额/外发不可撤销变更）安全跳过，在回复中写入非阻塞的「待主理人确认摘要」后正常结束本轮。"
+      },
+      "dedup_scope": "always",
+      "priority": 195,
+      "created_at": "2026-11-21T00:00:00",
+      "description": "Enforces unattended schedule autonomy rules (20261008-agent-auto-decide-threshold + 20261121 cron hard guardrail): prohibits `frago app ask` and `answer-needed-by-human` blocks during schedule/unattended execution and directs three-tier convergence into non-blocking summary."
     },
     {
       "id": "builtin-prompt-file-links",

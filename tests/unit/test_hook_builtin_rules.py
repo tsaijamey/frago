@@ -488,3 +488,108 @@ def test_block_system_open_web_engine_allows_non_web_commands(
     assert hook_out.get("permissionDecision") != "deny", (
         f"Unexpected deny for {command!r}: {out!r}"
     )
+
+
+def _run_user_prompt_submit_via_frago_core_engine(
+    tmp_path: Path,
+    *,
+    prompt: str = "请处理待办清单",
+    env_overrides: dict[str, str | None] | None = None,
+) -> dict:
+    home_dir = tmp_path / "home"
+    hook_dir = home_dir / ".frago" / "hook"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    (hook_dir / "builtin-rules.json").write_text(
+        BUILTIN_RULES_PATH.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    binary = get_bundled_binary_path()
+    payload = json.dumps(
+        {
+            "session_id": f"unit-test-prompt-{uuid.uuid4().hex}",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": prompt,
+        },
+        ensure_ascii=False,
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    for k in (
+        "FRAGO_PA",
+        "FRAGO_CONV_KEY",
+        "FRAGO_AGENT_ROLE",
+        "FRAGO_SURFACE",
+        "FRAGO_STOP_CHECK",
+        "FRAGO_SESSION_ORIGIN",
+        "FRAGO_UNATTENDED",
+        "FRAGO_ALLOW_INTERACTIVE_ASK",
+    ):
+        env.pop(k, None)
+    for k, v in (env_overrides or {}).items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+
+    proc = subprocess.run(
+        [str(binary), "--engine"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
+    )
+    return json.loads(proc.stdout)
+
+
+def test_builtin_rules_schedule_unattended_prompt_rules_via_frago_core(tmp_path: Path) -> None:
+    data = _load_rules_data()
+    rules_by_id = {r["id"]: r for r in data["rules"]}
+    assert "builtin-prompt-unattended-schedule-autonomy" in rules_by_id
+    for interactive_id in ("builtin-prompt-decision-card", "builtin-prompt-image-grid"):
+        clauses = rules_by_id[interactive_id]["match"]["clauses"]
+        assert {"type": "env_ne", "name": "FRAGO_SESSION_ORIGIN", "value": "schedule"} in clauses
+        assert {"type": "env_ne", "name": "FRAGO_UNATTENDED", "value": "1"} in clauses
+
+    # 1) 正常 WebUI 主会话：注入出卡提示，不注入无人值守守则
+    webui_out = _run_user_prompt_submit_via_frago_core_engine(
+        tmp_path,
+        env_overrides={"FRAGO_SURFACE": "webui", "FRAGO_CONV_KEY": "conv-webui-1"},
+    )
+    webui_ctx = webui_out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "【要人拍板就出卡片】" in webui_ctx
+    assert "【展示图片就出网格卡】" in webui_ctx
+    assert "【定时/无人值守运行守则】" not in webui_ctx
+
+    # 2) schedule 来源：即使带着 conv_key / surface=webui，也绝不注入出卡提示，改注入无人值守守则
+    sched_out = _run_user_prompt_submit_via_frago_core_engine(
+        tmp_path,
+        env_overrides={
+            "FRAGO_SURFACE": "webui",
+            "FRAGO_CONV_KEY": "conv-sched-1",
+            "FRAGO_SESSION_ORIGIN": "schedule",
+            "FRAGO_UNATTENDED": "1",
+        },
+    )
+    sched_ctx = sched_out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "【定时/无人值守运行守则】" in sched_ctx
+    assert "严禁调用 `frago app ask`" in sched_ctx
+    assert "【要人拍板就出卡片】" not in sched_ctx
+    assert "【展示图片就出网格卡】" not in sched_ctx
+
+    # 3) 仅设 FRAGO_UNATTENDED=1 时同样生效
+    unattended_out = _run_user_prompt_submit_via_frago_core_engine(
+        tmp_path,
+        env_overrides={"FRAGO_UNATTENDED": "1", "FRAGO_CONV_KEY": "conv-unatt-1"},
+    )
+    unattended_ctx = unattended_out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "【定时/无人值守运行守则】" in unattended_ctx
+    assert "【要人拍板就出卡片】" not in unattended_ctx
+    assert "【展示图片就出网格卡】" not in unattended_ctx
