@@ -532,34 +532,34 @@
         "clauses": [
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s--(\\s|$)"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*checkout\\b[^;&|\\n]*[ \\t]--(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s\\.(\\s|$|[;&|)])"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*checkout\\b[^;&|\\n]*[ \\t]\\.(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s(-f|--force)(\\s|$)"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*checkout\\b[^;&|\\n]*[ \\t](?:-f|--force)(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\sreset\\b[^;&|\\n]*\\s--hard\\b"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*reset\\b[^;&|\\n]*[ \\t]--hard(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\sclean\\b[^;&|\\n]*\\s(-[a-zA-Z]*f|--force)"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*clean\\b[^;&|\\n]*[ \\t](?:-[a-zA-Z]*f[a-zA-Z]*|--force)(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "bash_regex",
-            "pattern": "\\bgit\\b[^;&|\\n]*\\sstash\\s+(drop|clear)\\b"
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*stash\\b[ \\t]+(?:drop|clear)(?:[ \\t\\r\\n;&|)\"'}]|$)"
           },
           {
             "type": "all_of",
             "clauses": [
               {
                 "type": "bash_regex",
-                "pattern": "\\bgit\\b[^;&|\\n]*\\srestore\\b"
+                "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*restore\\b"
               },
               {
                 "type": "any_of",
@@ -568,12 +568,12 @@
                     "type": "not",
                     "clause": {
                       "type": "bash_regex",
-                      "pattern": "\\srestore\\b[^;&|\\n]*\\s(-S|--staged)(\\s|$)"
+                      "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*restore\\b[^;&|\\n]*[ \\t](?:-S|--staged)(?:[ \\t\\r\\n;&|)\"'}]|$)"
                     }
                   },
                   {
                     "type": "bash_regex",
-                    "pattern": "\\srestore\\b[^;&|\\n]*\\s(-W|--worktree)(\\s|$)"
+                    "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?git)\\b[ \\t]+(?:(?:-(?:C|c)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?:[ \\t]+(?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")+|[^ \\t;&|\\n]+)[ \\t]+|--?[a-zA-Z0-9][a-zA-Z0-9-]*(?:=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*))?[ \\t]+)*restore\\b[^;&|\\n]*[ \\t](?:-W|--worktree)(?:[ \\t\\r\\n;&|)\"'}]|$)"
                   }
                 ]
               }
@@ -587,7 +587,7 @@
       },
       "dedup_scope": "always",
       "priority": 290,
-      "description": "why: agent 拿 checkout -- / restore / reset --hard / clean -f / stash drop 当免检的「撤回」，一并抹掉别的会话与用户没提交的改动（2026-08-31 一次 git -C ~/.frago checkout -- recipes 冲掉三个配方，两周后才被发现）。损害落在会话之外、发起方收不回，只提醒拦不住。how: 命中即否决；切分支、只撤暂存、stash / stash push / stash pop 放过。已知误拦：命令某一行里原样写着这类 git 命令（提交说明、测试脚本）；已知漏网：git show HEAD:文件 > 文件 这类间接覆盖。",
+      "description": "why: agent 拿 checkout -- / restore / reset --hard / clean -f / stash drop 当免检的「撤回」，一并抹掉别的会话与用户没提交的改动（2026-08-31 一次 git -C ~/.frago checkout -- recipes 冲掉三个配方，两周后才被发现）。损害落在会话之外、发起方收不回，只提醒拦不住。how: 命中即否决；git 须锚定命令起始位置（行首、命令分隔符/; & | ( { `、find -exec/-execdir、控制流关键字 then/do/else/elif/if/while/until/! 或子壳 bash -c/eval 之后，允许 sudo/env/xargs/eval/KEY=VAL（含 -I{}、--max-args=1、-o errexit、-- 等选项）与 git 全局选项前缀），词间仅认水平空白 [ \\t] 不跨换行，切分支、只撤暂存、stash / stash push / stash pop 及提交说明/待办正文内引用均放过。已知边界：heredoc 正文若某行顶格出现完整丢弃命令，因引擎未剥离 heredoc 正文仍会被行首锚点命中；已知漏网：git show HEAD:文件 > 文件 这类间接覆盖。",
       "created_at": "2026-09-18T00:00:00"
     },
     {
