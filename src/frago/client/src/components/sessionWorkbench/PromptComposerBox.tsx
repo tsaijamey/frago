@@ -306,14 +306,13 @@ export default function PromptComposerBox({
     const content = el.scrollHeight;
 
     if (isCompact && !isComposingRef.current) {
-      if (!forcedExpanded && !latchedExpanded && content > 32) {
+      const shouldCollapse =
+        text.length === 0 || (text.trim().length <= 10 && !text.includes('\n'));
+      if (!forcedExpanded && !latchedExpanded && !shouldCollapse && content > 32) {
         setLatchedExpanded(true);
         return;
       }
-      if (
-        latchedExpanded &&
-        (text.length === 0 || (text.trim().length <= 10 && !text.includes('\n')))
-      ) {
+      if (latchedExpanded && shouldCollapse) {
         setLatchedExpanded(false);
         return;
       }

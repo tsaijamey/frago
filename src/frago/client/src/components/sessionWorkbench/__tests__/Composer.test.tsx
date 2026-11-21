@@ -1058,4 +1058,30 @@ describe('Next Task 列表与独立投递按钮', () => {
       expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no')
     );
   });
+
+  it('空输入框 scrollHeight > 32 时 Ctrl+Enter 发送清空不触发无限重渲染（React #185 回归）', async () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight');
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get: () => 44,
+    });
+    try {
+      const onSent = vi.fn();
+      render(<Composer sessionId={SID} family="claude-code" onSent={onSent} />);
+      const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: '这是一段超过十个字的正常测试消息' } });
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
+
+      fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+      await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+      expect(input.value).toBe('');
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+    } finally {
+      if (desc) {
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', desc);
+      } else {
+        delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+      }
+    }
+  });
 });
