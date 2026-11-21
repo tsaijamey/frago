@@ -239,9 +239,12 @@ const FILE_EDIT_TOOLS = new Set([
   'multiedit',
   'notebookedit',
   'create_file',
+  'write_file',
+  'edit_file',
   'write_to_file',
   'replace_file_content',
   'multi_replace_file_content',
+  'apply_patch',
 ]);
 const VERIFY_CMD_RE =
   /\b(?:pytest|vitest|npm\s+(?:run\s+)?(?:test|build|lint|type-check)|npx\s+vitest|tsc|cargo\s+test|go\s+test|jest|playwright|ruff|mypy|uv\s+run\s+pytest)\b/i;
@@ -251,24 +254,103 @@ function countTextLines(v: unknown): number {
   return v.split(/\r?\n/).length;
 }
 
+function isAbsFilePath(p: string): boolean {
+  return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+}
+
+function joinWithSessionCwd(rawPath: string, cwd: string | null): string {
+  const clean = rawPath.trim();
+  if (!clean || !cwd || isAbsFilePath(clean) || clean.startsWith('~')) return clean;
+  const base = cwd.replace(/\/+$/, '');
+  const rel = clean.replace(/^\.\//, '');
+  return `${base}/${rel}`;
+}
+
+export function extractApplyPatchEdits(
+  patchText: string,
+  sessionCwd: string | null = null
+): Array<{ path: string; add: number; del: number }> {
+  const results: Array<{ path: string; add: number; del: number }> = [];
+  let current: { path: string; add: number; del: number; mode: 'add' | 'update' | 'delete' } | null =
+    null;
+
+  const flush = () => {
+    if (current && current.path) {
+      results.push({ path: current.path, add: current.add, del: current.del });
+    }
+    current = null;
+  };
+
+  for (const rawLine of patchText.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    const headerMatch = /^\*\*\*\s+(Add|Update|Delete) File:\s*(.+?)\s*$/.exec(line);
+    if (headerMatch) {
+      flush();
+      const action = headerMatch[1].toLowerCase() as 'add' | 'update' | 'delete';
+      const target = joinWithSessionCwd(headerMatch[2], sessionCwd);
+      current = { path: target, add: 0, del: 0, mode: action };
+      continue;
+    }
+    const moveMatch = /^\*\*\*\s+Move to:\s*(.+?)\s*$/.exec(line);
+    if (moveMatch && current) {
+      current.path = joinWithSessionCwd(moveMatch[1], sessionCwd);
+      continue;
+    }
+    if (line.startsWith('*** ')) {
+      if (line.startsWith('*** End Patch')) flush();
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      current.add += 1;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      current.del += 1;
+    } else if (current.mode === 'add' && line.length > 0 && !line.startsWith('@@')) {
+      current.add += 1;
+    }
+  }
+  flush();
+  return results;
+}
+
 function extractFileEditStats(
   toolName: string,
-  args: Record<string, unknown>
-): { path: string; add: number; del: number } | null {
-  if (!FILE_EDIT_TOOLS.has(toolName.toLowerCase())) return null;
+  args: Record<string, unknown>,
+  sessionCwd: string | null = null
+): Array<{ path: string; add: number; del: number }> {
+  const lower = toolName.toLowerCase();
+  if (!FILE_EDIT_TOOLS.has(lower)) return [];
+  if (lower === 'apply_patch') {
+    const patchText =
+      typeof args.input === 'string'
+        ? args.input
+        : typeof args.patch === 'string'
+          ? args.patch
+          : typeof args.raw === 'string'
+            ? args.raw
+            : '';
+    return patchText ? extractApplyPatchEdits(patchText, sessionCwd) : [];
+  }
   const path =
     typeof args.file_path === 'string'
       ? args.file_path
-      : typeof args.path === 'string'
-        ? args.path
-        : typeof args.TargetFile === 'string'
-          ? args.TargetFile
-          : typeof args.notebook_path === 'string'
-            ? args.notebook_path
-            : typeof args.target_file === 'string'
-              ? args.target_file
-              : '';
-  if (!path.trim()) return null;
+      : typeof args.filePath === 'string'
+        ? args.filePath
+        : typeof args.path === 'string'
+          ? args.path
+          : typeof args.TargetFile === 'string'
+            ? args.TargetFile
+            : typeof args.AbsolutePath === 'string'
+              ? args.AbsolutePath
+              : typeof args.notebook_path === 'string'
+                ? args.notebook_path
+                : typeof args.NotebookPath === 'string'
+                  ? args.NotebookPath
+                  : typeof args.target_file === 'string'
+                    ? args.target_file
+                    : '';
+  const cleanedPath = path.trim().replace(/^"(.*)"$/, '$1').trim();
+  if (!cleanedPath) return [];
   let add = 0;
   let del = 0;
   if (typeof args.new_string === 'string' || typeof args.old_string === 'string') {
@@ -288,7 +370,7 @@ function extractFileEditStats(
       }
     }
   }
-  return { path: path.trim(), add, del };
+  return [{ path: cleanedPath, add, del }];
 }
 
 function summarizeReplyConclusion(rawText: string): string {
@@ -319,7 +401,8 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   let turnInlineCardAgentIndices: number[] = [];
   let lastAgentSayIdx = -1;
   let turnContextTokens: number | null = null;
-  let turnPendingFileCalls = new Map<string, { path: string; add: number; del: number }>();
+  let sessionCwd: string | null = null;
+  let turnPendingFileCalls = new Map<string, Array<{ path: string; add: number; del: number }>>();
   let turnFileEdits = new Map<string, { add: number; del: number }>();
   let turnPendingVerifyCalls = new Map<string, string>();
   let turnLastVerifyCmd = '';
@@ -402,6 +485,14 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
 
   for (let i = 0; i < records.length; i += 1) {
     const r = records[i];
+    if (
+      !sessionCwd &&
+      r.kind === 'session.state' &&
+      typeof r.payload.cwd === 'string' &&
+      r.payload.cwd.trim()
+    ) {
+      sessionCwd = r.payload.cwd.trim();
+    }
     if (!r.agent_path.length) {
       const isHumanTurnBoundary =
         r.kind === 'user.say' ||
@@ -441,16 +532,19 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
           r.payload.args && typeof r.payload.args === 'object' && !Array.isArray(r.payload.args)
             ? (r.payload.args as Record<string, unknown>)
             : {};
-        const fileEdit = extractFileEditStats(toolName, args);
-        if (fileEdit) {
+        const fileEdits = extractFileEditStats(toolName, args, sessionCwd);
+        if (fileEdits.length > 0) {
           if (callId) {
-            turnPendingFileCalls.set(callId, fileEdit);
+            const existing = turnPendingFileCalls.get(callId) ?? [];
+            turnPendingFileCalls.set(callId, [...existing, ...fileEdits]);
           } else {
-            const cur = turnFileEdits.get(fileEdit.path) ?? { add: 0, del: 0 };
-            turnFileEdits.set(fileEdit.path, {
-              add: cur.add + fileEdit.add,
-              del: cur.del + fileEdit.del,
-            });
+            for (const fileEdit of fileEdits) {
+              const cur = turnFileEdits.get(fileEdit.path) ?? { add: 0, del: 0 };
+              turnFileEdits.set(fileEdit.path, {
+                add: cur.add + fileEdit.add,
+                del: cur.del + fileEdit.del,
+              });
+            }
           }
         }
         const cmd =
@@ -472,13 +566,15 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         const callId = typeof r.payload.call_id === 'string' ? r.payload.call_id : '';
         const status = typeof r.payload.status === 'string' ? r.payload.status : '';
         if (callId && status !== 'error' && status !== 'denied') {
-          const pendingEdit = turnPendingFileCalls.get(callId);
-          if (pendingEdit) {
-            const cur = turnFileEdits.get(pendingEdit.path) ?? { add: 0, del: 0 };
-            turnFileEdits.set(pendingEdit.path, {
-              add: cur.add + pendingEdit.add,
-              del: cur.del + pendingEdit.del,
-            });
+          const pendingEdits = turnPendingFileCalls.get(callId);
+          if (pendingEdits && pendingEdits.length > 0) {
+            for (const pendingEdit of pendingEdits) {
+              const cur = turnFileEdits.get(pendingEdit.path) ?? { add: 0, del: 0 };
+              turnFileEdits.set(pendingEdit.path, {
+                add: cur.add + pendingEdit.add,
+                del: cur.del + pendingEdit.del,
+              });
+            }
             turnPendingFileCalls.delete(callId);
           }
           const pendingVerify = turnPendingVerifyCalls.get(callId);
