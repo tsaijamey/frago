@@ -42,16 +42,29 @@ interface MarkdownContentProps {
  * 这里保留 `file://` 地址交由链接组件拦截，其余协议照旧走默认白名单。
  */
 export function markdownUrlTransform(value: string): string {
-  if (/^file:\/\//i.test(value)) return value;
+  const trimmed = value.trim();
+  if (/^file:\/\//i.test(trimmed)) return trimmed;
   return defaultUrlTransform(value);
+}
+
+function safeDecodeUri(raw: string): string {
+  return raw.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
+    try {
+      return decodeURIComponent(seq);
+    } catch {
+      return seq;
+    }
+  });
 }
 
 /**
  * 从 `file://` 链接里拆出本地文件路径与可选的行号锚点（`#L84`、`#L314-L368` 或末尾 `:42`）。
  */
 export function parseFileUrl(href: string | undefined): FileLinkTarget | null {
-  if (!href || !/^file:\/\//i.test(href)) return null;
-  let rest = href.replace(/^file:\/\/(?:localhost)?/i, '');
+  if (!href) return null;
+  const trimmed = href.trim();
+  if (!/^file:\/\//i.test(trimmed)) return null;
+  let rest = trimmed.replace(/^file:\/\/(?:localhost)?/i, '');
   let hash = '';
   const hashIdx = rest.indexOf('#');
   if (hashIdx !== -1) {
@@ -62,11 +75,7 @@ export function parseFileUrl(href: string | undefined): FileLinkTarget | null {
   if (queryIdx !== -1) {
     rest = rest.slice(0, queryIdx);
   }
-  try {
-    rest = decodeURIComponent(rest);
-  } catch {
-    // 百分号编码不完整时保留原串
-  }
+  rest = safeDecodeUri(rest);
   if (/^\/[A-Za-z]:[\\/]/.test(rest)) {
     rest = rest.slice(1);
   }
@@ -93,17 +102,21 @@ function MarkdownLink({
   ...props
 }: ComponentPropsWithoutRef<'a'> & { node?: unknown }) {
   const onFileLink = useContext(FileLinkContext);
-  const { node: _node, ...rest } = props;
+  const { node: _node, className, ...rest } = props;
   const fileTarget = parseFileUrl(href);
   if (fileTarget) {
     const hint = fileTarget.line ? `${fileTarget.path}#${fileTarget.line}` : fileTarget.path;
+    const isDirHint = fileTarget.path.endsWith('/') || fileTarget.path.endsWith('\\');
+    const mergedClass = ['markdown-file-link', className].filter(Boolean).join(' ');
     return (
       <a
         href={href}
         data-file-path={fileTarget.path}
         data-file-line={fileTarget.line}
+        data-file-dir={isDirHint ? 'true' : undefined}
         title={rest.title ?? hint}
         {...rest}
+        className={mergedClass}
         onClick={(e) => {
           onClick?.(e);
           e.preventDefault();
@@ -115,7 +128,14 @@ function MarkdownLink({
     );
   }
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} {...rest}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onClick}
+      className={className}
+      {...rest}
+    >
       {children}
     </a>
   );

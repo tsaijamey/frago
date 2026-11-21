@@ -106,6 +106,50 @@ describe('MarkdownContent — file:// 本地文件链接', () => {
     expect(link, '点击 https 链接不走本地文件回调').toBeTruthy();
     fireEvent.click(link);
   });
+
+  it('支持中文、%20 空格、括号、孤立百分号及目录末尾斜杠 file:// 链接并挂上 markdown-file-link 类', () => {
+    expect(
+      parseFileUrl('file:///Users/frago/My%20Docs/00_%E4%B8%8B%E8%BD%BD(v1)/')
+    ).toEqual({
+      path: '/Users/frago/My Docs/00_下载(v1)/',
+      line: undefined,
+    });
+
+    // 含孤立 % 字符时不因 decodeURIComponent 抛异常而放弃解码 %20
+    expect(parseFileUrl('file:///Users/frago/100%%20Done/notes.md#L5')).toEqual({
+      path: '/Users/frago/100% Done/notes.md',
+      line: 'L5',
+    });
+
+    const onFileLink = vi.fn();
+    render(
+      <FileLinkContext.Provider value={onFileLink}>
+        <MarkdownContent
+          content={
+            '目录：[00_下载原件/](file:///Users/frago/.frago/data/test%20dir/00_%E4%B8%8B%E8%BD%BD%E5%8E%9F%E4%BB%B6/) 和代码 [`x.ts`](file:///Users/frago/x.ts)'
+          }
+        />
+      </FileLinkContext.Provider>
+    );
+
+    const dirLink = screen.getByRole('link', { name: '00_下载原件/' });
+    expect(dirLink.className).toContain('markdown-file-link');
+    expect(dirLink.getAttribute('data-file-dir')).toBe('true');
+    expect(dirLink.getAttribute('data-file-path')).toBe(
+      '/Users/frago/.frago/data/test dir/00_下载原件/'
+    );
+
+    const codeLink = screen.getByRole('link', { name: 'x.ts' });
+    expect(codeLink.className).toContain('markdown-file-link');
+    expect(codeLink.getAttribute('data-file-dir')).toBeNull();
+    expect(codeLink.querySelector('code.inline-code')).not.toBeNull();
+
+    fireEvent.click(dirLink);
+    expect(onFileLink).toHaveBeenCalledWith({
+      path: '/Users/frago/.frago/data/test dir/00_下载原件/',
+      line: undefined,
+    });
+  });
 });
 
 describe('MarkdownContent — 表格单元格内 <br> 换行', () => {

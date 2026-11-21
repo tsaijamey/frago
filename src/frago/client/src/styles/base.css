@@ -2839,11 +2839,22 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .markdown-content a {
   color: var(--accent-primary);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: auto;
+  cursor: pointer;
 }
 
 .markdown-content a:hover {
   color: color-mix(in srgb, var(--accent-primary) 85%, white);
+  text-decoration-thickness: 2px;
+}
+
+.markdown-content a.markdown-file-link code.inline-code {
+  color: var(--accent-primary);
+  text-decoration: inherit;
 }
 
 .markdown-content hr {
