@@ -14,8 +14,21 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from frago.cli.ask_commands import ask_group
+from frago.cli.agent_friendly import BusinessError
+from frago.cli.ask_commands import ask_group, validate_and_build_component
 from frago.server.services import schedule_pending as sp
+
+
+@pytest.fixture(autouse=True)
+def _clean_unattended_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """隔离运行测试的宿主环境变量（例如测试本身跑在 worker 会话中）。"""
+    for key in (
+        "FRAGO_SESSION_ORIGIN",
+        "FRAGO_UNATTENDED",
+        "FRAGO_AGENT_ROLE",
+        "FRAGO_ALLOW_INTERACTIVE_ASK",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 class TestAskSingleChoice:
@@ -424,3 +437,97 @@ class TestSchedulePendingIntegration:
         assert card["question"] == "是否绑定 SIT 现有物理表 rtm_data？"
         assert card["options"] == ["绑定 rtm_data", "预留切换能力"]
         assert card["recommended"] == "绑定 rtm_data"
+
+
+class TestUnattendedAskGuard:
+    @pytest.mark.parametrize(
+        ("env_name", "env_value"),
+        [
+            ("FRAGO_SESSION_ORIGIN", "schedule"),
+            ("FRAGO_UNATTENDED", "1"),
+            ("FRAGO_AGENT_ROLE", "worker"),
+        ],
+    )
+    def test_unattended_modes_block_decision_card(
+        self, monkeypatch: pytest.MonkeyPatch, env_name: str, env_value: str
+    ) -> None:
+        monkeypatch.setenv(env_name, env_value)
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            [
+                "single-choice",
+                "-q",
+                "要不要删除这些旧待办？",
+                "-o",
+                "A|删掉|永久删除",
+                "-o",
+                "B|保留|原样留存",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "frago_ui_component" not in res.output
+        assert "严禁调用 `frago app ask` 生成阻塞交互卡片" in res.output
+        assert f"{env_name}={env_value}" in res.output
+        assert "待主理人确认摘要" in res.output
+        assert "严禁手写 answer-needed-by-human" in res.output
+
+    def test_unattended_mode_blocks_group_and_unknown_subcommand_and_direct_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FRAGO_SESSION_ORIGIN", "schedule")
+        runner = CliRunner()
+        res_empty = runner.invoke(ask_group, [])
+        assert res_empty.exit_code != 0
+        assert "FRAGO_SESSION_ORIGIN=schedule" in res_empty.output
+
+        res_unknown = runner.invoke(ask_group, ["unknown-card"])
+        assert res_unknown.exit_code != 0
+        assert "FRAGO_SESSION_ORIGIN=schedule" in res_unknown.output
+
+        with pytest.raises(BusinessError) as exc_info:
+            validate_and_build_component(
+                component_type="text-answer",
+                question="请确认",
+                why=None,
+                options_raw=(),
+                recommended=(),
+                irreversible=(),
+                draft=None,
+                suggestions=(),
+                multi=False,
+                from_teammate=False,
+                request=None,
+                changes=None,
+            )
+        assert "FRAGO_SESSION_ORIGIN=schedule" in exc_info.value.format_message()
+
+    def test_help_still_works_under_unattended_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FRAGO_SESSION_ORIGIN", "schedule")
+        monkeypatch.setenv("FRAGO_UNATTENDED", "1")
+        runner = CliRunner()
+        res = runner.invoke(ask_group, ["single-choice", "--help"])
+        assert res.exit_code == 0
+        assert "KEY 是短标识" in res.output
+
+    def test_explicit_allow_flag_overrides_unattended_guard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FRAGO_SESSION_ORIGIN", "schedule")
+        monkeypatch.setenv("FRAGO_UNATTENDED", "1")
+        monkeypatch.setenv("FRAGO_ALLOW_INTERACTIVE_ASK", "1")
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            [
+                "single-choice",
+                "-q",
+                "显式放行测试",
+                "-o",
+                "A|继续|执行动作",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        assert json.loads(res.output)["frago_ui_component"] == "decision-card"

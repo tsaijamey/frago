@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 from typing import Any
 
@@ -118,12 +119,45 @@ def _overview_fixes() -> list[str]:
     ]
 
 
+def _check_unattended_ask_guard() -> None:
+    """无人值守 / 定时排程 / worker 模式下物理阻断 `frago app ask` 出卡。
+
+    除非调用方显式设置了 ``FRAGO_ALLOW_INTERACTIVE_ASK=1``，否则当检测到：
+    - ``FRAGO_SESSION_ORIGIN == "schedule"``
+    - ``FRAGO_UNATTENDED == "1"``
+    - ``FRAGO_AGENT_ROLE == "worker"``
+    任意一项时立即拒绝生成 ``decision-card`` 并抛出带非阻塞指引的 ``BusinessError``。
+    """
+    if os.environ.get("FRAGO_ALLOW_INTERACTIVE_ASK", "").strip() == "1":
+        return
+
+    reasons: list[str] = []
+    if os.environ.get("FRAGO_SESSION_ORIGIN", "").strip() == "schedule":
+        reasons.append("FRAGO_SESSION_ORIGIN=schedule")
+    if os.environ.get("FRAGO_UNATTENDED", "").strip() == "1":
+        reasons.append("FRAGO_UNATTENDED=1")
+    if os.environ.get("FRAGO_AGENT_ROLE", "").strip() == "worker":
+        reasons.append("FRAGO_AGENT_ROLE=worker")
+
+    if not reasons:
+        return
+
+    raise BusinessError(
+        f"当前处于无人值守/后台执行模式（{', '.join(reasons)}），严禁调用 `frago app ask` 生成阻塞交互卡片（decision-card）。",
+        "可逆、低风险且有本机先例或明确口径的小事（如归类、打标签、状态同步、幂等日志）：直接自主收敛执行并留痕，不要停下等待点选。",
+        "缺失前置条件或依据不足的事项：保持原状不猜不改，并在本轮汇报中记录缺口与已查事实。",
+        "真正不可逆、高风险或超出授权边界的事项（如真删数据、外部不可撤回变更）：安全跳过执行，将「待主理人确认摘要」写入非阻塞汇报后正常结束本轮；严禁手写 answer-needed-by-human 代码块。",
+    )
+
+
 class AskGroup(click.Group):
     """按组件类型分流的命令组：缺子命令或写错子命令名时直接报非零退出码并给 4 种组件入口。"""
 
     def resolve_command(
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, click.Command | None, list[str]]:
+        if not ctx.resilient_parsing and args and "--help" not in args and "-h" not in args:
+            _check_unattended_ask_guard()
         cmd_name = args[0] if args else None
         if cmd_name:
             cmd = self.get_command(ctx, cmd_name)
@@ -148,6 +182,9 @@ class AskComponentCommand(click.Command):
         parent: Context | None = None,
         **extra: Any,
     ) -> Context:
+        resilient = bool(parent.resilient_parsing) if parent is not None else False
+        if not resilient and "--help" not in args and "-h" not in args:
+            _check_unattended_ask_guard()
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.NoSuchOption as e:
@@ -304,6 +341,7 @@ def validate_and_build_component(
     changes: str | None,
 ) -> dict[str, Any]:
     """按组件类型校验所有输入参数，生成前端 UI 交互组件所需的结构化数据。"""
+    _check_unattended_ask_guard()
     if component_type not in COMPONENT_TYPES:
         raise BusinessError(
             f"未知的交互组件类型 '{component_type}'。可用组件类型只有 4 种：{', '.join(COMPONENT_TYPES)}。",
@@ -580,6 +618,7 @@ def ask_group(ctx: Context) -> None:
     若参数缺失或格式有误，命令会直接返回非零退出码并给出对应组件类型的正确调用示例。
     """
     if ctx.invoked_subcommand is None:
+        _check_unattended_ask_guard()
         click.echo(
             "Error: 请指定要生成的交互组件类型（single-choice / multi-choice / text-answer / choice-and-text）。",
             err=True,
