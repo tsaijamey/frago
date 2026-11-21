@@ -1,0 +1,64 @@
+name: CI Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-tests:
+    name: Frontend Tests (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/frago/client
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: src/frago/client/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Type-check frontend
+        run: npm run type-check
+
+      - name: Run Vitest unit tests
+        run: npm test
+
+  backend-tests:
+    name: Backend Tests (Pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run backend unit and architecture tests
+        run: uv run --no-sync pytest --no-cov tests/unit tests/arch -m "not perf"
