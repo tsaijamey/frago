@@ -650,6 +650,15 @@ def _run_worker_turn_sync(
             k, v = item.split("=", 1)
             run_env[k] = v
     run_env.setdefault("FRAGO_AGENT_ROLE", "worker")
+    for inherit_key in (
+        "FRAGO_SESSION_ORIGIN",
+        "FRAGO_UNATTENDED",
+        "FRAGO_STOP_CHECK",
+        "FRAGO_REVIEW",
+    ):
+        inherit_val = os.environ.get(inherit_key)
+        if inherit_val is not None and inherit_val.strip():
+            run_env.setdefault(inherit_key, inherit_val.strip())
     effective_timeout = float(timeout) if timeout and timeout > 0 else None
 
     if runs_on_kernel(agent_type):
@@ -1191,6 +1200,15 @@ def agent_run(
         tmux_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
     # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
     tmux_env["FRAGO_AGENT_ROLE"] = "worker"
+    for inherit_key in (
+        "FRAGO_SESSION_ORIGIN",
+        "FRAGO_UNATTENDED",
+        "FRAGO_STOP_CHECK",
+        "FRAGO_REVIEW",
+    ):
+        inherit_val = os.environ.get(inherit_key)
+        if inherit_val is not None and inherit_val.strip():
+            tmux_env.setdefault(inherit_key, inherit_val.strip())
 
     from frago.session.async_dispatch import (
         dispatch_worker_turn_async,

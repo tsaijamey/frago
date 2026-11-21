@@ -537,6 +537,26 @@ class TestRelationKinds:
         )
         assert not session_origin.LAUNCH_LEDGER.exists()
 
+
+class TestScheduleOrigin:
+    def test_ontology_schedule_origin_recognized_without_falling_back_to_human(
+        self, ledger, empty_projects
+    ):
+        from frago.session.service import SessionOntologyService
+
+        store = session_origin.get_default_session_store()
+        SessionOntologyService(store).launch_agent_session(
+            session_id="core_schedule_demo_001",
+            agent_kernel_id="coreagent",
+            origin="schedule",
+            initial_prompt="定时巡检",
+            is_worker=False,
+            cwd="/tmp",
+        )
+        index = _index(empty_projects)
+        assert index.origin_of("core_schedule_demo_001") == "schedule"
+        assert not index.is_worker("core_schedule_demo_001")
+
     def test_记完立刻看得见_不等进程内那份过期(self, ledger, empty_projects):
         session_origin.load_origin_index(projects_root=empty_projects)
         child = str(uuid.uuid4())

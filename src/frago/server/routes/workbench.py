@@ -275,12 +275,16 @@ def _session_needs_decision(
     callback_queued: bool,
     now_ms: int,
     slots_need_decision: bool | None = None,
+    origin: str | None = None,
+    is_local_ops: bool = False,
 ) -> bool:
     """判定会话此刻是否真正存在等待人类拍板的未决事项。"""
+    resolved_origin = origin if origin is not None else getattr(card, "origin", "human")
     if (
         has_running_worker
         or callback_queued
-        or getattr(card, "origin", "human") == "worker"
+        or resolved_origin in {"worker", "schedule"}
+        or is_local_ops
         or status == "error"
     ):
         return False
@@ -547,6 +551,14 @@ async def collect_workbench_session_rows(
             if all_tasks_done and status != "running":
                 has_running_worker = False
                 callback_queued = False
+            onto_rec = onto_by_sid.get(card.session_id)
+            is_local_ops = card.session_id in local_ops_ids
+            effective_origin = getattr(card, "origin", "human")
+            if effective_origin != "worker" and (
+                (onto_rec is not None and onto_rec.origin == "schedule")
+                or (is_local_ops and effective_origin == "human")
+            ):
+                effective_origin = "schedule"
             need_decision = _session_needs_decision(
                 card,
                 status=status,
@@ -555,6 +567,8 @@ async def collect_workbench_session_rows(
                 callback_queued=callback_queued,
                 now_ms=now_ms,
                 slots_need_decision=slots_need_decision,
+                origin=effective_origin,
+                is_local_ops=is_local_ops,
             )
             card_data = asdict(card)
             card_data.pop("last_kind", None)
@@ -569,6 +583,7 @@ async def collect_workbench_session_rows(
             )
             row = {
                 **card_data,
+                "origin": effective_origin,
                 "status": status,
                 "digest_stuck": card.digest_stuck if status == "error" else None,
                 "lifecycle_state": lifecycle_state or (
@@ -584,7 +599,7 @@ async def collect_workbench_session_rows(
                 "in_tmux": alive,
                 "tmux_name": name if alive else None,
                 "alive": is_alive,
-                "local_ops": card.session_id in local_ops_ids,
+                "local_ops": is_local_ops,
                 "has_running_worker": has_running_worker,
                 "callback_queued": callback_queued,
                 "need_decision": need_decision,

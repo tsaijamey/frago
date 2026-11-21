@@ -587,6 +587,8 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
             rec = onto_by_sid.get(card.session_id)
             alive = liveness.get(card.session_id) if liveness is not None else None
             age_s = max(0.0, now_s - (card.last_active_at / 1000.0))
+            if rec is not None and rec.origin == "schedule" and card.origin != "worker":
+                card.origin = "schedule"
             if not card.employee_id and rec is not None and rec.employee_id:
                 card.employee_id = rec.employee_id
             # 新轮次已启动或转录明确处于非错误进行中状态时，不得被前序遗留的 error 状态压死

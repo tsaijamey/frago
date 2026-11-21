@@ -177,6 +177,14 @@ class TestCommandExecution:
         b = ex.execute_command("echo same", timeout=30)
         assert a.digest == b.digest
 
+    def test_execute_command_injects_schedule_unattended_env(self):
+        r = ex.execute_command(
+            "python3 -c 'import os; print(os.environ.get(\"FRAGO_SESSION_ORIGIN\"), os.environ.get(\"FRAGO_UNATTENDED\"))'",
+            timeout=30,
+        )
+        assert r.ok is True
+        assert r.stdout == "schedule 1"
+
 
 # --- 投递落点 ---------------------------------------------------------------
 
@@ -220,22 +228,41 @@ class TestPromptViaCoreAgent:
 
     @pytest.fixture
     def core(self, tmp_path, monkeypatch):
+        from frago.session import service as session_service_mod
+        from frago.session import store as session_store_mod
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
         binary = tmp_path / "frago-core"
         binary.write_text("")
         monkeypatch.setattr("frago.init.hook_binary.get_hook_deploy_dir", lambda: tmp_path)
         monkeypatch.setattr("frago.init.hook_binary.get_binary_name", lambda: "frago-core")
+
+        store = SessionOntologyStore(
+            tmp_path / "session-ontology-store.json",
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store)
+        monkeypatch.setattr(session_store_mod, "_DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr(session_service_mod, "_DEFAULT_SESSION_SERVICE", svc)
+        monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
         calls = []
+        envs = []
 
         def install(stdout="", returncode=0, stderr=""):
             import subprocess
 
-            def fake_run(cmd, **_kw):
+            def fake_run(cmd, **kw):
                 calls.append(cmd)
+                envs.append(kw.get("env") or {})
                 return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
             monkeypatch.setattr(ex.subprocess, "run", fake_run)
 
         install.calls = calls
+        install.envs = envs
+        install.store = store
         install.workdir = tmp_path
         return install
 
@@ -278,6 +305,30 @@ class TestPromptViaCoreAgent:
         core('{"type":"final","ok":true,"text":"  "}\n')
         out = ex.execute_prompt("x", 60)
         assert not out.ok and "答案是空的" in out.error
+
+    def test_execute_prompt_injects_unattended_env_and_registers_schedule_origin(self, core):
+        core('{"type":"final","ok":true,"text":"done"}\n')
+        out = ex.execute_prompt("定时清理", 60, title="事务清理")
+        assert out.ok is True
+        env = core.envs[0]
+        assert env["FRAGO_SESSION_ORIGIN"] == "schedule"
+        assert env["FRAGO_UNATTENDED"] == "1"
+        assert env["FRAGO_STOP_CHECK"] == "off"
+        assert env["FRAGO_REVIEW"] == "off"
+        records = core.store.list_all()
+        assert len(records) == 1
+        assert records[0].origin == "schedule"
+        assert records[0].is_worker is False
+        assert records[0].lifecycle_state == "completed"
+
+    def test_execute_prompt_failure_marks_schedule_ontology_error(self, core):
+        core('{"type":"final","ok":false,"text":"","error_kind":"max_rounds","error":"boom"}\n', returncode=1)
+        out = ex.execute_prompt("定时失败", 60, title="失败探针")
+        assert out.ok is False
+        records = core.store.list_all()
+        assert len(records) == 1
+        assert records[0].origin == "schedule"
+        assert records[0].lifecycle_state == "error"
 
     def test_空答案被判失败时原因带出来(self, core):
         core('{"type":"final","ok":false,"text":"","error_kind":"empty_answer","error":"模型这一轮既没有文字也没有工具调用"}\n', returncode=1)

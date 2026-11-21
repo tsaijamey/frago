@@ -171,8 +171,11 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
     shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
 
     # 为捕获命令可能拉起的会话编号（如 frago employee invoke / frago agent），准备专用回传文件
+    # 并统一注入定时无人值守来源上下文，避免跨员工或脚本边界后丢失。
     session_file: Path | None = None
     env = dict(os.environ)
+    env["FRAGO_SESSION_ORIGIN"] = "schedule"
+    env["FRAGO_UNATTENDED"] = "1"
     try:
         fd, tmp_path = tempfile.mkstemp(prefix="frago_schedule_sid_", suffix=".txt")
         os.close(fd)
@@ -250,6 +253,28 @@ def previous_block(sections: list[str]) -> str:
     return f"{head}\n\n{body}\n\n—— 以上是上一趟 —— 下面是这一次的任务：\n"
 
 
+def _terminate_schedule_session(
+    onto_svc: Any,
+    session_id: str,
+    *,
+    ok: bool,
+    summary: str | None = None,
+) -> None:
+    """将已登记的定时任务本体会话收口到终态（completed / error）。"""
+    if onto_svc is None:
+        return
+    try:
+        onto_svc.terminate_agent_session(
+            session_id=session_id,
+            terminal_status="completed" if ok else "error",
+            summary=summary,
+        )
+    except Exception:  # noqa: BLE001 — 本体状态收口失败不应覆盖执行结果
+        logger.debug(
+            "定时任务会话 %s 本体状态收口失败", session_id, exc_info=True
+        )
+
+
 def execute_prompt(
     prompt: str,
     timeout: int,
@@ -294,6 +319,8 @@ def execute_prompt(
     from frago.server.services import coreagent_runner
 
     session_id = coreagent_runner.start_local_ops(title or "定时任务")
+    workdir = cwd or str(Path.home())
+    onto_svc: Any = None
     try:
         from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
 
@@ -301,13 +328,32 @@ def execute_prompt(
         if not binary.exists():
             return RunOutcome(ok=False, kind="prompt", error="frago-core 还没装好（~/.frago/bin 下找不到）")
 
+        try:
+            from frago.session.service import get_default_session_service
+
+            onto_svc = get_default_session_service()
+            onto_svc.launch_agent_session(
+                session_id=session_id,
+                agent_kernel_id="coreagent",
+                origin="schedule",
+                initial_prompt=prompt,
+                is_worker=False,
+                cwd=workdir,
+            )
+        except Exception:  # noqa: BLE001 — 本体记账失败不应阻断定时任务调度执行
+            onto_svc = None
+            logger.debug(
+                "为定时任务会话 %s 登记 SessionOntology(origin=schedule) 失败",
+                session_id,
+                exc_info=True,
+            )
+
         cmd = [
             str(binary), "--mode", "agent", "--output-format", "json",
             "--timeout", str(timeout), "--prompt", prompt,
             "--session-id", session_id,
             "--title", title or "定时任务",
         ]
-        workdir = cwd or str(Path.home())
         cmd += ["--cwd", workdir]
         if instructions:
             cmd += ["--instructions", instructions]
@@ -318,18 +364,27 @@ def execute_prompt(
 
         from frago.server.services.subprocess_utils import get_utf8_env
 
+        proc_env = get_utf8_env()
+        proc_env["FRAGO_SESSION_ORIGIN"] = "schedule"
+        proc_env["FRAGO_UNATTENDED"] = "1"
+        proc_env["FRAGO_STOP_CHECK"] = "off"
+        proc_env["FRAGO_REVIEW"] = "off"
+
         # CoreAgent 自己按 --timeout 收场并交出那一行结论；这里多等一分钟只是兜底，
         # 防的是它连收场都做不到。
         proc = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout + 60, cwd=workdir, env=get_utf8_env(),
+            timeout=timeout + 60, cwd=workdir, env=proc_env,
         )
     except subprocess.TimeoutExpired:
+        err_msg = f"CoreAgent 超时（{timeout}s 未结束）"
+        _terminate_schedule_session(onto_svc, session_id, ok=False, summary=err_msg)
         return RunOutcome(
-            ok=False, kind="prompt", error=f"CoreAgent 超时（{timeout}s 未结束）",
+            ok=False, kind="prompt", error=err_msg,
             duration_ms=int((time.monotonic() - started) * 1000), session_id=session_id,
         )
     except Exception as e:  # noqa: BLE001
+        _terminate_schedule_session(onto_svc, session_id, ok=False, summary=str(e)[:500])
         return RunOutcome(
             ok=False, kind="prompt", error=str(e),
             duration_ms=int((time.monotonic() - started) * 1000), session_id=session_id,
@@ -339,9 +394,11 @@ def execute_prompt(
     final = _last_final_line(proc.stdout or "")
     if final is None:
         detail = (proc.stderr or "").strip().splitlines()
+        err_msg = (detail[-1] if detail else f"CoreAgent 没交结论，退出码 {proc.returncode}")[:NOTIFY_EXCERPT_LIMIT]
+        _terminate_schedule_session(onto_svc, session_id, ok=False, summary=err_msg)
         return RunOutcome(
             ok=False, kind="prompt", exit_code=proc.returncode, stderr=proc.stderr or "",
-            error=(detail[-1] if detail else f"CoreAgent 没交结论，退出码 {proc.returncode}")[:NOTIFY_EXCERPT_LIMIT],
+            error=err_msg,
             duration_ms=duration, session_id=session_id,
         )
 
@@ -352,6 +409,13 @@ def execute_prompt(
     if ok and not text:
         ok = False
         final = {**final, "error": "CoreAgent 报了成功，但答案是空的——当作没办完"}
+    err_msg = "" if ok else str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完")[:NOTIFY_EXCERPT_LIMIT]
+    _terminate_schedule_session(
+        onto_svc,
+        session_id,
+        ok=ok,
+        summary=(text[:240] if ok else err_msg),
+    )
     return RunOutcome(
         ok=ok,
         kind="prompt",
@@ -359,7 +423,7 @@ def execute_prompt(
         stdout=text,
         stderr=proc.stderr or "",
         duration_ms=duration,
-        error="" if ok else str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完")[:NOTIFY_EXCERPT_LIMIT],
+        error=err_msg,
         digest=_digest(text),
         payload=final,
         session_id=session_id,

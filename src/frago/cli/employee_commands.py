@@ -519,6 +519,48 @@ def _launch_employee_session(
     }
 
 
+_UNATTENDED_INHERIT_ENV_KEYS: tuple[str, ...] = (
+    "FRAGO_SESSION_ORIGIN",
+    "FRAGO_UNATTENDED",
+    "FRAGO_STOP_CHECK",
+    "FRAGO_REVIEW",
+)
+
+
+def _inherit_unattended_env(env: dict[str, str]) -> dict[str, str]:
+    """若父环境带有定时排程/无人值守上下文，原样透传给员工与派生子进程。"""
+    for key in _UNATTENDED_INHERIT_ENV_KEYS:
+        val = os.environ.get(key)
+        if val is not None and val.strip():
+            env.setdefault(key, val.strip())
+    return env
+
+
+def _register_schedule_origin_if_needed(session_id: str, agent_kernel: str) -> None:
+    """在定时排程来源下为员工会话补齐 SessionOntologyService(origin='schedule') 登记。"""
+    if os.environ.get("FRAGO_SESSION_ORIGIN", "").strip().lower() != "schedule":
+        return
+    clean_sid = str(session_id or "").strip()
+    if not clean_sid:
+        return
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if (
+            onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            onto_svc.ensure_managed_session(
+                clean_sid,
+                agent_kernel_id=agent_kernel,
+                origin="schedule",
+            )
+
+
 def _run_agent_turn_for_employee(
     agent_kernel: str,
     prompt: str,
@@ -544,6 +586,8 @@ def _run_agent_turn_for_employee(
         env = {"FRAGO_AGENT_ROLE": "employee", "FRAGO_SESSION_ID": sid}
         if emp_id:
             env["FRAGO_EMPLOYEE_ID"] = emp_id
+        _inherit_unattended_env(env)
+        _register_schedule_origin_if_needed(sid, agent_kernel)
         turn = kernel_backend.run_turn(
             prompt,
             session_id=sid,
@@ -560,6 +604,7 @@ def _run_agent_turn_for_employee(
     env = {"FRAGO_AGENT_ROLE": "employee"}
     if emp_id:
         env["FRAGO_EMPLOYEE_ID"] = emp_id
+    _inherit_unattended_env(env)
     res = SessionLauncher().run(
         prompt,
         agent_type=agent_kernel,
@@ -579,6 +624,7 @@ def _run_agent_turn_for_employee(
         resolved = listed_session_id(agent_kernel, sid, native_session_id=native_flag)
         if resolved:
             real_sid = resolved
+    _register_schedule_origin_if_needed(real_sid, agent_kernel)
     return real_sid, str(res.status or "ok"), str(res.text or "").strip()
 
 

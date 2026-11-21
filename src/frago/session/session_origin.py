@@ -102,10 +102,9 @@ __all__ = [
     "record_relation",
 ]
 
-# 出身两档，没有第三档。"说不准"那一档看着诚实，实际上界面拿它没办法——一行卡片要么
-# 折进 worker 堆里，要么留在主干上，中间态最后还是要落到这两个里的一个。判不出来就是
-# ``human``，理由见模块开头。
-SessionOrigin = Literal["human", "worker"]
+# 出身三档：人自己开的、frago 派出去的 worker、以及定时排程（schedule）。
+# 判不出来仍一律落到 ``human``，理由见模块开头。
+SessionOrigin = Literal["human", "worker", "schedule"]
 
 # 子会话是怎么从父会话里出来的。见模块开头「关系种类」。
 RelationKind = Literal["dispatch", "branch", "handoff"]
@@ -940,6 +939,9 @@ class OriginIndex:
     relations: dict[str, SessionRelation] = field(default_factory=dict)
     """子会话编号 → 它作为子会话的种类与收口状态。账本里的按各自种类，扫描认出的一律算派活。"""
 
+    schedules: frozenset[str] = field(default_factory=frozenset)
+    """本体存储中显式登记为 ``origin='schedule'`` 的定时排程会话编号集合。"""
+
     def parent_of(self, session_id: str) -> str | None:
         return self.parents.get(session_id)
 
@@ -949,12 +951,14 @@ class OriginIndex:
     def origin_of(self, session_id: str) -> SessionOrigin:
         """这场会话是谁开的。
 
-        账上记为派活的是 worker；记为分支的是人开的——它是人亲自在谈的一场，只是从别的
-        会话里分出来。其余再看扫描有没有认出它被派过、编号形状像不像派生的，都不命中就是
-        人开的。
+        账上记为派活的是 worker；本体存储登记为 ``schedule`` 的是定时排程；
+        记为分支的是人开的——它是人亲自在谈的一场，只是从别的会话里分出来。
+        其余再看扫描有没有认出它被派过、编号形状像不像派生的，都不命中就是人开的。
         """
         if session_id in self.workers:
             return "worker"
+        if session_id in self.schedules:
+            return "schedule"
         relation = self.relations.get(session_id)
         if relation is not None and relation.kind in ("branch", "handoff"):
             return "human"
@@ -981,7 +985,28 @@ def _ledger_stamp() -> tuple[float, int] | None:
     return (stat.st_mtime, stat.st_size)
 
 
-_memo: tuple[float, OriginIndex, tuple[float, int] | None] | None = None
+def _store_schedule_ids() -> frozenset[str]:
+    """从会话本体存储中提取已登记为 ``origin='schedule'`` 的会话编号集合。"""
+    with contextlib.suppress(Exception):
+        store = get_default_session_store()
+        return frozenset(
+            rec.session_id
+            for rec in store.list_all()
+            if rec.session_id and rec.origin == "schedule" and not rec.is_worker
+        )
+    return frozenset()
+
+
+def _index_stamp() -> tuple[tuple[float, int] | None, tuple[int, int, int] | None]:
+    """合并关系账本与会话本体存储的文件指纹，任一改动均立即刷新内存缓存。"""
+    store_sig = None
+    with contextlib.suppress(Exception):
+        store = get_default_session_store()
+        store_sig = store._file_sig(store.store_path)
+    return (_ledger_stamp(), store_sig)
+
+
+_memo: tuple[float, OriginIndex, tuple[tuple[float, int] | None, tuple[int, int, int] | None]] | None = None
 
 
 def load_origin_index(
@@ -997,7 +1022,7 @@ def load_origin_index(
     """
     global _memo
     clock = _now() if now is None else now
-    stamp = _ledger_stamp()
+    stamp = _index_stamp()
     if (
         use_memo
         and _memo is not None
@@ -1007,6 +1032,7 @@ def load_origin_index(
         return _memo[1]
 
     parents, workers, relations = _ledger_pairs()
+    schedules = _store_schedule_ids()
     # 账本记的是当场看见的事实，扫描是事后从记录里捞的；两边都说了话时以账本为准。
     scanned = _scanned_pairs(projects_root or CLAUDE_PROJECTS_DIR, now=clock)
     merged = dict(scanned)
@@ -1014,7 +1040,12 @@ def load_origin_index(
     # 扫描认出的关系一律算派活（判据只认派活留下的痕迹）。
     merged_relations = {child: SessionRelation(kind="dispatch") for child in scanned}
     merged_relations.update(relations)
-    index = OriginIndex(parents=merged, workers=frozenset(workers), relations=merged_relations)
+    index = OriginIndex(
+        parents=merged,
+        workers=frozenset(workers),
+        relations=merged_relations,
+        schedules=schedules,
+    )
     if use_memo:
         _memo = (clock, index, stamp)
     return index

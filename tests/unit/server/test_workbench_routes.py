@@ -180,7 +180,8 @@ class TestSessionList:
         详情页的两条取数通道共用这一条判据，判成死的就等于页面停在发出那句话的那一刻
         （2026-10-08 修）。所以 ``alive`` 必须比 ``in_tmux`` 宽出这一格。
         """
-        from frago.server.services import coreagent_runner, tmux_sessions_service as tsvc
+        from frago.server.services import coreagent_runner
+        from frago.server.services import tmux_sessions_service as tsvc
 
         monkeypatch.setattr(
             record_reader,
@@ -206,7 +207,8 @@ class TestSessionList:
         from pathlib import Path
 
         from frago.server.routes import workbench as wb_route
-        from frago.server.services import coreagent_runner, session_observer, tmux_sessions_service as tsvc
+        from frago.server.services import coreagent_runner, session_observer
+        from frago.server.services import tmux_sessions_service as tsvc
         from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
 
         wb_route._OBSERVER_DECISION_CACHE.clear()
@@ -361,7 +363,8 @@ class TestSessionList:
         from pathlib import Path
 
         from frago.server.routes import workbench as wb_route
-        from frago.server.services import coreagent_runner, session_observer, tmux_sessions_service as tsvc
+        from frago.server.services import coreagent_runner, session_observer
+        from frago.server.services import tmux_sessions_service as tsvc
         from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
 
         wb_route._OBSERVER_DECISION_CACHE.clear()
@@ -573,7 +576,8 @@ class TestSessionList:
 
     def test_coreagent那一场收摊了就不算活着(self, client, monkeypatch):
         """空闲回收掉、真正关掉的那一场回落成不盯——省资源的本意不变。"""
-        from frago.server.services import coreagent_runner, tmux_sessions_service as tsvc
+        from frago.server.services import coreagent_runner
+        from frago.server.services import tmux_sessions_service as tsvc
 
         monkeypatch.setattr(
             record_reader, "list_sessions", lambda: [_card(CORE_SID, "coreagent", 3000)]
@@ -619,6 +623,56 @@ class TestSessionList:
         response = client.get("/api/workbench/sessions")
         assert response.status_code == 200
         assert response.json() == []
+
+    def test_schedule_origin_never_marks_need_decision_true(self, client, monkeypatch, tmp_path):
+        """定时任务会话（origin='schedule' 或 local_ops）绝不标成 need_decision=True 幽灵挂起。"""
+        from frago.server.routes import workbench as wb_route
+        from frago.session import service as session_service_mod
+        from frago.session import store as session_store_mod
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        wb_route._OBSERVER_DECISION_CACHE.clear()
+        wb_route._TRAILING_CARD_CACHE.clear()
+
+        store = SessionOntologyStore(
+            tmp_path / "session-ontology-store.json",
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store)
+        svc.launch_agent_session(
+            session_id=CORE_SID,
+            agent_kernel_id="coreagent",
+            origin="schedule",
+            initial_prompt="定时梳理",
+            is_worker=False,
+            cwd=str(tmp_path),
+        )
+        monkeypatch.setattr(session_store_mod, "_DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr(session_service_mod, "_DEFAULT_SESSION_SERVICE", svc)
+        monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+        card = _card(CORE_SID, "coreagent", 3000)
+        card.origin = "schedule"
+        assert wb_route._session_needs_decision(
+            card,
+            status="idle",
+            is_alive=False,
+            has_running_worker=False,
+            callback_queued=False,
+            now_ms=9_999_999,
+            slots_need_decision=True,
+        ) is False
+
+        # 即使 card.origin 仍为 human，本体登记 origin='schedule' 也会在行构建中归位为 schedule 且 need_decision=False
+        raw_card = _card(CORE_SID, "coreagent", 3000)
+        monkeypatch.setattr(record_reader, "list_sessions", lambda: [raw_card])
+        monkeypatch.setattr(wb_route, "_observer_slots_state", lambda _sid, _fam: (True, False))
+
+        rows = client.get("/api/workbench/sessions").json()
+        assert len(rows) == 1
+        assert rows[0]["origin"] == "schedule"
+        assert rows[0]["need_decision"] is False
 
 
 class TestRecords:
