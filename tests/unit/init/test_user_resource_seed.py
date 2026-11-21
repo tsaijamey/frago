@@ -339,3 +339,35 @@ def test_coreagents_instructions_ship_and_are_laid_down(tmp_path):
     assert (pkg_files("frago.resources") / "coreagent" / "command-audit.md").is_file()
     seed_user_resources(tmp_path)
     assert (tmp_path / "coreagent" / "command-audit.md").is_file()
+
+
+def test_agent_disciplines_ships_irrelevant_hook_silence_rule_and_seeds(tmp_path):
+    """The packaged agent-disciplines.md must instruct silent ignoring of
+    irrelevant hook additionalContext pushes, preserve the constitution copy,
+    and seed cleanly to a fresh home directory."""
+    from importlib.resources import files as pkg_files
+
+    from frago.init.user_resource_seed import seed_user_resources
+
+    res = pkg_files("frago.resources")
+    disciplines_src = res / "agent-disciplines.md"
+    constitution_src = res / "constitution.md"
+    assert disciplines_src.is_file()
+
+    text = disciplines_src.read_text(encoding="utf-8")
+    assert "additionalContext" in text
+    assert "备查知识" in text
+    assert "静默忽略" in text
+    assert "禁止在回复里向用户声明或解释" in text
+
+    constitution_marker = "## 宪法正文（~/.frago/constitution.md 的副本，同步更新）"
+    assert constitution_marker in text
+    copied_constitution = text.split(constitution_marker, 1)[1].strip()
+    assert copied_constitution == constitution_src.read_text(encoding="utf-8").strip()
+
+    report = seed_user_resources(tmp_path)
+    seeded = tmp_path / "agent-disciplines.md"
+    assert seeded.is_file()
+    assert str(seeded) in report.written
+    assert seeded.read_text(encoding="utf-8") == text
+    assert read_manifest(tmp_path)["files"]["agent-disciplines.md"] == digest(text)

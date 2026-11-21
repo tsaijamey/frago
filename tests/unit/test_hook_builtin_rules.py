@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -102,8 +103,55 @@ def test_builtin_rules_json_valid_and_preserves_other_rules() -> None:
     assert data["version"] == 1
     rules_by_id = {r["id"]: r for r in data["rules"]}
     assert RULE_ID in rules_by_id
-    # Protect uncommitted rules added concurrently in the workspace
-    assert "builtin-prompt-file-links" in rules_by_id
+    assert "builtin-session-start-irrelevant-hook-silence" in rules_by_id
+
+
+def test_session_start_injects_irrelevant_hook_silence_rule_via_frago_core(tmp_path: Path) -> None:
+    """SessionStart on an isolated HOME must deliver the irrelevant-hook silence
+    rule in hookSpecificOutput.additionalContext for main agents across kernels."""
+    home_dir = tmp_path / "home"
+    hook_dir = home_dir / ".frago" / "hook"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    (hook_dir / "builtin-rules.json").write_text(
+        BUILTIN_RULES_PATH.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    binary = get_bundled_binary_path()
+    payload = json.dumps(
+        {
+            "session_id": f"unit-test-session-start-{uuid.uuid4().hex}",
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+        },
+        ensure_ascii=False,
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env.pop("FRAGO_PA", None)
+    env.pop("FRAGO_CONV_KEY", None)
+    env.pop("FRAGO_AGENT_ROLE", None)
+    proc = subprocess.run(
+        [str(binary), "--engine"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
+    )
+    out = json.loads(proc.stdout)
+    ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "无关钩子提示静默忽略" in ctx
+    assert "additionalContext" in ctx
+    assert "备查知识" in ctx
+    assert "静默忽略" in ctx
+    assert "禁止在回复里声明或解释该提示无关" in ctx
 
 
 def test_discard_worktree_deny_all_bash_regex_clauses_share_identical_prefix() -> None:

@@ -290,6 +290,22 @@
       "description": "无干净工具钩子（贯穿整个会话的表述纪律），故常驻。普适规则：违反它产生的是客观混乱而非口味问题，所以进 builtin 而非 userdir。迁移自 CLAUDE.md「你必须保持上下文的表述与行为一致」。"
     },
     {
+      "id": "builtin-session-start-irrelevant-hook-silence",
+      "source": "builtin",
+      "event": "SessionStart",
+      "match": {
+        "type": "always"
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【无关钩子提示静默忽略 MUST】钩子推送的补充提示（additionalContext）属备查知识，命中率非 100%；与当前任务无关时直接静默忽略，禁止在回复里声明或解释该提示无关。"
+      },
+      "dedup_scope": "session",
+      "priority": 86,
+      "created_at": "2026-11-21T00:00:00",
+      "description": "待办 20260627-hook-context-guidance-stop：Hook 按规则推送的 additionalContext 属备查知识，未命中当前任务时应直接静默忽略，禁止在回复里向用户声明或解释该提示无关。"
+    },
+    {
       "id": "builtin-session-start-worker-role",
       "source": "builtin",
       "event": "SessionStart",
