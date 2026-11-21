@@ -61,10 +61,11 @@
     - "自动化流程"
     - "重复操作"
   topics:
-    - recipe-spec-writing
     - recipe-creation
+    - must-recipe-data
     - recipe-fields
     - recipe-authoring
+    - recipe-spec-writing
     - recipe-execution
     - browser-usage
     - interactive-recipe
