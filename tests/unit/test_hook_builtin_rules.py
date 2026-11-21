@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILTIN_RULES_PATH = REPO_ROOT / "src" / "frago" / "resources" / "hook" / "builtin-rules.json"
 RULE_ID = "builtin-bash-git-discard-worktree-deny"
 OPEN_WEB_RULE_ID = "builtin-bash-block-system-open-web"
+OPEN_WEB_MAIN_RULE_ID = "builtin-bash-redirect-system-open-web-main"
 
 
 def _load_rules_data() -> dict:
@@ -30,7 +31,7 @@ def _get_rule(rule_id: str) -> dict:
     raise KeyError(rule_id)
 
 
-def _eval_bash_clause(clause: dict, command: str) -> bool:
+def _eval_bash_clause(clause: dict, command: str, env: dict[str, str] | None = None) -> bool:
     ctype = clause["type"]
     if ctype == "bash_regex":
         return re.search(clause["pattern"], command) is not None
@@ -38,16 +39,25 @@ def _eval_bash_clause(clause: dict, command: str) -> bool:
         return clause["value"] in command
     if ctype == "bash_contains_all":
         return all(v in command for v in clause["values"])
+    if ctype == "env_exists":
+        return clause["name"] in (env or {})
+    if ctype == "env_ne":
+        return (env or {}).get(clause["name"]) != clause["value"]
     if ctype == "any_of":
-        return any(_eval_bash_clause(c, command) for c in clause["clauses"])
+        return any(_eval_bash_clause(c, command, env) for c in clause["clauses"])
     if ctype == "all_of":
-        return all(_eval_bash_clause(c, command) for c in clause["clauses"])
+        return all(_eval_bash_clause(c, command, env) for c in clause["clauses"])
     if ctype == "not":
-        return not _eval_bash_clause(clause["clause"], command)
+        return not _eval_bash_clause(clause["clause"], command, env)
     raise ValueError(f"Unsupported clause type in Python evaluator: {ctype}")
 
 
-def _match_via_frago_core(tmp_path: Path, commands: list[str]) -> list[list[str]]:
+def _match_via_frago_core(
+    tmp_path: Path,
+    commands: list[str],
+    *,
+    agent_role: str | None = None,
+) -> list[list[str]]:
     home_dir = tmp_path / "home"
     hook_dir = home_dir / ".frago" / "hook"
     hook_dir.mkdir(parents=True, exist_ok=True)
@@ -55,12 +65,14 @@ def _match_via_frago_core(tmp_path: Path, commands: list[str]) -> list[list[str]
         BUILTIN_RULES_PATH.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     binary = get_bundled_binary_path()
     payload = "\n".join(
         json.dumps(
             {
-                "session_id": "unit-test",
+                "session_id": f"unit-test-{uuid.uuid4().hex}",
                 "hook_event_name": "PreToolUse",
                 "tool_name": "Bash",
                 "tool_input": {"command": cmd},
@@ -71,6 +83,15 @@ def _match_via_frago_core(tmp_path: Path, commands: list[str]) -> list[list[str]
     )
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env.pop("FRAGO_PA", None)
+    env.pop("FRAGO_CONV_KEY", None)
+    if agent_role is None:
+        env.pop("FRAGO_AGENT_ROLE", None)
+    else:
+        env["FRAGO_AGENT_ROLE"] = agent_role
     proc = subprocess.run(
         [str(binary), "--match-only"],
         input=payload + "\n",
@@ -105,15 +126,25 @@ def test_builtin_rules_json_valid_and_preserves_other_rules() -> None:
     rules_by_id = {r["id"]: r for r in data["rules"]}
     assert RULE_ID in rules_by_id
     assert OPEN_WEB_RULE_ID in rules_by_id
+    assert OPEN_WEB_MAIN_RULE_ID in rules_by_id
     assert rules_by_id[OPEN_WEB_RULE_ID]["event"] == "PreToolUse"
     assert rules_by_id[OPEN_WEB_RULE_ID]["action"]["type"] == "deny_tool_call"
     assert "frago browser" in rules_by_id[OPEN_WEB_RULE_ID]["action"]["reason"]
+    assert rules_by_id[OPEN_WEB_MAIN_RULE_ID]["event"] == "PreToolUse"
+    assert rules_by_id[OPEN_WEB_MAIN_RULE_ID]["action"]["type"] == "inject_literal"
+    assert "frago browser" in rules_by_id[OPEN_WEB_MAIN_RULE_ID]["action"]["text"]
+    assert _collect_bash_regex_patterns(rules_by_id[OPEN_WEB_RULE_ID]["match"]) == _collect_bash_regex_patterns(
+        rules_by_id[OPEN_WEB_MAIN_RULE_ID]["match"]
+    ), "Worker hard-deny and main soft-guidance must share identical target and -R/-t exclusion regexes"
     assert "builtin-session-start-irrelevant-hook-silence" in rules_by_id
 
 
-def test_session_start_injects_irrelevant_hook_silence_rule_via_frago_core(tmp_path: Path) -> None:
-    """SessionStart on an isolated HOME must deliver the irrelevant-hook silence
-    rule in hookSpecificOutput.additionalContext for main agents across kernels."""
+def _run_session_start_via_frago_core(
+    tmp_path: Path,
+    *,
+    harness: str | None = None,
+    env_overrides: dict[str, str | None] | None = None,
+) -> dict:
     home_dir = tmp_path / "home"
     hook_dir = home_dir / ".frago" / "hook"
     hook_dir.mkdir(parents=True, exist_ok=True)
@@ -141,8 +172,17 @@ def test_session_start_injects_irrelevant_hook_silence_rule_via_frago_core(tmp_p
     env.pop("FRAGO_PA", None)
     env.pop("FRAGO_CONV_KEY", None)
     env.pop("FRAGO_AGENT_ROLE", None)
+    for k, v in (env_overrides or {}).items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+
+    cmd = [str(binary), "--engine"]
+    if harness:
+        cmd.extend(["--harness", harness])
     proc = subprocess.run(
-        [str(binary), "--engine"],
+        cmd,
         input=payload,
         capture_output=True,
         text=True,
@@ -150,13 +190,42 @@ def test_session_start_injects_irrelevant_hook_silence_rule_via_frago_core(tmp_p
         env=env,
         check=True,
     )
-    out = json.loads(proc.stdout)
+    return json.loads(proc.stdout)
+
+
+def test_session_start_injects_irrelevant_hook_silence_rule_via_frago_core(tmp_path: Path) -> None:
+    """SessionStart on an isolated HOME must deliver the irrelevant-hook silence
+    rule (with [MUST] exception guardrail) in hookSpecificOutput.additionalContext."""
+    out = _run_session_start_via_frago_core(tmp_path)
     ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "无关钩子提示静默忽略" in ctx
-    assert "additionalContext" in ctx
-    assert "备查知识" in ctx
-    assert "静默忽略" in ctx
-    assert "禁止在回复里声明或解释该提示无关" in ctx
+    expected_rule = (
+        "【无关钩子提示静默忽略 MUST】按规则触发自动推送的补充提示（additionalContext）"
+        "若属备查知识且与当前任务无关，直接静默忽略，禁止在回复里声明或解释该提示无关"
+        "（明确标注 [MUST] 的安全、交付与格式约束除外）。"
+    )
+    assert expected_rule in ctx
+
+
+@pytest.mark.parametrize(
+    ("case_name", "env_overrides"),
+    [
+        ("interactive", None),
+        ("managed_worker", {"FRAGO_CONV_KEY": "conv-codex-1", "FRAGO_AGENT_ROLE": "worker"}),
+    ],
+)
+def test_session_start_codex_zero_prior_under_5400_bytes(
+    tmp_path: Path, case_name: str, env_overrides: dict[str, str | None] | None
+) -> None:
+    """Zero-prior Codex SessionStart total additionalContext must remain well under 5,400B."""
+    out = _run_session_start_via_frago_core(
+        tmp_path / case_name,
+        harness="codex",
+        env_overrides=env_overrides,
+    )
+    ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "明确标注 [MUST] 的安全、交付与格式约束除外" in ctx
+    assert "完整手册跑" not in ctx
+    assert len(ctx.encode("utf-8")) < 5400
 
 
 def test_discard_worktree_deny_all_bash_regex_clauses_share_identical_prefix() -> None:
@@ -358,6 +427,8 @@ OPEN_WEB_DENIED_COMMANDS = [
     pytest.param('open -a "Google Chrome" https://example.com', id="open-dash-a-https"),
     pytest.param("cd x && open ./dist/index.html", id="and-open-local-html"),
     pytest.param("open file:///tmp/a.html", id="open-file-url"),
+    pytest.param("open file:///tmp/a.htm?x=1#y", id="open-file-htm-query-hash"),
+    pytest.param('open "file:///tmp/my page.html?x=1#y"', id="open-quoted-file-html"),
     pytest.param("xdg-open http://localhost:3000", id="xdg-open-http-localhost"),
     pytest.param("xdg-open ./preview.htm", id="xdg-open-local-htm"),
     pytest.param("if true; then open https://example.com; fi", id="if-then-open-https"),
@@ -389,6 +460,19 @@ OPEN_WEB_ALLOWED_COMMANDS = [
     pytest.param("open ./doc.pdf", id="open-doc-pdf"),
     pytest.param("open ./report.pdf", id="open-report-pdf"),
     pytest.param("open ./photo.png", id="open-photo-png"),
+    pytest.param("open file:///tmp/test.pdf", id="open-file-pdf"),
+    pytest.param("open file:///tmp/photo.png", id="open-file-png"),
+    pytest.param('open "file:///tmp/my doc.pdf?v=1"', id="open-quoted-file-pdf"),
+    pytest.param("open file:///tmp/a.html.bak", id="open-file-html-bak"),
+    pytest.param("open -R ./dist/index.html", id="open-dash-R-html"),
+    pytest.param("open -t ./dist/index.html", id="open-dash-t-html"),
+    pytest.param("open -Rt ./dist/index.html", id="open-combined-Rt-html"),
+    pytest.param("open -gR ./dist/index.html", id="open-combined-gR-html"),
+    pytest.param("open -g -R ./dist/index.html", id="open-dash-g-dash-R-html"),
+    pytest.param("open -R file:///tmp/a.html", id="open-dash-R-file-html"),
+    pytest.param('open -t "file:///tmp/a.html"', id="open-dash-t-file-html"),
+    pytest.param("sudo open -R ./dist/index.html", id="sudo-open-dash-R-html"),
+    pytest.param('bash -c "open -R ./dist/index.html"', id="bash-c-open-dash-R-html"),
     pytest.param("open -a Finder /tmp", id="open-dash-a-finder"),
     pytest.param("python3 -c \"open('a.html')\"", id="python3-open-html"),
     pytest.param("python -c \"open('index.html')\"", id="python-open-index-html"),
@@ -415,60 +499,114 @@ OPEN_WEB_ALLOWED_COMMANDS = [
 def test_block_system_open_web_allows_safe_and_non_web_commands(
     tmp_path: Path, command: str
 ) -> None:
-    rule = _get_rule(OPEN_WEB_RULE_ID)
-    assert not _eval_bash_clause(rule["match"], command), (
-        f"Python evaluator unexpectedly matched: {command!r}"
+    worker_rule = _get_rule(OPEN_WEB_RULE_ID)
+    main_rule = _get_rule(OPEN_WEB_MAIN_RULE_ID)
+    assert not _eval_bash_clause(worker_rule["match"], command, {"FRAGO_AGENT_ROLE": "worker"}), (
+        f"Python evaluator unexpectedly matched worker deny rule: {command!r}"
     )
-    matched = _match_via_frago_core(tmp_path, [command])[0]
-    assert OPEN_WEB_RULE_ID not in matched, (
-        f"frago-core unexpectedly matched {OPEN_WEB_RULE_ID}: {command!r}"
+    assert not _eval_bash_clause(main_rule["match"], command, {}), (
+        f"Python evaluator unexpectedly matched main guidance rule: {command!r}"
     )
+    matched_worker = _match_via_frago_core(tmp_path / "worker", [command], agent_role="worker")[0]
+    assert OPEN_WEB_RULE_ID not in matched_worker
+    assert OPEN_WEB_MAIN_RULE_ID not in matched_worker
+
+    matched_main = _match_via_frago_core(tmp_path / "main", [command], agent_role=None)[0]
+    assert OPEN_WEB_RULE_ID not in matched_main
+    assert OPEN_WEB_MAIN_RULE_ID not in matched_main
 
 
 @pytest.mark.parametrize("command", OPEN_WEB_DENIED_COMMANDS)
-def test_block_system_open_web_blocks_web_and_local_html_commands(
+def test_block_system_open_web_blocks_only_worker_and_guides_main_and_employee(
     tmp_path: Path, command: str
 ) -> None:
-    rule = _get_rule(OPEN_WEB_RULE_ID)
-    assert _eval_bash_clause(rule["match"], command), (
-        f"Python evaluator missed system open web command: {command!r}"
-    )
-    matched = _match_via_frago_core(tmp_path, [command])[0]
-    assert OPEN_WEB_RULE_ID in matched, (
-        f"frago-core missed {OPEN_WEB_RULE_ID} on: {command!r}"
-    )
+    worker_rule = _get_rule(OPEN_WEB_RULE_ID)
+    main_rule = _get_rule(OPEN_WEB_MAIN_RULE_ID)
+
+    assert _eval_bash_clause(worker_rule["match"], command, {"FRAGO_AGENT_ROLE": "worker"})
+    assert not _eval_bash_clause(main_rule["match"], command, {"FRAGO_AGENT_ROLE": "worker"})
+    assert not _eval_bash_clause(worker_rule["match"], command, {})
+    assert _eval_bash_clause(main_rule["match"], command, {})
+    assert not _eval_bash_clause(worker_rule["match"], command, {"FRAGO_AGENT_ROLE": "employee"})
+    assert _eval_bash_clause(main_rule["match"], command, {"FRAGO_AGENT_ROLE": "employee"})
+
+    matched_worker = _match_via_frago_core(tmp_path / "worker", [command], agent_role="worker")[0]
+    assert OPEN_WEB_RULE_ID in matched_worker
+    assert OPEN_WEB_MAIN_RULE_ID not in matched_worker
+
+    matched_main = _match_via_frago_core(tmp_path / "main", [command], agent_role=None)[0]
+    assert OPEN_WEB_RULE_ID not in matched_main
+    assert OPEN_WEB_MAIN_RULE_ID in matched_main
+
+    matched_employee = _match_via_frago_core(tmp_path / "employee", [command], agent_role="employee")[0]
+    assert OPEN_WEB_RULE_ID not in matched_employee
+    assert OPEN_WEB_MAIN_RULE_ID in matched_employee
 
 
 @pytest.mark.parametrize(
-    ("command", "agent_role"),
+    "command",
     [
-        pytest.param("open http://127.0.0.1:8093/", None, id="main-open-http"),
-        pytest.param('open -a "Google Chrome" https://example.com', "worker", id="worker-open-chrome"),
-        pytest.param("cd x && open ./dist/index.html", "worker", id="worker-open-html"),
-        pytest.param("open file:///tmp/a.html", "worker", id="worker-open-file-url"),
-        pytest.param("xdg-open http://localhost:3000", "worker", id="worker-xdg-open-http"),
-        pytest.param("xdg-open ./preview.htm", "worker", id="worker-xdg-open-htm"),
-        pytest.param("if true; then open https://example.com; fi", "worker", id="worker-if-then-open"),
-        pytest.param('open -g "http://localhost:5173"', "worker", id="worker-open-g"),
+        pytest.param("open http://127.0.0.1:8093/", id="worker-open-http"),
+        pytest.param('open -a "Google Chrome" https://example.com', id="worker-open-chrome"),
+        pytest.param("cd x && open ./dist/index.html", id="worker-open-html"),
+        pytest.param("open file:///tmp/a.html", id="worker-open-file-url"),
+        pytest.param("xdg-open http://localhost:3000", id="worker-xdg-open-http"),
+        pytest.param("xdg-open ./preview.htm", id="worker-xdg-open-htm"),
+        pytest.param("if true; then open https://example.com; fi", id="worker-if-then-open"),
+        pytest.param('open -g "http://localhost:5173"', id="worker-open-g"),
     ],
 )
-def test_block_system_open_web_engine_denies_and_redirects_to_frago_browser(
+def test_block_system_open_web_engine_denies_worker_and_redirects_to_frago_browser(
+    tmp_path: Path, command: str
+) -> None:
+    out = _run_pre_tool_use_via_frago_core_engine(
+        tmp_path, command, agent_role="worker"
+    )
+    hook_out = out.get("hookSpecificOutput", {})
+    assert hook_out.get("permissionDecision") == "deny", (
+        f"Expected deny for worker on {command!r}, got {out!r}"
+    )
+    reason = hook_out.get("permissionDecisionReason", "")
+    assert "frago browser" in reason
+
+
+@pytest.mark.parametrize("agent_role", [None, "employee"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("open http://127.0.0.1:8093/", id="open-http"),
+        pytest.param('open -a "Google Chrome" https://example.com', id="open-chrome"),
+        pytest.param("open file:///tmp/a.html", id="open-file-html"),
+        pytest.param("cd x && open ./dist/index.html", id="open-local-html"),
+        pytest.param("xdg-open http://localhost:3000", id="xdg-open-http"),
+        pytest.param("xdg-open ./preview.htm", id="xdg-open-htm"),
+    ],
+)
+def test_block_system_open_web_engine_allows_main_and_employee_with_soft_guidance(
     tmp_path: Path, command: str, agent_role: str | None
 ) -> None:
     out = _run_pre_tool_use_via_frago_core_engine(
         tmp_path, command, agent_role=agent_role
     )
     hook_out = out.get("hookSpecificOutput", {})
-    assert hook_out.get("permissionDecision") == "deny", (
-        f"Expected deny for {command!r}, got {out!r}"
+    assert hook_out.get("permissionDecision") != "deny", (
+        f"Non-worker ({agent_role}) must not be denied on {command!r}: {out!r}"
     )
-    reason = hook_out.get("permissionDecisionReason", "")
-    assert "frago browser" in reason
+    ctx = hook_out.get("additionalContext", "")
+    assert "【打开网页前先判场景】" in ctx
+    assert "frago browser" in ctx
+    assert "仅当用户明确要求在系统默认浏览器打开给人看时" in ctx
 
 
+@pytest.mark.parametrize("agent_role", ["worker", None, "employee"])
 @pytest.mark.parametrize(
     "command",
     [
+        pytest.param("open file:///tmp/test.pdf", id="engine-allow-file-pdf"),
+        pytest.param("open -R ./dist/index.html", id="engine-allow-open-R"),
+        pytest.param("open -t ./dist/index.html", id="engine-allow-open-t"),
+        pytest.param("open -Rt ./dist/index.html", id="engine-allow-open-Rt"),
+        pytest.param("open -gR ./dist/index.html", id="engine-allow-open-gR"),
         pytest.param("open .", id="engine-allow-open-dot"),
         pytest.param("open ./doc.pdf", id="engine-allow-open-pdf"),
         pytest.param("open -a Finder /tmp", id="engine-allow-open-finder"),
@@ -478,16 +616,18 @@ def test_block_system_open_web_engine_denies_and_redirects_to_frago_browser(
         pytest.param("frago browser open http://127.0.0.1:8093", id="engine-allow-frago-browser-open"),
     ],
 )
-def test_block_system_open_web_engine_allows_non_web_commands(
-    tmp_path: Path, command: str
+def test_block_system_open_web_engine_allows_non_web_and_non_browser_commands_without_guidance(
+    tmp_path: Path, command: str, agent_role: str | None
 ) -> None:
     out = _run_pre_tool_use_via_frago_core_engine(
-        tmp_path, command, agent_role="worker"
+        tmp_path, command, agent_role=agent_role
     )
     hook_out = out.get("hookSpecificOutput", {})
     assert hook_out.get("permissionDecision") != "deny", (
-        f"Unexpected deny for {command!r}: {out!r}"
+        f"Unexpected deny for {command!r} ({agent_role}): {out!r}"
     )
+    ctx = hook_out.get("additionalContext", "")
+    assert "【打开网页前先判场景】" not in ctx
 
 
 def _run_user_prompt_submit_via_frago_core_engine(

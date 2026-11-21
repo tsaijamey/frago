@@ -355,10 +355,16 @@ def test_agent_disciplines_ships_irrelevant_hook_silence_rule_and_seeds(tmp_path
     assert disciplines_src.is_file()
 
     text = disciplines_src.read_text(encoding="utf-8")
+    expected_rule = (
+        "【无关钩子提示静默忽略 MUST】按规则触发自动推送的补充提示（additionalContext）"
+        "若属备查知识且与当前任务无关，直接静默忽略，禁止在回复里声明或解释该提示无关"
+        "（明确标注 [MUST] 的安全、交付与格式约束除外）。"
+    )
+    assert expected_rule in text
     assert "additionalContext" in text
     assert "备查知识" in text
     assert "静默忽略" in text
-    assert "禁止在回复里向用户声明或解释" in text
+    assert "明确标注 [MUST] 的安全、交付与格式约束除外" in text
 
     constitution_marker = "## 宪法正文（~/.frago/constitution.md 的副本，同步更新）"
     assert constitution_marker in text

@@ -298,12 +298,12 @@
       },
       "action": {
         "type": "inject_literal",
-        "text": "【无关钩子提示静默忽略 MUST】钩子推送的补充提示（additionalContext）属备查知识，命中率非 100%；与当前任务无关时直接静默忽略，禁止在回复里声明或解释该提示无关。"
+        "text": "【无关钩子提示静默忽略 MUST】按规则触发自动推送的补充提示（additionalContext）若属备查知识且与当前任务无关，直接静默忽略，禁止在回复里声明或解释该提示无关（明确标注 [MUST] 的安全、交付与格式约束除外）。"
       },
       "dedup_scope": "session",
       "priority": 86,
       "created_at": "2026-11-21T00:00:00",
-      "description": "待办 20260627-hook-context-guidance-stop：Hook 按规则推送的 additionalContext 属备查知识，未命中当前任务时应直接静默忽略，禁止在回复里向用户声明或解释该提示无关。"
+      "description": "待办 20260627-hook-context-guidance-stop：Hook 按规则推送的 additionalContext 若属备查知识且未命中当前任务时应直接静默忽略，禁止在回复里声明或解释该提示无关（明确标注 [MUST] 的安全、交付与格式约束除外）。"
     },
     {
       "id": "builtin-session-start-worker-role",
@@ -997,17 +997,71 @@
       "source": "builtin",
       "event": "PreToolUse",
       "match": {
-        "type": "bash_regex",
-        "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?(?:open|xdg-open))\\b[ \\t]+(?:(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t\\r\\n;&|()\"'`{}<>]+)[ \\t]+)*(?:\"(?:(?i:https?|file)://[^\"\\n]+|[^\"\\n]*\\.(?i:html?)(?:[?#][^\"\\n]*)?)\"|'(?:(?i:https?|file)://[^'\\n]+|[^'\\n]*\\.(?i:html?)(?:[?#][^'\\n]*)?)'|(?:(?i:https?|file)://[^ \\t\\r\\n;&|()\"'`{}<>]+|[^ \\t\\r\\n;&|()\"'`{}<>]+\\.(?i:html?)(?:[?#][^ \\t\\r\\n;&|()\"'`{}<>]*)?))(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "not",
+            "clause": {
+              "type": "env_ne",
+              "name": "FRAGO_AGENT_ROLE",
+              "value": "worker"
+            }
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?(?:open|xdg-open))\\b[ \\t]+(?:(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t\\r\\n;&|()\"'`{}<>]+)[ \\t]+)*(?:\"(?:(?i:https?)://[^\"\\n]+|[^\"\\n]*\\.(?i:html?)(?:[?#][^\"\\n]*)?)\"|'(?:(?i:https?)://[^'\\n]+|[^'\\n]*\\.(?i:html?)(?:[?#][^'\\n]*)?)'|(?:(?i:https?)://[^ \\t\\r\\n;&|()\"'`{}<>]+|[^ \\t\\r\\n;&|()\"'`{}<>]+\\.(?i:html?)(?:[?#][^ \\t\\r\\n;&|()\"'`{}<>]*)?))(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+          },
+          {
+            "type": "not",
+            "clause": {
+              "type": "bash_regex",
+              "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?open)\\b[ \\t]+(?:(?:-[a-zA-Z0-9]+|--[a-zA-Z0-9_-]+(?:=[^ \\t\\r\\n;&|()\"'`{}<>]+)?)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^- \\t\\r\\n;&|()\"'`{}<>][^ \\t\\r\\n;&|()\"'`{}<>]*))?[ \\t]+)*-[a-zA-Z0-9]*[Rt][a-zA-Z0-9]*(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+            }
+          }
+        ]
       },
       "action": {
         "type": "deny_tool_call",
-        "reason": "【已拦截·禁止用 open / xdg-open 打开网页或本地 HTML 页面】\n`open` / `xdg-open` 只会唤起系统默认浏览器，agent 看不到页面内容、拿不到 DOM 与控制台状态，也无法截图或交互。\n\n改用受控浏览器 `frago browser`：\n  frago browser navigate \"<URL或file:///绝对路径>\" --group <分组名>\n  frago browser get-content --group <分组名>\n  frago browser exec-js --group <分组名> \"<JS>\" --return-value\n  frago browser screenshot --group <分组名> <输出图片路径>\n  frago browser group-close <分组名>\n\n本地 HTML 页面请传 `file:///绝对路径` 或本地服务 `http://127.0.0.1:<端口>/...`；未连接时先跑 `frago browser start`。\n（仅把配方页面交给人看时，改用 `frago recipe open <配方名>`。）"
+        "reason": "【已拦截·禁止在 Worker 会话用 open / xdg-open 打开网页或本地 HTML 页面】\n`open` / `xdg-open` 只会唤起系统默认浏览器，后台 Worker 看不到页面内容、拿不到 DOM 与控制台状态，也无法截图或交互。\n\n改用受控浏览器 `frago browser`：\n  frago browser navigate \"<URL或file:///绝对路径>\" --group <分组名>\n  frago browser get-content --group <分组名>\n  frago browser exec-js --group <分组名> \"<JS>\" --return-value\n  frago browser screenshot --group <分组名> <输出图片路径>\n  frago browser group-close <分组名>\n\n本地 HTML 页面请传 `file:///绝对路径` 或本地服务 `http://127.0.0.1:<端口>/...`；未连接时先跑 `frago browser start`。\n（仅把配方页面交给人看时，改用 `frago recipe open <配方名>`。）"
       },
       "dedup_scope": "always",
       "priority": 250,
       "created_at": "2026-11-21T00:00:00",
-      "description": "why: 20260806-block-open-in-worker-sessions — worker 会话看本地 HTML 或 URL 时常先跑 open/xdg-open 走系统默认浏览器，agent 自己看不到页面白跑一轮；旧 userdir-redirect-system-open-url 仅存在于开发者本机、动作仅为 inject_literal（不拦），且漏掉 xdg-open、file:// 与 *.html/*.htm。how: PreToolUse 锚定命令起始位置（复用横向空白与子壳/包装前缀，不跨换行、不误伤引号说明与 python open()），匹配 open/xdg-open 打开 http(s)://、file:// 或 *.html/*.htm（含 ?query/#hash 与引号路径），直接 deny_tool_call 并指路 frago browser；放行 open .、PDF/图片、open -a Finder /tmp 等非网页调用。"
+      "description": "why: 20260806-block-open-in-worker-sessions (PM 方案 X) — 仅在 FRAGO_AGENT_ROLE=worker 会话中硬拦截 open/xdg-open 打开网页或 HTML，防止后台 Worker 弹系统浏览器且看不到页面白跑一轮；主会话与 employee 改走软引导。how: all_of 组合 not(env_ne(FRAGO_AGENT_ROLE, \"worker\"))、bash_regex（仅匹配 http(s):// 与 *.html/*.htm 含 file://...*.html?，放行 file:///*.pdf 与图片等非 HTML）及 not(bash_regex) 放行 open -R/-t（含 -Rt/-gR 等合并短参数）。"
+    },
+    {
+      "id": "builtin-bash-redirect-system-open-web-main",
+      "source": "builtin",
+      "event": "PreToolUse",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_AGENT_ROLE",
+            "value": "worker"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?(?:open|xdg-open))\\b[ \\t]+(?:(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t\\r\\n;&|()\"'`{}<>]+)[ \\t]+)*(?:\"(?:(?i:https?)://[^\"\\n]+|[^\"\\n]*\\.(?i:html?)(?:[?#][^\"\\n]*)?)\"|'(?:(?i:https?)://[^'\\n]+|[^'\\n]*\\.(?i:html?)(?:[?#][^'\\n]*)?)'|(?:(?i:https?)://[^ \\t\\r\\n;&|()\"'`{}<>]+|[^ \\t\\r\\n;&|()\"'`{}<>]+\\.(?i:html?)(?:[?#][^ \\t\\r\\n;&|()\"'`{}<>]*)?))(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+          },
+          {
+            "type": "not",
+            "clause": {
+              "type": "bash_regex",
+              "pattern": "(?:^|[;&|(\\n{`]|[ \\t]-exec(?:dir)?[ \\t]+)[ \\t]*(?:(?:then|do|else|elif|if|while|until)[ \\t]+)*(?:![ \\t]+)*(?:(?:sudo|env|command|nohup|time|exec|xargs|eval)[ \\t]+(?:(?:--|--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*(?:(?:(?:(?:/usr)?/bin/)?(?:bash|sh|zsh|dash|ksh)[ \\t]+(?:(?:--?[a-zA-Z0-9](?:[^ \\t;&|\\n'\"]|'[^'\\n]*'|\"[^\"\\n]*\")*)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]+))?[ \\t]+)*(?:--[ \\t]+)?|eval[ \\t]+(?:--[ \\t]+)?)[\"'][ \\t]*(?:![ \\t]+)*(?:(?:sudo|env|command|eval)[ \\t]+|[A-Za-z_][A-Za-z0-9_]*=(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^ \\t;&|\\n]*)[ \\t]+)*)?(?:(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/|/bin/)?open)\\b[ \\t]+(?:(?:-[a-zA-Z0-9]+|--[a-zA-Z0-9_-]+(?:=[^ \\t\\r\\n;&|()\"'`{}<>]+)?)(?:[ \\t]+(?:'[^'\\n]*'|\"[^\"\\n]*\"|[^- \\t\\r\\n;&|()\"'`{}<>][^ \\t\\r\\n;&|()\"'`{}<>]*))?[ \\t]+)*-[a-zA-Z0-9]*[Rt][a-zA-Z0-9]*(?:[ \\t\\r\\n;&|)\"'`}<>]|$)"
+            }
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【打开网页前先判场景】`open` / `xdg-open` 启动的是系统默认浏览器，代理看不见页面内容、拿不到 DOM 与控制台状态，也无法截图或交互。\n- 如需自己读取、抓取、截图或验证网页内容，必须改用 `frago browser`（如 `frago browser navigate \"<URL或file:///绝对路径>\" --group <分组名>`、`get-content`、`screenshot`、`exec-js`）。\n- 仅当用户明确要求在系统默认浏览器打开给人看时，才可继续执行本命令（若交付的是配方页面，优先走 `frago recipe open <配方名>`）。"
+      },
+      "dedup_scope": "session",
+      "priority": 150,
+      "created_at": "2026-11-21T00:00:00",
+      "description": "why: PM 方案 X（配套 builtin-bash-block-system-open-web）— 非 Worker 会话（主会话、employee）不硬拦截 open/xdg-open，改为 inject_literal 软引导：提醒代理自己读页/抓取/截图/验证必须改用 frago browser，仅当用户明确要求在系统默认浏览器打开给人看时才继续。how: env_ne(FRAGO_AGENT_ROLE, \"worker\") + 与硬拦截规则严格对齐的网页/HTML 目标匹配及 open -R/-t 排除。"
     }
   ]
 }
