@@ -753,3 +753,409 @@ def test_two_layer_voice_channel_cli_and_recording_isolation(sealed, fake_synth,
     assert len(rigs[0].journal) == 1
     assert rigs[0].journal[0]["params"]["text"] == "在设置页中点击 AI Providers 配置语音识别模型"
 
+
+# ── 20261012-desktop-speech-queue-single 三处缺陷修复单测 ────────────────
+
+
+def test_bogus_voice_value_error_falls_back_to_caption_without_retrying_or_stopping_batch(
+    sealed, cache, monkeypatch
+):
+    """en-GB-Bogus 等不被引擎接受的嗓子：不重试 3 次，转为 VoiceFailed，
+    由 broker 优雅退回只显示字幕且同批后续步骤继续执行。"""
+    calls: list[dict] = []
+
+    class BogusRejectingEdge:
+        def __init__(self):
+            old = (
+                "wss://speech.platform.bing.com/consumer/speech/synthesize/"
+                "readaloud/edge/v1?TrustedClientToken=fake-token"
+            )
+            self.constants = types.SimpleNamespace(
+                TRUSTED_CLIENT_TOKEN="fake-token", WSS_URL=old
+            )
+            self.communicate = types.SimpleNamespace(WSS_URL=old)
+
+            class Communicate:
+                def __init__(self, text, voice_name, **kw):
+                    calls.append({"text": text, "voice": voice_name, **kw})
+                    if voice_name == "en-GB-Bogus":
+                        raise ValueError(f"Invalid voice '{voice_name}'.")
+
+                async def stream(self):
+                    yield {"type": "audio", "data": b"\xff" * 6000}
+                    yield {
+                        "type": "SentenceBoundary",
+                        "offset": 100 * 10_000,
+                        "duration": 900 * 10_000,
+                        "text": "ok",
+                    }
+
+            self.Communicate = Communicate
+            self.__version__ = "7.2.8-fake"
+
+    fake_edge = BogusRejectingEdge()
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_edge)
+
+    # 1. voice.synthesize 直接将引擎 ValueError 转为 VoiceFailed，且不重试
+    with pytest.raises(voice.VoiceFailed, match="en-GB-Bogus"):
+        voice.synthesize_sync("Hello world.", voice="en-GB-Bogus")
+    assert len(calls) == 1, "嗓子名非法不应重试 3 次"
+
+    # 2. 经 broker /control 同批执行：第 1 步退回字幕，第 2 步照常执行
+    calls.clear()
+    code, out = post_control(
+        sealed,
+        {
+            "steps": [
+                {
+                    "op": "say",
+                    "text": "Hello with bogus voice.",
+                    "speak": True,
+                    "voice": "en-GB-Bogus",
+                },
+                {"op": "sleep", "ms": 0},
+            ]
+        },
+    )
+    assert code == 200 and out["ok"] is True
+    r0, r1 = out["results"]
+    assert r0["status"] == "ok" and r0["spoken"] is False
+    assert "没出声" in r0["note"]
+    assert "en-GB-Bogus" in r0["error"]
+    assert r1["status"] == "ok"
+    assert len(calls) == 1
+
+
+def test_cjk_re_covers_fullwidth_punctuation_and_hangul(cache, edge, monkeypatch):
+    """写死全角标点 (U+FF00–U+FFEF) 与韩文 (U+AC00–U+D7AF) 在 _CJK_RE 及双开关下的行为。"""
+    # 正则边界覆盖
+    assert voice._CJK_RE.search("Hello，world！")  # U+FF0C, U+FF01
+    assert voice._CJK_RE.search("\uff00") and voice._CJK_RE.search("\uffef")
+    assert voice._CJK_RE.search("안녕하세요")
+    assert voice._CJK_RE.search("\uac00") and voice._CJK_RE.search("\ud7af")
+    assert not voice._CJK_RE.search("Hello, world! (test) [123]")
+
+    # 默认 ENFORCE_ENGLISH_TEXT=False 时放行，不抛 ValueError
+    assert voice.ENFORCE_ENGLISH_TEXT is False
+    fake = edge([{}, {}])
+    out_fw = voice.synthesize_sync("Hello，world！")
+    out_ko = voice.synthesize_sync("안녕하세요")
+    assert out_fw["voice"] and out_ko["voice"]
+    assert len(fake.calls) == 2
+
+    # 显式开启 ENFORCE_ENGLISH_TEXT=True 时，全角标点与韩文均在联网前立即拦截
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_TEXT", True)
+    fake_blocked = edge()
+    for sample in ("Hello，world！", "（bracket）", "안녕하세요"):
+        with pytest.raises(ValueError, match="全角标点|只说英文"):
+            voice.synthesize_sync(sample)
+    assert fake_blocked.calls == [], "拦截发生在联网前"
+
+    # 纯英文半角标点即使开启门禁也放行
+    out_en = voice.synthesize_sync("Hello, world! (ok)", voice="en-US-AvaMultilingualNeural")
+    assert out_en["voice"] == "en-US-AvaMultilingualNeural"
+    assert len(fake_blocked.calls) == 1
+
+
+def test_voice_prefix_validation_is_case_insensitive(cache, edge, monkeypatch):
+    """嗓子名前缀校验不再强制小写（支持 EN-US-... / En-GB-... / ZH-cn-...）。"""
+    # 1. 默认自适应模式：大小写混合前缀应被识别并规范化，不误抛弃为默认音色
+    assert voice.resolve_emotional_voice("Hello.", "EN-US-AriaNeural") == "en-US-AriaNeural"
+    assert voice.resolve_emotional_voice("Hello.", "En-gb-SoniaNeural") == "en-GB-SoniaNeural"
+    assert voice.resolve_emotional_voice("你好。", "ZH-cn-XiaoyiNeural") == "zh-CN-XiaoyiNeural"
+
+    # 2. 开启 ENFORCE_ENGLISH_VOICE=True 时，大小写混合英文前缀应正常放行
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_VOICE", True)
+    fake = edge([{}, {}])
+    out1 = voice.synthesize_sync("Hello.", voice="EN-US-AvaMultilingualNeural")
+    out2 = voice.synthesize_sync("Hello.", voice="En-GB-SoniaNeural")
+    assert out1["voice"] == "en-US-AvaMultilingualNeural"
+    assert out2["voice"] == "en-GB-SoniaNeural"
+    assert len(fake.calls) == 2
+
+    # 非英文前缀仍应准确拦截
+    with pytest.raises(ValueError, match="只说英文"):
+        voice.synthesize_sync("Hello.", voice="ZH-CN-XiaoxiaoNeural")
+
+
+def test_speech_worker_logs_and_self_heals_after_crash(sealed, fake_synth, capsys, monkeypatch):
+    """worker 意外异常退出时：记录结构化日志、兜底结束当句、自动重建消费后续队列。"""
+    real_time = broker.time.time
+    crashed = {"count": 0}
+
+    class CrashOnceTime:
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def time(self):
+            frame = sys._getframe(1)
+            if frame.f_code.co_name == "speech_worker" and crashed["count"] == 0:
+                crashed["count"] += 1
+                raise RuntimeError("模拟 worker 内部意外崩溃")
+            return real_time()
+
+    monkeypatch.setattr(broker, "time", CrashOnceTime())
+
+    code, out = post_control(
+        sealed,
+        {
+            "steps": [
+                {"op": "say", "text": "第一句会触发崩溃", "speak": True, "out": "none", "async": True},
+                {"op": "say", "text": "第二句必须自动续跑", "speak": True, "out": "none", "async": True},
+                {"op": "speech.wait", "target": "all"},
+                {"op": "speech.wait", "target": "1"},
+                {"op": "speech.wait", "target": "2"},
+            ]
+        },
+    )
+    assert code == 200 and out["ok"] is True
+    assert crashed["count"] == 1
+    assert out["results"][2]["status"] == "ok"
+    assert out["results"][3]["speech"]["state"] == "failed"
+    assert "模拟 worker 内部意外崩溃" in out["results"][3]["speech"]["error"]
+    assert out["results"][4]["speech"]["state"] == "done"
+
+    err_log = capsys.readouterr().err
+    assert "语音 worker 异常退出" in err_log
+    assert "模拟 worker 内部意外崩溃" in err_log
+    assert "重建 worker" in err_log
+
+
+def test_speech_worker_circuit_breaker_stops_infinite_crash_loop(
+    sealed, fake_synth, capsys, monkeypatch
+):
+    """worker 连续异常崩溃达到上限时停止自愈并将剩余条目兜底失败，不死循环空转。"""
+    monkeypatch.setattr(broker, "SPEECH_WORKER_MAX_CRASHES", 3)
+    monkeypatch.setattr(broker, "SPEECH_WORKER_BACKOFF_SEC", 0.01)
+    real_time = broker.time.time
+    crashes = {"count": 0}
+
+    class AlwaysCrashWorkerTime:
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def time(self):
+            if sys._getframe(1).f_code.co_name == "speech_worker":
+                crashes["count"] += 1
+                raise RuntimeError("模拟持续性 worker 崩溃")
+            return real_time()
+
+    monkeypatch.setattr(broker, "time", AlwaysCrashWorkerTime())
+
+    code, out = post_control(
+        sealed,
+        {
+            "steps": [
+                {"op": "say", "text": f"第{i}句", "speak": True, "out": "none", "async": True}
+                for i in range(1, 5)
+            ]
+            + [
+                {"op": "speech.wait", "target": "all"},
+                {"op": "speech.wait", "target": "4"},
+            ],
+        },
+    )
+    assert code == 200 and out["ok"] is True
+    assert crashes["count"] == 3, "达到熔断上限 3 次后必须停止自愈，不能无限死循环"
+    assert out["results"][4]["status"] == "ok", "剩余条目应已兜底结束，wait all 不应挂死"
+    assert out["results"][5]["speech"]["state"] == "failed"
+    assert "连续异常退出" in out["results"][5]["speech"]["error"]
+    err_log = capsys.readouterr().err
+    assert "连续异常退出达上限（3 次）" in err_log
+
+
+def test_speech_play_single_item_failure_logs_and_continues(sealed, fake_synth, capsys, monkeypatch):
+    """单句播放抛出异常时写错误日志并继续消费后续队列。"""
+    calls = {"n": 0}
+
+    class FakeProc:
+        def __init__(self):
+            self.returncode = 0
+
+        async def wait(self):
+            await asyncio.sleep(0.02)
+            return 0
+
+        def kill(self):
+            pass
+
+    async def flaky_spawn(_path: str):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("音频设备暂不可用")
+        return FakeProc()
+
+    monkeypatch.setattr(broker, "_player_cmd", lambda _p: ["afplay", _p])
+    monkeypatch.setattr(broker, "_spawn_player", flaky_spawn)
+
+    code, out = post_control(
+        sealed,
+        {
+            "steps": [
+                {"op": "say", "text": "第一句放音炸了", "speak": True, "out": "local", "async": True},
+                {"op": "say", "text": "第二句正常", "speak": True, "out": "local", "async": True},
+                {"op": "speech.wait", "target": "all"},
+                {"op": "speech.wait", "target": "1"},
+                {"op": "speech.wait", "target": "2"},
+            ]
+        },
+    )
+    assert code == 200 and out["ok"] is True
+    assert calls["n"] == 2
+    assert out["results"][3]["speech"]["state"] == "failed"
+    assert "音频设备暂不可用" in out["results"][3]["speech"]["error"]
+    assert out["results"][4]["speech"]["state"] == "done"
+    err_log = capsys.readouterr().err
+    assert "语音播放失败 id=1" in err_log
+    assert "音频设备暂不可用" in err_log
+
+
+def test_speech_wait_extends_deadline_on_interject(sealed, tmp_path, monkeypatch):
+    """等待期间插入更长的插播时，按队列尾部重算等待期限，不误报超时且回执标明 extended_by。"""
+    async def timed_synth(text, voice_name, rate, volume, pitch):
+        audio = tmp_path / "line.mp3"
+        audio.write_bytes(b"\xff")
+        ms = 550 if "插播" in text else 100
+        return {
+            "key": "b" * 64,
+            "voice": voice_name,
+            "duration_ms": ms,
+            "cached": False,
+            "audio": str(audio),
+            "sentences": [],
+        }
+
+    monkeypatch.setattr(broker.voice, "synthesize", timed_synth)
+    # 收紧默认余量，使 2 句初始总期限仅 ~0.26s，小于插播加入后的总时长 (~0.65s)
+    monkeypatch.setattr(broker, "SPEECH_START_GRACE_SEC", 0.01)
+    monkeypatch.setattr(broker, "SPEECH_END_GRACE_SEC", 0.01)
+    monkeypatch.setattr(broker, "SPEECH_WAIT_SLACK_SEC", 0.02)
+
+    app = broker.build_app(dict(sealed))
+    ctrl = next(r for r in app.routes if getattr(r, "path", None) == "/control")
+
+    async def scenario():
+        # 先异步排入两句各 100ms
+        await ctrl.endpoint(
+            {
+                "steps": [
+                    {"op": "say", "text": "第一句", "speak": True, "out": "none", "async": True},
+                    {"op": "say", "text": "第二句", "speak": True, "out": "none", "async": True},
+                ]
+            }
+        )
+        wait_task = asyncio.create_task(
+            ctrl.endpoint({"steps": [{"op": "speech.wait", "target": "2"}]})
+        )
+        await asyncio.sleep(0.03)
+        # 在等第 2 句的过程中插播一句 550ms 的话（远超最初 ~0.26s deadline）
+        interject_resp = await ctrl.endpoint(
+            {
+                "steps": [
+                    {
+                        "op": "say",
+                        "text": "这是一句较长的插播",
+                        "speak": True,
+                        "out": "none",
+                        "interject": True,
+                        "async": True,
+                    }
+                ]
+            }
+        )
+        wait_resp = await wait_task
+        return json.loads(interject_resp.body), json.loads(wait_resp.body)
+
+    interject_out, wait_out = asyncio.run(scenario())
+    assert interject_out["ok"] is True
+    assert wait_out["ok"] is True
+    res = wait_out["results"][0]
+    assert res["status"] == "ok", f"插播不应误报超时: {res}"
+    assert res["speech"]["id"] == "2" and res["speech"]["state"] == "done"
+    assert res["extended_by"] == ["3"]
+
+
+def test_speech_wait_respects_hard_cap_and_genuine_hang_timeout(sealed, tmp_path, monkeypatch):
+    """真正卡死或持续插播超过硬上界时，仍受保护准时超时而不无限死等。"""
+    async def synth_ok(text, voice_name, rate, volume, pitch):
+        audio = tmp_path / "hang.mp3"
+        audio.write_bytes(b"\xff")
+        return {
+            "key": "c" * 64,
+            "voice": voice_name,
+            "duration_ms": 80,
+            "cached": False,
+            "audio": str(audio),
+            "sentences": [],
+        }
+
+    class HangingProc:
+        def __init__(self):
+            self.returncode = None
+
+        async def wait(self):
+            await asyncio.sleep(10.0)
+            return 0
+
+        def kill(self):
+            pass
+
+    async def spawn_hanging(_path: str):
+        return HangingProc()
+
+    monkeypatch.setattr(broker.voice, "synthesize", synth_ok)
+    monkeypatch.setattr(broker, "_player_cmd", lambda _p: ["afplay", _p])
+    monkeypatch.setattr(broker, "_spawn_player", spawn_hanging)
+    monkeypatch.setattr(broker, "SPEECH_START_GRACE_SEC", 0.01)
+    monkeypatch.setattr(broker, "SPEECH_END_GRACE_SEC", 0.01)
+    monkeypatch.setattr(broker, "SPEECH_WAIT_SLACK_SEC", 0.05)
+    monkeypatch.setattr(broker, "SPEECH_WAIT_MAX_EXTEND_SEC", 0.15)
+
+    # 1. 无插播但本地播放进程卡住：按初始期限直接超时（不被假延长）
+    code1, out1 = post_control(
+        sealed,
+        {
+            "steps": [
+                {"op": "say", "text": "卡死的一句", "speak": True, "out": "local"},
+            ]
+        },
+    )
+    assert code1 == 500 and out1["ok"] is False
+    assert "等语音讲完" in out1["error"]
+
+    # 2. 持续插播企图无限续期：必须在硬上界内结束并明确说明「期间又排了 N 句新语音」
+    app = broker.build_app(dict(sealed))
+    ctrl = next(r for r in app.routes if getattr(r, "path", None) == "/control")
+
+    async def flood_scenario():
+        await ctrl.endpoint(
+            {"steps": [{"op": "say", "text": "初始卡住", "speak": True, "out": "local", "async": True}]}
+        )
+        wait_task = asyncio.create_task(
+            ctrl.endpoint({"steps": [{"op": "speech.wait", "target": "all"}]})
+        )
+        for idx in range(5):
+            if wait_task.done():
+                break
+            await asyncio.sleep(0.05)
+            await ctrl.endpoint(
+                {
+                    "steps": [
+                        {
+                            "op": "say",
+                            "text": f"持续新排队{idx}",
+                            "speak": True,
+                            "out": "local",
+                            "async": True,
+                        }
+                    ]
+                }
+            )
+        resp = await wait_task
+        return resp.status_code, json.loads(resp.body)
+
+    code2, out2 = asyncio.run(flood_scenario())
+    assert code2 == 500 and out2["ok"] is False
+    assert "期间又排了" in out2["error"]
+
+

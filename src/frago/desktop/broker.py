@@ -2270,10 +2270,14 @@ def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
 
 SPEECH_OUTS = ("page", "local", "both", "none")
 SPEECH_CHANNELS = ("narration", "ambient")
-SPEECH_START_GRACE_SEC = 3.0     # 页面收到之后多久之内该报"开始放了"
-SPEECH_END_GRACE_SEC = 3.0       # 按时长该放完了之后再宽限多久
-SPEECH_KEEP_DONE = 50            # 讲完的句子留多少条供 wait / status 查
-CAPTION_TAIL_MS = 300            # 字幕比声音多留一口气，别话音没落字先走
+SPEECH_START_GRACE_SEC = 3.0        # 页面收到之后多久之内该报"开始放了"
+SPEECH_END_GRACE_SEC = 3.0          # 按时长该放完了之后再宽限多久
+SPEECH_WAIT_SLACK_SEC = 5.0         # 等待语音完成时的基础余量（秒）
+SPEECH_WAIT_MAX_EXTEND_SEC = 300.0  # 因插播/新排队允许延长的硬上界（秒）
+SPEECH_WORKER_MAX_CRASHES = 5       # 连续未消费成功就异常退出的熔断上限
+SPEECH_WORKER_BACKOFF_SEC = 0.2     # 连续异常退出后的基础退避间隔（秒）
+SPEECH_KEEP_DONE = 50               # 讲完的句子留多少条供 wait / status 查
+CAPTION_TAIL_MS = 300               # 字幕比声音多留一口气，别话音没落字先走
 
 
 def _player_cmd(path: str) -> list[str] | None:
@@ -3598,7 +3602,11 @@ def build_app(cfg: dict) -> FastAPI:
         poller.cancel()
         framer.cancel()
         # 本机扬声器上还在放的那句跟着收：播放进程是 broker 起的，broker 走了
-        # 它不该留在人电脑上继续说话。
+        # 它不该留在人电脑上继续说话。同时禁止关闭期间自愈重建 worker。
+        speech["closing"] = True
+        restart_task = speech.get("restart_task")
+        if restart_task is not None and not restart_task.done():
+            restart_task.cancel()
         with suppress(Exception):
             await speech_interrupt("舞台停了")
         await recorder.close()
@@ -5809,8 +5817,18 @@ def build_app(cfg: dict) -> FastAPI:
     #   both   page 与 local 都走完。
     #
     # 新的一句默认排在上一句后面，两句不叠；interrupt 才打断。
-    speech: dict = {"seq": 0, "items": {}, "queue": [], "current": None,
-                    "worker": None}
+    speech: dict = {
+        "seq": 0,
+        "items": {},
+        "queue": [],
+        "current": None,
+        "worker": None,
+        "enqueued_evt": asyncio.Event(),
+        "worker_crashes": 0,
+        "consecutive_crashes": 0,
+        "restart_task": None,
+        "closing": False,
+    }
 
     def listening_screens() -> list[dict]:
         """能替人把声音放出来的荧幕：本实例的、不是机位的、资产不过旧的。"""
@@ -5917,10 +5935,113 @@ def build_app(cfg: dict) -> FastAPI:
                     await broadcast({"t": "speech.stop", "id": item["id"]})
             raise
 
+    def speech_notify_change() -> None:
+        old = speech["enqueued_evt"]
+        speech["enqueued_evt"] = asyncio.Event()
+        old.set()
+
+    def speech_fail_item(item: dict | None, error: str) -> None:
+        if item is None:
+            return
+        if not item["done_evt"].is_set():
+            item["state"] = "failed"
+            item["error"] = error
+            item["ended_at"] = time.time()
+            item.pop("task", None)
+            item["done_evt"].set()
+
+    def speech_abort_remaining(reason: str) -> None:
+        while speech["queue"]:
+            sid = speech["queue"].pop(0)
+            speech_fail_item(speech["items"].get(sid), reason)
+
+    def speech_ensure_worker(*, delay: float = 0.0) -> None:
+        if speech["closing"] or not speech["queue"]:
+            return
+        worker = speech["worker"]
+        if worker is not None and not worker.done():
+            return
+        if delay <= 0:
+            restart = speech.get("restart_task")
+            if restart is not None and not restart.done():
+                restart.cancel()
+            speech["restart_task"] = None
+            t = asyncio.create_task(speech_worker())
+            t.add_done_callback(speech_on_worker_done)
+            speech["worker"] = t
+            return
+        restart = speech.get("restart_task")
+        if restart is not None and not restart.done():
+            return
+
+        async def _delayed_restart() -> None:
+            try:
+                await asyncio.sleep(delay)
+                speech["restart_task"] = None
+                speech_ensure_worker(delay=0.0)
+            except asyncio.CancelledError:
+                return
+
+        speech["restart_task"] = asyncio.create_task(_delayed_restart())
+
+    def speech_on_worker_done(done_task: asyncio.Task) -> None:
+        if speech["worker"] is done_task:
+            speech["worker"] = None
+        if speech["closing"]:
+            return
+        if done_task.cancelled():
+            cur_id = speech["current"]
+            if cur_id:
+                cur = speech["items"].get(cur_id)
+                speech["current"] = None
+                speech_fail_item(cur, "语音 worker 被意外取消")
+            if speech["queue"]:
+                _log(f"语音 worker 被取消，队列仍有 {len(speech['queue'])} 句，准备重建 worker")
+                speech_ensure_worker(delay=0.0)
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            speech["worker_crashes"] += 1
+            speech["consecutive_crashes"] += 1
+            cur_id = speech["current"]
+            if cur_id:
+                cur = speech["items"].get(cur_id)
+                speech["current"] = None
+                speech_fail_item(cur, f"语音 worker 异常退出: {type(exc).__name__}: {exc}")
+            _log(
+                f"语音 worker 异常退出（累计第 {speech['worker_crashes']} 次，"
+                f"连续第 {speech['consecutive_crashes']} 次）: {type(exc).__name__}: {exc}"
+            )
+            if speech["consecutive_crashes"] >= SPEECH_WORKER_MAX_CRASHES:
+                _log(
+                    f"语音 worker 连续异常退出达上限（{SPEECH_WORKER_MAX_CRASHES} 次），"
+                    f"停止自愈并将剩余 {len(speech['queue'])} 句标记失败"
+                )
+                speech_abort_remaining(
+                    f"语音 worker 连续异常退出（{type(exc).__name__}: {exc}）"
+                )
+                return
+            if speech["queue"]:
+                backoff = (
+                    0.0
+                    if speech["consecutive_crashes"] <= 1
+                    else min(2.0, SPEECH_WORKER_BACKOFF_SEC * (2 ** (speech["consecutive_crashes"] - 2)))
+                )
+                _log(
+                    f"语音队列仍有 {len(speech['queue'])} 句待播，将在 {backoff:.2f}s 后重建 worker"
+                )
+                speech_ensure_worker(delay=backoff)
+            return
+        if speech["queue"]:
+            speech_ensure_worker(delay=0.0)
+
     async def speech_worker() -> None:
         while speech["queue"]:
             sid = speech["queue"].pop(0)
-            item = speech["items"][sid]
+            item = speech["items"].get(sid)
+            if item is None:
+                _log(f"语音队列条目缺失，跳过 id={sid}")
+                continue
             speech["current"] = sid
             # **开始时刻在建播放任务之前就记。** 端起这一句与它真的开口之间隔着
             # 一次事件循环，插播的取消有可能正好落在这中间：那时播放任务已建、
@@ -5933,6 +6054,7 @@ def build_app(cfg: dict) -> FastAPI:
             try:
                 await task
                 item["state"] = "done"
+                speech["consecutive_crashes"] = 0
             except asyncio.CancelledError:
                 if asyncio.current_task().cancelling():
                     raise
@@ -5943,15 +6065,21 @@ def build_app(cfg: dict) -> FastAPI:
                                      round((time.time() - item["started_at"]) * 1000))
                 if item.get("rec_entry") is not None:
                     item["rec_entry"]["cut_ms"] = item["cut_ms"]
+                speech["consecutive_crashes"] = 0
             except Exception as exc:  # noqa: BLE001 一句出错不拖垮后面排着的
                 item["state"] = "failed"
                 item["error"] = f"{type(exc).__name__}: {exc}"
+                _log(f"语音播放失败 id={sid}: {item['error']}")
+                speech["consecutive_crashes"] = 0
             finally:
                 item["ended_at"] = time.time()
                 item.pop("task", None)
                 speech["current"] = None
                 item["done_evt"].set()
-        speech_forget_old()
+        try:
+            speech_forget_old()
+        except Exception as exc:  # noqa: BLE001
+            _log(f"清理旧语音记录失败: {type(exc).__name__}: {exc}")
 
     def speech_enqueue(
         syn: dict,
@@ -5981,9 +6109,8 @@ def build_app(cfg: dict) -> FastAPI:
             speech["queue"].insert(0, sid)
         else:
             speech["queue"].append(sid)
-        worker = speech["worker"]
-        if worker is None or worker.done():
-            speech["worker"] = asyncio.create_task(speech_worker())
+        speech_notify_change()
+        speech_ensure_worker(delay=0.0)
         return item
 
     async def speech_interrupt(reason: str, *, keep_queue: bool = False) -> dict:
@@ -6024,14 +6151,16 @@ def build_app(cfg: dict) -> FastAPI:
     async def speech_wait(target: str, timeout: float | None) -> dict:
         """等语音讲完。target 是 "all" 或一句的编号。
 
-        超时不许无限：默认按排着的总时长加每句的宽限算。等不到就报错，说清楚
-        卡在哪一句——而不是让调用方一直挂着说不出自己在等什么。
+        默认按排着的总时长加每句的宽限算；等待期间若有插播或新排队落到等待
+        范围内，按队列尾部重算期限（同时受硬上界保护，不无限死等）。
         """
         t0 = time.time()
+        fixed_timeout = timeout is not None
         if target == "all":
             pending = speech_pending()
             if not pending:
                 return {"target": "all", "waited_sec": 0.0, "idle": True}
+            item = None
         else:
             item = speech["items"].get(str(target))
             if item is None:
@@ -6040,28 +6169,104 @@ def build_app(cfg: dict) -> FastAPI:
                     f"{SPEECH_KEEP_DONE} 句）；等全部讲完用 --speech all")
             ahead = speech_pending()
             pending = ahead[:ahead.index(item) + 1] if item in ahead else [item]
-        if timeout is None:
-            timeout = sum(speech_remaining_sec(it) for it in pending) \
-                + (SPEECH_START_GRACE_SEC + SPEECH_END_GRACE_SEC) * len(pending) + 5
-        deadline = t0 + timeout
-        try:
+
+        def relevant_pending() -> list[dict]:
+            cur_pending = speech_pending()
             if target == "all":
-                # 等的过程中可能又排进来新的（另一条命令发的），全部讲完才算完。
-                while (pending := speech_pending()):
-                    await asyncio.wait_for(pending[-1]["done_evt"].wait(),
-                                           max(0.01, deadline - time.time()))
+                return cur_pending
+            assert item is not None
+            if item["done_evt"].is_set():
+                return []
+            if item in cur_pending:
+                return cur_pending[:cur_pending.index(item) + 1]
+            return [item]
+
+        def estimate_budget(items: list[dict]) -> float:
+            return (
+                sum(speech_remaining_sec(it) for it in items)
+                + (SPEECH_START_GRACE_SEC + SPEECH_END_GRACE_SEC) * len(items)
+                + SPEECH_WAIT_SLACK_SEC
+            )
+
+        initial_budget = float(timeout) if fixed_timeout else estimate_budget(pending)
+        deadline = t0 + initial_budget
+        hard_deadline = (
+            deadline
+            if fixed_timeout
+            else t0 + initial_budget + SPEECH_WAIT_MAX_EXTEND_SEC
+        )
+        accounted_ids: set[str] = {it["id"] for it in pending}
+        added_during_wait: list[str] = []
+
+        def absorb_new_items() -> None:
+            cur_rel = relevant_pending()
+            new_items = [it for it in cur_rel if it["id"] not in accounted_ids]
+            if not new_items:
+                return
+            for it in new_items:
+                accounted_ids.add(it["id"])
+                added_during_wait.append(it["id"])
+            if not fixed_timeout:
+                nonlocal deadline
+                recomputed = time.time() + estimate_budget(cur_rel)
+                deadline = min(hard_deadline, max(deadline, recomputed))
+
+        while True:
+            if target == "all":
+                cur_pending = speech_pending()
+                if not cur_pending:
+                    break
+                wait_evt = cur_pending[-1]["done_evt"]
             else:
-                await asyncio.wait_for(item["done_evt"].wait(),
-                                       max(0.01, deadline - time.time()))
-        except TimeoutError:
-            cur = speech["items"].get(speech["current"] or "")
-            raise TimeoutError(
-                f"等语音讲完等了 {timeout:.0f} 秒还没完"
-                + (f"，正在说第 {cur['id']} 句：{cur['text'][:40]}" if cur else "")
-                + "。要掐掉用 `frago desktop voice stop`") from None
+                assert item is not None
+                if item["done_evt"].is_set():
+                    break
+                wait_evt = item["done_evt"]
+
+            absorb_new_items()
+            now = time.time()
+            remaining = deadline - now
+            if remaining <= 0:
+                cur = speech["items"].get(speech["current"] or "")
+                waited = time.time() - t0
+                extra_note = (
+                    f"（期间又排了 {len(added_during_wait)} 句新语音）"
+                    if added_during_wait
+                    else ""
+                )
+                raise TimeoutError(
+                    f"等语音讲完等了 {waited:.0f} 秒还没完{extra_note}"
+                    + (f"，正在说第 {cur['id']} 句：{cur['text'][:40]}" if cur else "")
+                    + "。要掐掉用 `frago desktop voice stop`"
+                ) from None
+
+            enq_evt = speech["enqueued_evt"]
+            wait_task = asyncio.create_task(wait_evt.wait())
+            enq_task = asyncio.create_task(enq_evt.wait())
+            try:
+                _done, pending_tasks = await asyncio.wait(
+                    {wait_task, enq_task},
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for pt in pending_tasks:
+                    pt.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await pt
+            except BaseException:
+                for t in (wait_task, enq_task):
+                    if not t.done():
+                        t.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await t
+                raise
+            absorb_new_items()
+
         out = {"target": target, "waited_sec": round(time.time() - t0, 3)}
         if target != "all":
             out["speech"] = speech_view(item)
+        if added_during_wait:
+            out["extended_by"] = list(added_during_wait)
         return out
 
     def speech_event(meta: dict, msg: dict) -> None:

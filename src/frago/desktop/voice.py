@@ -108,9 +108,16 @@ RETRY_DELAYS = (1.0, 2.0)
 _RATE_RE = re.compile(r"^[+-]\d{1,3}%$")
 _PITCH_RE = re.compile(r"^[+-]\d{1,4}Hz$")
 _KEY_RE = re.compile(r"^[0-9a-f]{64}$")
-#: 中日韩文字与中日文标点。正文里出现任何一个，就说明这不是英文台词。
-_CJK_RE = re.compile(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf"
-                     r"\u4e00-\u9fff\uf900-\ufaff]")
+_VOICE_LOCALE_RE = re.compile(r"^([a-zA-Z]{2,})-([a-zA-Z]{2,})-(.+)$")
+#: 非纯英文字符集合：中日文标点（3000-303F）、日文假名（3040-30FF）、
+#: CJK 扩展A与汉字（3400-4DBF、4E00-9FFF）、韩文音节（AC00-D7AF）、
+#: CJK 兼容汉字（F900-FAFF）、全角标点与全角字符（FF00-FFEF）。
+#: 默认 ENFORCE_ENGLISH_TEXT=False 时仅用于语系识别，不拦截；
+#: 显式开启 ENFORCE_ENGLISH_TEXT=True 时，出现上述字符（含全角标点与韩文）一律在联网前拦截。
+_CJK_RE = re.compile(
+    r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf"
+    r"\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]"
+)
 
 
 class VoiceUnavailable(RuntimeError):
@@ -164,36 +171,50 @@ def check_params(rate: str, volume: str, pitch: str) -> None:
         raise ValueError(f"音高写成 +5Hz / -10Hz 这种形状，得到: {pitch!r}")
 
 
+def _normalize_voice_locale(voice_name: str | None) -> str:
+    """规范化嗓子名的语言-地区大小写（如 ``EN-US-AriaNeural`` -> ``en-US-AriaNeural``）。
+
+    嗓子名前缀校验不再强制小写；同时将标准的 ``lang-REGION-...`` 规范为
+    ``edge-tts`` 期待的 ``小写语言-大写地区`` 形式，避免因调用方大小写混写
+    被误判为非法或被底层正则拒绝。
+    """
+    cleaned = str(voice_name or "").strip()
+    m = _VOICE_LOCALE_RE.match(cleaned)
+    if not m:
+        return cleaned
+    return f"{m.group(1).lower()}-{m.group(2).upper()}-{m.group(3)}"
+
+
 def detect_language(text: str) -> str:
-    """根据正文是否包含中日韩字符自适应判定语言（'zh' 或 'en'）。"""
+    """根据正文是否包含中日韩字符或全角标点自适应判定语言（'zh' 或 'en'）。"""
     return "zh" if _CJK_RE.search(str(text or "")) else "en"
 
 
 def resolve_emotional_voice(text: str, voice_name: str | None = None) -> str:
     """为中英文回答自适应选择母语级富有感情的 Edge TTS Neural 音色。
 
-    - 当文本含中文字符（``detect_language(text) == "zh"``）时，强制优先使用地道中文母语情感音色
+    - 当文本含中文/CJK 字符（``detect_language(text) == "zh"``）时，强制优先使用地道中文母语情感音色
       ``zh-CN-XiaoxiaoNeural``（男声为 ``zh-CN-YunxiNeural``），杜绝 ``en-*`` 外国口音朗读中文；
     - 当文本为纯英文（``detect_language(text) == "en"``）时，使用地道英文情感音色
       ``en-US-AvaMultilingualNeural``（男声为 ``en-US-AndrewMultilingualNeural``）；
     - 若显式传入与当前文本语系一致的具体音色名（如中文下的 ``zh-CN-XiaoyiNeural`` 或英文下的
-      ``en-US-AriaNeural``），则沿用该指定音色。
+      ``en-US-AriaNeural`` / ``EN-US-AriaNeural``），大小写无关识别前缀并规范化后沿用该指定音色。
     """
     lang = detect_language(text)
-    cleaned = str(voice_name or "").strip()
+    cleaned = _normalize_voice_locale(voice_name)
     lower = cleaned.lower()
     is_male = lower == "male" or any(
         k in lower for k in ("yunxi", "yunjian", "andrew", "guy", "brian", "christopher")
     )
 
     if lang == "zh":
-        if cleaned.startswith("zh-"):
+        if lower.startswith("zh-"):
             return cleaned
         return EMOTIONAL_ZH_MALE_VOICE if is_male else EMOTIONAL_ZH_VOICE
 
     if lower == "zh":
         return EMOTIONAL_ZH_VOICE
-    if cleaned.startswith("en-"):
+    if lower.startswith("en-"):
         return cleaned
     return EMOTIONAL_EN_MALE_VOICE if is_male else EMOTIONAL_EN_VOICE
 
@@ -205,14 +226,15 @@ def check_language(text: str, voice_name: str) -> None:
     成」，调用方退回只显示字幕照常往下走；这个是「这个要求这一层不做」，必须当场可见。
     闷声把中文台词念成英文腔，或退回字幕让人以为只是没声音，两种都比报错更坏。
     """
-    if ENFORCE_ENGLISH_VOICE and not voice_name.startswith(f"{LANGUAGE}-"):
+    norm_voice = str(voice_name or "").strip().lower()
+    if ENFORCE_ENGLISH_VOICE and not norm_voice.startswith(f"{LANGUAGE.lower()}-"):
         raise ValueError(
             f"语音层只说英文：嗓子要 en- 开头的英文嗓子，得到 {voice_name!r}。"
             f"念英文就用 {DEFAULT_VOICE}；真要放宽，把 frago.desktop.voice 里的 "
             "ENFORCE_ENGLISH_VOICE 改成 False。")
     if ENFORCE_ENGLISH_TEXT and _CJK_RE.search(text):
         raise ValueError(
-            "语音层只说英文：这句里有中日文字符，这一层不合成。"
+            "语音层只说英文：这句里有中日韩文字或全角标点，这一层不合成。"
             "台词写成英文再来；真要放宽，把 frago.desktop.voice 里的 "
             "ENFORCE_ENGLISH_TEXT 改成 False。")
 
@@ -279,6 +301,7 @@ async def synthesize(text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
     if not text:
         raise ValueError("没有要合成的文字")
     check_params(rate, volume, pitch)
+    voice = _normalize_voice_locale(voice)
     if not ENFORCE_ENGLISH_VOICE:
         voice = resolve_emotional_voice(text, voice)
     check_language(text, voice)
@@ -306,8 +329,10 @@ async def synthesize(text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
             if not marks:
                 raise VoiceFailed(f"{voice} 一条句子时间都没给，换一个声音再试")
             break
-        except ValueError:
-            raise
+        except ValueError as exc:
+            # edge-tts 对不存在或不合规的嗓子（如 en-GB-Bogus）在构造/流阶段会抛 ValueError。
+            # 这里不重试（重试同样失败），而是转成 VoiceFailed 让调用方退回字幕、批次继续。
+            raise VoiceFailed(f"嗓子或语音参数不被引擎接受（{voice!r}）: {exc}") from exc
         except Exception as exc:  # noqa: BLE001 —— 网络与服务端的错一律算可重试
             errors.append(f"第 {attempt + 1} 次：{type(exc).__name__}: {exc}"
                           .rstrip(": "))
