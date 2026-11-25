@@ -1337,3 +1337,76 @@ describe('P0-2 DeliveryTriad 完工验收三要素', () => {
     expect(article?.className).toContain('pt-3.5');
   });
 });
+
+describe('Top-2 Stop 守卫纠偏渲染与原型对齐', () => {
+  it('Stop 守卫拦截文本选择退回时，context.inject(hook=Stop, prevented_continuation=true) 自动摊开提示补卡', () => {
+    render(
+      <RecordCard
+        record={makeRecord('context.inject', {
+          payload: {
+            source: 'hook',
+            hook_event: 'Stop',
+            prevented_continuation: true,
+            blocks: ['[Stop] 禁止裸写纯文本 [单选] 选项列表，请改用 frago app ask 生成交互卡。'],
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    const inject = screen.getByTestId('hook-inject');
+    expect(inject).toBeTruthy();
+    expect(inject.textContent).toContain('拦住了收尾');
+    expect(inject.textContent).toContain('frago app ask');
+  });
+
+  it('agent.say 携带 payload.rectify 时，按主原型 #sessions/card-rectify-single-choice 渲染克制纠偏条与折叠原文抽屉', () => {
+    const toolBody = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '这个 skill 装在哪里？',
+        options: [
+          {
+            key: 'A',
+            label: '只装在报销目录里',
+            effect: '只在整理报销时生效',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '装到全局 ~/.claude/skills/',
+            effect: '在任何目录都会触发',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const rawSnippet = '[单选] 这个 skill 装在哪里？\n- 只装在报销目录里（推荐）\n- 装到全局';
+    render(
+      <RecordCard
+        record={makeRecord('agent.say', {
+          payload: {
+            text: '已完成脚本调试，先确认第一项：',
+            ui_component: toolBody,
+            rectify: {
+              raw_text: rawSnippet,
+            },
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+
+    expect(screen.getByTestId('rectify-strip')).toBeTruthy();
+    expect(screen.getByTestId('rectify-badge').textContent).toContain('已自动纠偏');
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    expect(screen.queryByTestId('rectify-raw-drawer')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('rectify-toggle-raw'));
+    const drawer = screen.getByTestId('rectify-raw-drawer');
+    expect(drawer.textContent).toContain('[单选] 这个 skill 装在哪里？');
+  });
+});

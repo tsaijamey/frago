@@ -49,6 +49,7 @@ import {
   Scissors,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Terminal,
   User,
   CornerDownRight,
@@ -1330,6 +1331,78 @@ function DeliveryTriad({ data }: { data: DeliveryTriadData }) {
   );
 }
 
+interface RectifyMeta {
+  badge: string;
+  rawText: string;
+  rawHead: string;
+}
+
+function parseRectifyMeta(raw: unknown): RectifyMeta | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const badge = typeof obj.badge === 'string' ? obj.badge.trim() : '';
+  const rawText =
+    typeof obj.raw_text === 'string'
+      ? obj.raw_text
+      : typeof obj.rawText === 'string'
+        ? obj.rawText
+        : '';
+  const rawHead =
+    typeof obj.raw_head === 'string'
+      ? obj.raw_head.trim()
+      : typeof obj.rawHead === 'string'
+        ? obj.rawHead.trim()
+        : '';
+  if (!badge && !rawText) return null;
+  return { badge, rawText, rawHead };
+}
+
+/**
+ * Stop 守卫纠偏提示条（1:1 对齐主原型 `#sessions/card-rectify-single-choice`）。
+ * 克制中性徽标 + 可折叠拦截原文抽屉，无侵入地呈现后台自动纠偏链路。
+ */
+function RectifyStrip({ meta }: { meta: RectifyMeta }) {
+  const { t } = useTranslation();
+  const [rawOpen, setRawOpen] = useState(false);
+  return (
+    <div className="my-2 flex flex-col gap-1.5" data-testid="rectify-strip">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          data-testid="rectify-badge"
+          className="inline-flex min-h-6 items-center gap-1.5 rounded-[6px] border border-border-color bg-bg-secondary px-[9px] py-[2px] text-[11px] font-medium text-text-secondary"
+        >
+          <ShieldCheck size={12} className="shrink-0 text-accent-primary" />
+          <span>{meta.badge || t('workbench.record.rectifyBadge')}</span>
+        </span>
+        {meta.rawText ? (
+          <button
+            type="button"
+            data-testid="rectify-toggle-raw"
+            aria-expanded={rawOpen}
+            onClick={() => setRawOpen((v) => !v)}
+            className="rounded-[4px] px-[5px] py-[2px] text-[11px] text-text-muted underline underline-offset-[3px] hover:bg-bg-hover hover:text-text-primary"
+          >
+            {rawOpen ? t('workbench.record.rectifyHideRaw') : t('workbench.record.rectifyViewRaw')}
+          </button>
+        ) : null}
+      </div>
+      {rawOpen && meta.rawText ? (
+        <div
+          data-testid="rectify-raw-drawer"
+          className="rounded-[8px] border border-border-color bg-bg-secondary px-[11px] py-[9px] text-[12px] leading-[1.55] text-text-secondary"
+        >
+          <div className="mb-1 text-[11px] font-semibold text-text-muted">
+            {meta.rawHead || t('workbench.record.rectifyRawHead')}
+          </div>
+          <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[11px] text-text-secondary">
+            {meta.rawText}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * agent 的回复。末尾是 `answer-needed-by-human` 区块的，正文照常、区块换成决定卡片。
  *
@@ -1374,6 +1447,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const deliveryTriad = !record.agent_path.length
     ? parseDeliveryTriad(p.delivery_triad)
     : null;
+  const rectifyMeta = !record.agent_path.length ? parseRectifyMeta(p.rectify) : null;
   return (
     <TextShell
       record={record}
@@ -1390,12 +1464,25 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
     >
       {trailing ? (
         <>
-          <DecisionReply
-            recordId={record.id}
-            text={bodyWithoutGrid}
-            split={trailing}
-            rich={(s) => <Rich text={s} />}
-          />
+          {rectifyMeta ? (
+            <>
+              <Rich text={trailing.body} />
+              <RectifyStrip meta={rectifyMeta} />
+              <DecisionReply
+                recordId={record.id}
+                text={bodyWithoutGrid}
+                split={{ ...trailing, body: '' }}
+                rich={(s) => <Rich text={s} />}
+              />
+            </>
+          ) : (
+            <DecisionReply
+              recordId={record.id}
+              text={bodyWithoutGrid}
+              split={trailing}
+              rich={(s) => <Rich text={s} />}
+            />
+          )}
           {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
@@ -1408,6 +1495,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
           ))}
+          {rectifyMeta ? <RectifyStrip meta={rectifyMeta} /> : null}
           {uiComponent ? (
             uiComponent.ok ? (
               <DecisionCard block={uiComponent.block} recordId={record.id} />
