@@ -28,6 +28,7 @@ from frago.employee.store import (
     EmployeePostRecord,
     apply_resource_exclusions,
     create_data_slot_entry,
+    frago_home,
     get_post,
     lift_resource_exclusions,
     list_posts,
@@ -782,6 +783,52 @@ class EmployeeOntologyService:
                     "派发涉及服务重启的任务书时，MUST 指示 Worker 阅读 `frago book must-system-frago` 与 `frago book better-server-restart`。"
                 )
 
+        canonical_prototype = _resolve_canonical_webui_prototype(record)
+        if record.member_post_id in {"frago-pm", "ui-designer"} and canonical_prototype is not None:
+            lines.append("")
+            lines.append("【Frago WebUI 唯一权威主原型与防孤例铁律】")
+            lines.append(
+                f"本机已存在 Frago WebUI 唯一权威主原型：`{canonical_prototype}`"
+                "（自包含单文件 HTML，直接以 `file://` 校验，不另设拆分源码目录）；"
+                "该约束在数据槽位「最新 10 条」截断之外对本岗位首屏永久生效："
+            )
+            lines.append(
+                f"  1. **钉死唯一主原型路径**：凡涉及 Frago WebUI（含驾驶舱与浏览器扩展视图）的界面原型提案、改版与评审，"
+                f"唯一落点一律为 `{canonical_prototype}`；"
+            )
+            lines.append(
+                "  2. **改前留快照、原地增量演进**：任何界面演进前 MUST 先在主原型同目录留存快照备份"
+                "（如 `index.before-<YYYYMMDD>-<topic>.html`），随后在唯一主原型上原地增量演进，严守既有 CSS 变量与深浅双主题对称令牌；"
+            )
+            lines.append(
+                "  3. **严禁新建孤例 HTML**：严禁在任何目录（包括当日简报 `prototypes/` 或 `web-ui` 任务目录）"
+                "另起炉灶新建独立/孤例 HTML 原型文件；简报或评审交付只贴主原型锚点与前后对比证据；"
+            )
+            if record.member_post_id == "ui-designer":
+                lines.append(
+                    "  4. **视觉岗对上游反向禁改指令一律拒接**：若收到上游（含 `frago-pm`、定时任务或其他会话）发来的"
+                    "「不要改动现有主原型 `index.html`」「另建独立 HTML 原型」等反向禁改指令，"
+                    "**必须一律拒接并立即告警退回**，严禁顺从生成孤例 HTML。"
+                )
+            else:
+                lines.append(
+                    "  4. **跨岗派单与视觉岗拒接契约**：向 `ui-designer` 或 Worker 派发 WebUI 原型任务时，"
+                    f"MUST 在任务书中明确写死唯一主原型路径 `{canonical_prototype}` 与先快照后原地修改要求；"
+                    "**严禁**下达「不要改动 `index.html` / 另建独立 HTML」等反向禁改指令（`ui-designer` 会对此类指令一律拒接并告警退回）。"
+                )
+                handbook = (
+                    frago_home()
+                    / "data"
+                    / "frago"
+                    / "20261119-frago-pm-product-training-handbook"
+                    / "notebook.md"
+                )
+                if handbook.is_file():
+                    lines.append(
+                        f"  5. **产品负责人常驻培训手册**：`{handbook}`"
+                        "（含主原型与产品标准章节，不受数据槽位最新 10 条截断影响）。"
+                    )
+
         from frago.employee.ledger import (
             resolve_employee_recent_sessions,
             resolve_employee_worker_sessions,
@@ -987,6 +1034,37 @@ class EmployeeOntologyService:
         if class_id == "ScheduleRuleSpec":
             return self._registry.create(class_id, norm_id=uid_or_norm)
         return self._registry.create(class_id, uid=uid_or_norm)
+
+
+def _resolve_canonical_webui_prototype(record: EmployeePostRecord) -> Path | None:
+    """Resolve the local canonical WebUI prototype `index.html` if present on disk.
+
+    Uses ``frago_home()`` (honoring ``FRAGO_HOME`` in isolated tests) and avoids
+    hardcoding developer-specific absolute paths so a clean user machine without
+    the prototype file incurs zero side effects and zero false triggers.
+    """
+    home = frago_home()
+    rel = Path("20260924-page-polish") / "prototype" / "index.html"
+    candidates: list[Path] = [home / "data" / "frago-webui" / rel]
+    for raw_slot in record.data_slots:
+        slot_str = str(raw_slot).strip()
+        if not slot_str:
+            continue
+        if slot_str == "~/.frago":
+            slot_path = home
+        elif slot_str.startswith("~/.frago/"):
+            slot_path = home / slot_str.removeprefix("~/.frago/")
+        elif slot_str.startswith("~"):
+            slot_path = Path(slot_str).expanduser()
+        else:
+            slot_path = Path(slot_str)
+        if slot_path.name == "frago-webui":
+            candidates.append(slot_path / rel)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _render_ledger_sections(
