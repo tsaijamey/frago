@@ -676,9 +676,11 @@ class TmuxCoreProcess:
     def terminate(self) -> None:
         self.stdin.close()
         pid = self._wait_for_pid(timeout_s=0.1) or self.pid
-        if pid:
+        if pid and _pid_is_alive(pid):
             with contextlib.suppress(OSError):
                 os.kill(pid, signal.SIGTERM)
+        elif not self.is_superseded():
+            self._kill_tmux_quietly()
 
     def kill(self) -> None:
         self.stdin.close()

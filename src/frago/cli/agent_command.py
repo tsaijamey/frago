@@ -357,6 +357,92 @@ def _record_worker_launch(
         record_dispatch(child, agent_type=agent_type, cwd=cwd, prompt_head=prompt_text)
 
 
+def _start_cli_turn(
+    sid: str,
+    *,
+    agent_kernel_id: str,
+    origin: str,
+) -> int | None:
+    """Start or resume a turn in SessionOntologyService when writable (respecting test guard)."""
+    clean_sid = str(sid or "").strip()
+    if not clean_sid:
+        return None
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if (
+            onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            existing = onto_svc.get_session(clean_sid)
+            eff_origin = existing.origin if existing is not None else origin
+            eff_kernel = existing.agent_kernel if existing is not None else agent_kernel_id
+            updated = onto_svc.start_turn(
+                clean_sid,
+                agent_kernel_id=eff_kernel,
+                origin=eff_origin,
+            )
+            return int(updated.turn_seq)
+    return None
+
+
+def _closeout_cli_turn(
+    sid: str,
+    *,
+    turn_seq: int | None,
+    status: str,
+    error_text: str = "",
+    agent_kernel_id: str = "claude",
+    origin: str = "terminal",
+) -> None:
+    """Close out a CLI driver turn in SessionOntologyService before exiting."""
+    clean_sid = str(sid or "").strip()
+    if not clean_sid:
+        return
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if (
+            onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            onto_svc.ensure_managed_session(
+                clean_sid,
+                agent_kernel_id=agent_kernel_id,
+                origin=origin,
+                initial_state="running",
+            )
+            norm = str(status or "ok").strip().lower()
+            target_state: str
+            waiting_reason: str | None = None
+            summary: str | None = None
+            if norm == "needs_input":
+                target_state = "awaiting_input"
+                waiting_reason = "needs_input"
+            elif norm in ("error", "timeout"):
+                target_state = "error"
+                summary = (
+                    (error_text or f"CLI turn ended with status '{norm}'").strip()[:500]
+                )
+            else:
+                target_state = "completed"
+
+            eff_seq = int(turn_seq) if turn_seq is not None and turn_seq > 0 else (
+                int(getattr(onto_svc.get_session(clean_sid), "turn_seq", 1) or 1)
+            )
+            onto_svc.complete_turn_if_current(
+                clean_sid,
+                turn_seq=eff_seq,
+                target_state=target_state,
+                waiting_reason=waiting_reason,
+                summary=summary,
+            )
+
+
 def _run_tmux_driver(
     prompt_text: str,
     *,
@@ -388,21 +474,21 @@ def _run_tmux_driver(
 
     sid = session_id or str(uuid.uuid4())
     tmux_name = tmux_target or tmux_name_for(sid)
-    if session_id and not dry_run:
+    onto_sid = _worker_child_id(sid, agent_type=agent_type, native_session_id=native_session_id) or sid
+    default_origin = "worker" if source == "worker" else "terminal"
+    if not dry_run and default_origin == "terminal":
         with contextlib.suppress(Exception):
-            from frago.session.service import get_default_session_service
-            from frago.session.store import DEFAULT_SESSION_STORE_PATH
+            from frago.session.session_origin import parent_from_env
 
-            onto_svc = get_default_session_service()
-            if (
-                onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
-                or not os.environ.get("PYTEST_CURRENT_TEST")
-            ):
-                onto_svc.start_turn(
-                    sid,
-                    agent_kernel_id=agent_type,
-                    origin="worker" if source == "worker" else "terminal",
-                )
+            if parent_from_env():
+                default_origin = "worker"
+    turn_seq: int | None = None
+    if not dry_run:
+        turn_seq = _start_cli_turn(
+            onto_sid,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
     if not quiet:
         where = f" in {tmux_target}" if tmux_target else ""
         click.echo(f"[OK] tmux driver: agent={agent_type} session={sid}{where}", err=json_out)
@@ -439,27 +525,54 @@ def _run_tmux_driver(
             tmux_target=tmux_target,
         )
     except KeyError:
+        note = f"Error: no driver registered for agent-type {agent_type!r}"
+        _closeout_cli_turn(
+            onto_sid,
+            turn_seq=turn_seq,
+            status="error",
+            error_text=note,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
         _emit_and_exit(
             status="error", text="", session_id=sid, tmux_name=tmux_name,
             duration_ms=0, json_out=json_out,
-            human_note=f"Error: no driver registered for agent-type {agent_type!r}",
+            human_note=note,
         )
         return
     except FileNotFoundError:
+        note = "Error: tmux not found. Please install tmux first."
+        _closeout_cli_turn(
+            onto_sid,
+            turn_seq=turn_seq,
+            status="error",
+            error_text=note,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
         _emit_and_exit(
             status="error", text="", session_id=sid, tmux_name=tmux_name,
             duration_ms=0, json_out=json_out,
-            human_note="Error: tmux not found. Please install tmux first.",
+            human_note=note,
         )
         return
     except Exception as exc:
         # driver/tmux 层的任何其它失败（如 TmuxStartupError：会话起了但等不到就绪
         # 信号）同属 error=3。机器契约要求「必定落在四态之一」，故此处兜底，
         # NEVER 让 traceback 顶穿成一个契约外的退出码。
+        note = f"Error: agent driver failed: {exc}"
+        _closeout_cli_turn(
+            onto_sid,
+            turn_seq=turn_seq,
+            status="error",
+            error_text=note,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
         _emit_and_exit(
             status="error", text="", session_id=sid, tmux_name=tmux_name,
             duration_ms=0, json_out=json_out,
-            human_note=f"Error: agent driver failed: {exc}",
+            human_note=note,
         )
         return
     finally:
@@ -487,6 +600,45 @@ def _run_tmux_driver(
             from frago.agent_driver.transcript import write_turn
 
             write_turn(sid, agent_type, cwd, prompt_text, result, source=source)
+
+    resolved_sid = onto_sid
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.driver import listed_session_id
+
+        listed = listed_session_id(agent_type, sid, native_session_id=native_session_id)
+        if listed:
+            resolved_sid = listed
+
+    if resolved_sid != onto_sid:
+        _closeout_cli_turn(
+            onto_sid,
+            turn_seq=turn_seq,
+            status="ok",
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
+        resolved_seq = _start_cli_turn(
+            resolved_sid,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
+        _closeout_cli_turn(
+            resolved_sid,
+            turn_seq=resolved_seq,
+            status=result.status,
+            error_text=result.text,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
+    else:
+        _closeout_cli_turn(
+            onto_sid,
+            turn_seq=turn_seq,
+            status=result.status,
+            error_text=result.text,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
 
     notes = {
         "needs_input": "[!] Agent needs input (auth wall / permission / clarification)",
@@ -538,21 +690,20 @@ def _run_kernel(
     from frago.agent_driver import kernel_backend
 
     sid = session_id or kernel_backend.new_session_id()
-    if session_id and not dry_run:
+    default_origin = "terminal"
+    if not dry_run:
         with contextlib.suppress(Exception):
-            from frago.session.service import get_default_session_service
-            from frago.session.store import DEFAULT_SESSION_STORE_PATH
+            from frago.session.session_origin import parent_from_env
 
-            onto_svc = get_default_session_service()
-            if (
-                onto_svc.store.store_path != DEFAULT_SESSION_STORE_PATH
-                or not os.environ.get("PYTEST_CURRENT_TEST")
-            ):
-                onto_svc.start_turn(
-                    sid,
-                    agent_kernel_id=agent_type,
-                    origin="terminal",
-                )
+            if parent_from_env():
+                default_origin = "worker"
+    turn_seq: int | None = None
+    if not dry_run:
+        turn_seq = _start_cli_turn(
+            sid,
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
     if not quiet:
         click.echo(f"[OK] kernel driver: session={sid}", err=json_out)
     if dry_run:
@@ -604,11 +755,30 @@ def _run_kernel(
             env=run_env,
             on_spawn=_on_spawn,
         )
+    except Exception as exc:
+        _closeout_cli_turn(
+            sid,
+            turn_seq=turn_seq,
+            status="error",
+            error_text=str(exc),
+            agent_kernel_id=agent_type,
+            origin=default_origin,
+        )
+        raise
     finally:
         # run_turn 无论正常返回还是抛错，内核进程都已收场；此刻把名册里临时登记的那条
         # 抹掉，别让 `ls` 留下死条目。
         if registered:
             deregister_transient_worker(sid)
+
+    _closeout_cli_turn(
+        sid,
+        turn_seq=turn_seq,
+        status=turn.status,
+        error_text=turn.text,
+        agent_kernel_id=agent_type,
+        origin=default_origin,
+    )
 
     # 记账不在这里——已经挪到 `_on_spawn`，进程起来的那一刻就写（见那里的注释）。放在这
     # 里的话，账要等整轮跑完才落，worker 在跑的这几分钟里在左栏是一张散在主干上的卡片。
@@ -664,17 +834,33 @@ def _run_worker_turn_sync(
     if runs_on_kernel(agent_type):
         from frago.agent_driver import kernel_backend
 
+        from .drive_command import deregister_transient_worker, register_transient_worker
+
         sid = session_id or kernel_backend.new_session_id()
         run_env["FRAGO_SESSION_ID"] = sid
-        turn = kernel_backend.run_turn(
-            prompt_text,
-            session_id=sid,
-            cwd=cwd,
-            profile_id=profile_id,
-            model=model,
-            timeout_s=effective_timeout,
-            env=run_env,
-        )
+        registered = False
+
+        def _on_spawn_worker(pid: int, tmux_name: str | None = None) -> None:
+            nonlocal registered
+            register_transient_worker(
+                name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd, pid=pid
+            )
+            registered = True
+
+        try:
+            turn = kernel_backend.run_turn(
+                prompt_text,
+                session_id=sid,
+                cwd=cwd,
+                profile_id=profile_id,
+                model=model,
+                timeout_s=effective_timeout,
+                env=run_env,
+                on_spawn=_on_spawn_worker,
+            )
+        finally:
+            if registered:
+                deregister_transient_worker(sid)
         return sid, str(turn.status or "ok"), str(turn.text or "").strip()
 
     from frago.agent_driver import SessionLauncher

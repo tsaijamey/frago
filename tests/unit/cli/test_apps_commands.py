@@ -24,6 +24,18 @@ def runner():
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _clean_unattended_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """隔离运行测试的宿主环境变量（例如测试本身跑在 worker 会话中）。"""
+    for key in (
+        "FRAGO_SESSION_ORIGIN",
+        "FRAGO_UNATTENDED",
+        "FRAGO_AGENT_ROLE",
+        "FRAGO_ALLOW_INTERACTIVE_ASK",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 # ── registry ─────────────────────────────────────────────────────────
 
 def test_list_apps_contains_mermaid():

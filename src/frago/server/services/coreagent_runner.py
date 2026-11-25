@@ -35,6 +35,7 @@ stdin 写，不再当场拒掉第二句。
 
 from __future__ import annotations
 
+import atexit as _atexit_mod
 import contextlib
 import json
 import logging
@@ -45,6 +46,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from frago.server.services.ui_session_runner import SessionActivation
 
@@ -314,20 +316,39 @@ def live_snapshot() -> list[LiveSessionSnapshot]:
     缓存好的路（见 ``agent_sessions_service``）。进程号拿不到时给 None——界面据此
     不报内存，而不是编一个 0。
     """
+    now = time.time()
     with _sessions_lock:
-        return [
-            LiveSessionSnapshot(
-                session_id=sid,
-                state=sess.state,
-                pid=sess.proc.pid if sess.proc is not None else None,
-                cwd=sess.cwd,
-                title=sess.title,
-                touched_at=sess.touched_at,
-                tmux_name=getattr(sess.proc, "tmux_name", None) if sess.proc is not None else None,
+        out: list[LiveSessionSnapshot] = []
+        for sid, sess in _sessions.items():
+            if sess.state == "absent":
+                continue
+            if sess.proc is not None:
+                poll_fn = getattr(sess.proc, "poll", None)
+                if callable(poll_fn) and poll_fn() is not None:
+                    continue
+            elif sess.state != "starting":
+                continue
+            if (
+                sess.state == "starting"
+                and sess.in_flight == 0
+                and sess.touched_at > 0
+                and (now - sess.touched_at) > 60.0
+            ):
+                continue
+            out.append(
+                LiveSessionSnapshot(
+                    session_id=sid,
+                    state=sess.state,
+                    pid=sess.proc.pid if sess.proc is not None else None,
+                    cwd=sess.cwd,
+                    title=sess.title,
+                    touched_at=sess.touched_at,
+                    tmux_name=getattr(sess.proc, "tmux_name", None)
+                    if sess.proc is not None
+                    else None,
+                )
             )
-            for sid, sess in _sessions.items()
-            if sess.state != "absent"
-        ]
+        return out
 
 
 def queued_count(session_id: str) -> int:
@@ -590,6 +611,13 @@ def _let_it_go(proc: subprocess.Popen, grace: float, what: str) -> None:
         except Exception:  # noqa: BLE001
             logger.warning("%s：补刀之后还是收不干净（pid=%s）", what, proc.pid, exc_info=True)
     finally:
+        is_sup = getattr(proc, "is_superseded", None)
+        superseded = bool(callable(is_sup) and is_sup())
+        if not superseded:
+            kill_tmux = getattr(proc, "_kill_tmux_quietly", None)
+            if callable(kill_tmux):
+                with contextlib.suppress(Exception):
+                    kill_tmux()
         cleanup = getattr(proc, "cleanup_runtime_dir", None)
         if callable(cleanup):
             with contextlib.suppress(Exception):
@@ -777,10 +805,24 @@ def _sweep(sess: _Session) -> None:
     有话就写。
     """
     now = time.time()
+    timed_out_starting_sid: str | None = None
     with sess.lock:
         if sess.pending.qsize() > 0 or sess.pending_turns:
             return  # 刚有新话：马上就去取，不在这儿动状态
-        if sess.state == "busy":
+        if sess.state == "starting":
+            if sess.proc is None or sess.proc.poll() is not None:
+                _reclaim(sess)
+                return
+            if now - sess.touched_at <= 60.0:
+                return
+            if sess.in_flight > 0:
+                sess.state = "busy"
+                return
+            logger.warning("coreagent 启动超时未就绪，回收窗格（session=%s）", sess.session_id)
+            _reclaim(sess)
+            sess.turn_done.set()
+            timed_out_starting_sid = sess.session_id
+        elif sess.state == "busy":
             if now - sess.touched_at <= TURN_TIMEOUT_S:
                 return
             # 一轮跑得太久还没交卷：别把这一场锁死，让下一句还能发。
@@ -788,11 +830,25 @@ def _sweep(sess: _Session) -> None:
             sess.state = "idle"
             sess.turn_done.set()
             return
-        if sess.state != "idle" or now - sess.touched_at <= IDLE_EVICT_S:
+        elif sess.state != "idle" or now - sess.touched_at <= IDLE_EVICT_S:
             return
-        # 闲够久了：把进程收掉，这一场退回 absent。下次来话重新起、重放一次历史。
-        logger.info("coreagent 空闲回收（session=%s）", sess.session_id)
-        _reclaim(sess)
+        else:
+            # 闲够久了：把进程收掉，这一场退回 absent。下次来话重新起、重放一次历史。
+            logger.info("coreagent 空闲回收（session=%s）", sess.session_id)
+            _reclaim(sess)
+            return
+
+    if timed_out_starting_sid:
+        with contextlib.suppress(Exception):
+            from frago.session.service import can_write_ontology_store, get_default_session_service
+
+            onto_svc = get_default_session_service()
+            if can_write_ontology_store(onto_svc):
+                rec = onto_svc.get_session(timed_out_starting_sid)
+                if rec is not None and rec.lifecycle_state in ("running", "queued"):
+                    onto_svc.store.batch_reconcile_states(
+                        [(timed_out_starting_sid, "error", "coreagent_startup_timeout")]
+                    )
 
 
 def _feed_one(sess: _Session, prompt: str) -> None:
@@ -1190,13 +1246,61 @@ def recycle_for_model_change(reason: str = "model_switch") -> dict[str, int]:
     return {"reclaimed": reclaimed, "deferred": deferred}
 
 
-def shutdown() -> None:
-    """把全部常驻进程收掉（server 停机用）。"""
+def shutdown(*, grace_s: float = 2.0) -> None:
+    """把全部常驻进程收掉（server 停机 / 信号退出用），同步清理托管的 tmux 窗格并收口运行态。"""
+    import atexit as _atexit  # noqa: F401
+
     with _sessions_lock:
         all_sessions = list(_sessions.values())
         _sessions.clear()
+    if not all_sessions:
+        return
+
+    reap_targets: list[tuple[str, bool, Any]] = []
     for sess in all_sessions:
         with sess.lock:
+            was_running = sess.state in ("busy", "starting")
             sess.closed = True
             _wake_feeder(sess)
-            _reclaim(sess)
+            if sess.unattended:
+                with contextlib.suppress(Exception):
+                    from frago.server.services import stage_orchestrator
+
+                    stage_orchestrator.cleanup_presenter(sess.session_id)
+            proc = sess.proc
+            sess.proc = None
+            sess.state = "absent"
+            sess.turn_done.set()
+            if proc is not None:
+                with contextlib.suppress(Exception):
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.close()
+                reap_targets.append((sess.session_id, was_running, proc))
+            elif was_running:
+                reap_targets.append((sess.session_id, True, None))
+
+    per_proc_grace = min(max(0.2, float(grace_s)), float(_REAP_GRACE_S))
+    interrupted_sids: list[str] = []
+    for sid, was_running, proc in reap_targets:
+        if was_running:
+            interrupted_sids.append(sid)
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                _let_it_go(proc, per_proc_grace, "停机清理")
+
+    if interrupted_sids:
+        with contextlib.suppress(Exception):
+            from frago.session.service import can_write_ontology_store, get_default_session_service
+
+            onto_svc = get_default_session_service()
+            if can_write_ontology_store(onto_svc):
+                updates = []
+                for sid in interrupted_sids:
+                    rec = onto_svc.get_session(sid)
+                    if rec is not None and rec.lifecycle_state in ("running", "queued"):
+                        updates.append((sid, "error", "server_shutdown_interrupted"))
+                if updates:
+                    onto_svc.store.batch_reconcile_states(updates)
+
+
+_atexit_mod.register(shutdown)

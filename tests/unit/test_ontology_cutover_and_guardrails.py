@@ -1580,5 +1580,316 @@ class TestResumedErrorSessionTurnsRunning:
         assert store.get(sid_b).lifecycle_state == "error"
 
 
+def test_v2_60s_self_heal_safety_gates() -> None:
+    """V2: 60 秒自愈四类安全边界（正例已交卷清理、保护 awaiting_input、保护长跑一次性 coreagent、冷启动与半途崩溃保护）。"""
+    from types import SimpleNamespace
+
+    from frago.session.service import (
+        DISCONNECT_CRASH_GRACE_SECONDS,
+        SHORT_SETTLED_GRACE_SECONDS,
+        LiveRuntimeProbes,
+        evaluate_session_liveness_and_state,
+    )
+    from frago.session.store import SessionOntologyRecord
+
+    now = 1_800_000_000.0
+
+    # 1) 正例：running、全离线、转录已交卷且 >60s -> 自愈 completed；若带失败派发单 -> 保真 error
+    rec_done = SessionOntologyRecord(
+        session_id="core_v2_done",
+        agent_kernel="coreagent",
+        lifecycle_state="running",
+        turn_seq=1,
+        updated_at=int(now - 90),
+    )
+    ev_done = evaluate_session_liveness_and_state(
+        session_id="core_v2_done",
+        onto_rec=rec_done,
+        card_status="running",
+        last_kind="agent.say",
+        last_active_s=now - 90,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(),
+        now_s=now,
+    )
+    assert ev_done.lifecycle_state == "completed"
+    assert ev_done.heal_target == "completed"
+
+    failed_job = SimpleNamespace(status="failed", exit_code=1, error="worker boom", turn_seq=1)
+    ev_err = evaluate_session_liveness_and_state(
+        session_id="core_v2_err",
+        onto_rec=SessionOntologyRecord(
+            session_id="core_v2_err",
+            agent_kernel="coreagent",
+            lifecycle_state="running",
+            turn_seq=1,
+            updated_at=int(now - 90),
+        ),
+        card_status="running",
+        last_kind="agent.say",
+        last_active_s=now - 90,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(latest_dispatch_by_target={"core_v2_err": failed_job}),
+        now_s=now,
+    )
+    assert ev_err.lifecycle_state == "error"
+    assert ev_err.heal_target == "error"
+
+    # 2) 保护 awaiting_input：离线且 >60s（如 1800s）仍保持 awaiting_input，绝不误洗成 completed
+    rec_wait = SessionOntologyRecord(
+        session_id="core_v2_wait",
+        agent_kernel="coreagent",
+        lifecycle_state="awaiting_input",
+        turn_seq=1,
+        updated_at=int(now - 1800),
+    )
+    ev_wait = evaluate_session_liveness_and_state(
+        session_id="core_v2_wait",
+        onto_rec=rec_wait,
+        card_status="done",
+        last_kind="agent.say",
+        last_active_s=now - 1800,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(),
+        now_s=now,
+    )
+    assert ev_wait.lifecycle_state == "awaiting_input"
+    assert ev_wait.heal_target is None
+
+    # 3) 保护长跑一次性 coreagent：无 tmux 但存在存活 PID/在途派发，即便 >60s 未写新消息也保持 running
+    rec_long = SessionOntologyRecord(
+        session_id="core_v2_long",
+        agent_kernel="coreagent",
+        lifecycle_state="running",
+        turn_seq=1,
+        updated_at=int(now - 180),
+    )
+    ev_long = evaluate_session_liveness_and_state(
+        session_id="core_v2_long",
+        onto_rec=rec_long,
+        card_status="running",
+        last_kind="tool.call",
+        last_active_s=now - 180,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(live_drive_pids={"core_v2_long"}),
+        now_s=now,
+    )
+    assert ev_long.lifecycle_state == "running"
+    assert ev_long.heal_target is None
+
+    # 4a) 保护冷启动：<60s 不收口
+    ev_cold = evaluate_session_liveness_and_state(
+        session_id="core_v2_cold",
+        onto_rec=SessionOntologyRecord(
+            session_id="core_v2_cold",
+            agent_kernel="coreagent",
+            lifecycle_state="running",
+            turn_seq=1,
+            updated_at=int(now - (SHORT_SETTLED_GRACE_SECONDS - 10)),
+        ),
+        card_status="done",
+        last_kind="agent.say",
+        last_active_s=now - 120,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(),
+        now_s=now,
+    )
+    assert ev_cold.lifecycle_state == "running"
+    assert ev_cold.heal_target is None
+
+    # 4b) 保护半途崩溃：进程已死且停在工具调用中，渡过 300s 断连窗后落为 error 而非 completed
+    ev_crash = evaluate_session_liveness_and_state(
+        session_id="core_v2_crash",
+        onto_rec=SessionOntologyRecord(
+            session_id="core_v2_crash",
+            agent_kernel="coreagent",
+            lifecycle_state="running",
+            turn_seq=1,
+            updated_at=int(now - (DISCONNECT_CRASH_GRACE_SECONDS + 10)),
+        ),
+        card_status="running",
+        last_kind="tool.call",
+        last_active_s=now - (DISCONNECT_CRASH_GRACE_SECONDS + 10),
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=LiveRuntimeProbes(),
+        now_s=now,
+    )
+    assert ev_crash.lifecycle_state == "error"
+    assert ev_crash.heal_target == "error"
+    assert ev_crash.heal_summary == "process_terminated_mid_turn"
+
+
+def test_rework_drive_pid_reuse_does_not_revive_completed_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """缺陷 1 回归：陈旧 drive/*.json PID 复用到无关进程（如 Microsoft Edge）不计入存活探针，且不复活已 completed 会话。"""
+    import json as json_mod
+    import os
+
+    from frago.cli import drive_command
+    from frago.session import service as sess_svc
+    from frago.session.store import SessionOntologyRecord
+
+    monkeypatch.setenv("FRAGO_DRIVE_DIR", str(tmp_path / "drive"))
+    monkeypatch.setattr("frago.employee.store.frago_home", lambda: tmp_path)
+
+    drive_dir = tmp_path / "drive"
+    drive_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) register_transient_worker 落盘包含进程启动时间与命令特征；旧文件无该字段也可兼容读取
+    drive_command.register_transient_worker(
+        name="core_new_worker",
+        agent_type="coreagent",
+        tmux_name=None,
+        cwd=str(tmp_path),
+        pid=os.getpid(),
+    )
+    new_entry = drive_command._read_entry("core_new_worker")
+    assert new_entry is not None
+    assert new_entry.pid == os.getpid()
+    assert new_entry.registered_at is not None
+
+    legacy_sid = "core_37e09797f6bd41628c3f37264ce3f198"
+    legacy_path = drive_dir / f"{legacy_sid}.json"
+    legacy_path.write_text(
+        json_mod.dumps(
+            {
+                "name": legacy_sid,
+                "agent_type": "coreagent",
+                "tmux_name": f"frago-agent-{legacy_sid}",
+                "pid": 15868,
+                "cwd": "/tmp/stock",
+            }
+        ),
+        encoding="utf-8",
+    )
+    old_mtime = 1_793_608_845.0
+    os.utime(legacy_path, (old_mtime, old_mtime))
+    assert drive_command._read_entry(legacy_sid) is not None
+
+    # 再写一条记录了 proc_create_time 但 OS 复用了同一 PID 给新进程的条目
+    reused_agent_sid = "core_reused_agent_pid"
+    reused_agent_path = drive_dir / f"{reused_agent_sid}.json"
+    reused_agent_path.write_text(
+        json_mod.dumps(
+            {
+                "name": reused_agent_sid,
+                "agent_type": "coreagent",
+                "tmux_name": None,
+                "pid": 22222,
+                "cwd": "/tmp/work",
+                "proc_create_time": 1_793_600_000.0,
+                "proc_cmdline": "/Users/frago/.frago/bin/frago-core --mode agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    live_agent_sid = "core_real_live_agent"
+    live_agent_path = drive_dir / f"{live_agent_sid}.json"
+    live_agent_path.write_text(
+        json_mod.dumps(
+            {
+                "name": live_agent_sid,
+                "agent_type": "coreagent",
+                "tmux_name": None,
+                "pid": 33333,
+                "cwd": "/tmp/work",
+                "proc_create_time": 1_795_494_000.0,
+                "proc_cmdline": "/Users/frago/.frago/bin/frago-core --mode agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # 清理掉测试进程自己登记的条目，避免影响下面的断言
+    (drive_dir / "core_new_worker.json").unlink(missing_ok=True)
+
+    monkeypatch.setattr(sess_svc, "_pid_is_alive", lambda pid: pid in {15868, 22222, 33333})
+
+    def _fake_probe_pid(pid: int) -> tuple[str | None, float | None]:
+        if pid == 15868:
+            return (
+                "/Applications/Microsoft Edge.app/Contents/Frameworks/Microsoft Edge Framework.framework/Helpers/Microsoft Edge Helper --type=renderer",
+                1_795_487_557.0,
+            )
+        if pid == 22222:
+            return ("/Users/frago/.frago/bin/frago-core --mode agent", 1_795_494_100.0)
+        if pid == 33333:
+            return ("/Users/frago/.frago/bin/frago-core --mode agent", 1_795_494_001.0)
+        return None, None
+
+    monkeypatch.setattr(sess_svc, "_probe_pid_process_info", _fake_probe_pid)
+
+    probes = sess_svc.collect_live_runtime_probes(live_tmux_ids=set(), core_alive={}, now_s=1_795_494_500.0)
+    assert legacy_sid not in probes.live_drive_pids
+    assert reused_agent_sid not in probes.live_drive_pids
+    assert live_agent_sid in probes.live_drive_pids
+
+    # 2) 即使某历史 completed 会话末条转录为 user 且存在陈旧 drive PID，也不得强行复活为 running
+    now = 1_800_000_000.0
+    ev_no_revive = sess_svc.evaluate_session_liveness_and_state(
+        session_id=legacy_sid,
+        onto_rec=SessionOntologyRecord(
+            session_id=legacy_sid,
+            agent_kernel="coreagent",
+            lifecycle_state="completed",
+            is_worker=True,
+            origin="worker",
+            turn_seq=1,
+            updated_at=int(now - 3600),
+        ),
+        card_status="running",
+        last_kind="user",
+        last_active_s=now - 3600,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=sess_svc.LiveRuntimeProbes(live_drive_pids={legacy_sid}),
+        now_s=now,
+    )
+    assert ev_no_revive.lifecycle_state == "completed"
+    assert ev_no_revive.ui_status == "idle"
+    assert ev_no_revive.actively_running is False
+    assert ev_no_revive.heal_target is None
+
+    # 3) 若存在真实在途 coreagent 常驻忙态或活 async_dispatch，则允许重开为 running
+    ev_reopen_dispatch = sess_svc.evaluate_session_liveness_and_state(
+        session_id=legacy_sid,
+        onto_rec=SessionOntologyRecord(
+            session_id=legacy_sid,
+            agent_kernel="coreagent",
+            lifecycle_state="completed",
+            is_worker=True,
+            origin="worker",
+            turn_seq=1,
+            updated_at=int(now - 10),
+        ),
+        card_status="running",
+        last_kind="user",
+        last_active_s=now - 10,
+        in_tmux=False,
+        liveness_flag=False,
+        core_alive={},
+        probes=sess_svc.LiveRuntimeProbes(live_dispatch_targets={legacy_sid}),
+        now_s=now,
+    )
+    assert ev_reopen_dispatch.lifecycle_state == "running"
+    assert ev_reopen_dispatch.ui_status == "running"
+
+
+
+
 
 

@@ -226,15 +226,14 @@ def test_employee_sessions_four_level_lineage_excludes_plain_workers_and_sorts(
     assert res.status_code == 200
     body = res.json()
     assert body["employee_id"] == "dev-bot"
-    assert body["active_count"] == 2
-    assert body["completed_count"] == 9
+    assert body["active_count"] == 1
+    assert body["completed_count"] == 10
     assert body["total"] == 11
     assert body["has_more"] is False
 
     ids = [s["session_id"] for s in body["sessions"]]
-    # Active/need_decision first, ordered by latest activity desc (s-onto 350k > s-direct 160k),
-    # then completed ordered by latest activity desc (s-active-slot 550k > s-hop-8..1)
-    assert ids[:3] == ["s-onto", "s-direct", "s-active-slot"]
+    # Running first (s-direct), then need_decision (s-onto), then completed ordered by latest activity desc
+    assert ids[:3] == ["s-direct", "s-onto", "s-active-slot"]
     assert ids[3:] == [f"s-hop-{h}" for h in range(8, 0, -1)]
     assert "s-hop-9" not in ids
     assert "w-plain" not in ids
@@ -245,7 +244,7 @@ def test_employee_sessions_four_level_lineage_excludes_plain_workers_and_sorts(
     assert first["employee_id"] == "dev-bot"
     assert first["employee_title"] == "Dev Bot"
     assert first["employee_color"] == "violet"
-    assert first["need_decision"] is True
+    assert body["sessions"][1]["need_decision"] is True
 
 
 def test_employee_sessions_status_filter_and_pagination(

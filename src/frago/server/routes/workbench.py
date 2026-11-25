@@ -68,7 +68,6 @@ from frago.session import record_reader, session_files
 from frago.session import search as session_search
 from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
-from frago.session.session_index import IN_PROGRESS_KINDS
 from frago.skills.skill_prompt import UnknownSkill, embed_skills, load_skills
 
 router = APIRouter()
@@ -111,6 +110,12 @@ def _dispatch_states_by_caller(
             tid = (job.target_session_id or "").strip()
             if tid and tid in live_targets:
                 return True
+            wpid = getattr(job, "watcher_pid", None)
+            if isinstance(wpid, int) and wpid > 0:
+                from frago.session.service import _pid_is_alive
+
+                if _pid_is_alive(wpid):
+                    return True
             created_ms = _iso_to_epoch_ms(getattr(job, "created_at", None))
             return created_ms is not None and (cur_ms - created_ms) <= _DISPATCH_STARTUP_GRACE_MS
 
@@ -362,13 +367,28 @@ async def collect_workbench_session_rows(
     """复用工作台同源状态机与四级血缘判定，构建会话行；可选按 `employee_id` 过滤以跳过无关卡片开销。"""
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
-    from frago.session.service import ZOMBIE_IDLE_TIMEOUT_SECONDS, get_default_session_service
+    from frago.session.service import (
+        can_write_ontology_store,
+        collect_live_runtime_probes,
+        evaluate_session_liveness_and_state,
+        get_default_session_service,
+    )
 
     # 一次问清哪些 tmux 会话与 CoreAgent 场次还活着，并作为真实存活映射传入 record_reader，
     # 防止无 liveness 调用把刚 start_turn() 的新轮次反手覆写回 error 或被 90 秒窗口吞掉 error。
     open_names, core_alive = await asyncio.gather(
         asyncio.to_thread(tsvc.open_session_names),
         asyncio.to_thread(coreagent_runner.live_states),
+    )
+    now_s = time.time()
+    live_tmux_ids = {
+        n[len("frago-agent-") :] for n in open_names if n.startswith("frago-agent-")
+    }
+    probes = await asyncio.to_thread(
+        collect_live_runtime_probes,
+        live_tmux_ids=live_tmux_ids,
+        core_alive=core_alive,
+        now_s=now_s,
     )
     liveness = _WorkbenchLiveness(open_names, core_alive, tmux_name_for)
     sig = inspect.signature(record_reader.list_sessions)
@@ -405,7 +425,7 @@ async def collect_workbench_session_rows(
     running_worker_parents: set[str] = set()
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
-    pending_onto_heals: list[tuple[str, str, str | None]] = []
+    pending_onto_heals: list[tuple[Any, ...]] = []
     seen_card_sids: set[str] = set()
     for card in cards:
         if not card.session_id or card.session_id in seen_card_sids:
@@ -422,78 +442,34 @@ async def collect_workbench_session_rows(
             direct_employee_by_sid[card.session_id] = emp_id
         name = tmux_name_for(card.session_id)
         alive = name in open_names
-        is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
-        status = card.status
-        lifecycle_state = getattr(card, "lifecycle_state", None) or (
-            onto_rec.lifecycle_state if onto_rec is not None else None
-        )
-        is_busy_core = core_alive.get(card.session_id) is True
-        fresh_onto_turn = (
-            onto_rec is not None
-            and onto_rec.lifecycle_state == "running"
-            and int(getattr(onto_rec, "turn_seq", 0) or 0) > 0
-            and float(getattr(onto_rec, "updated_at", 0) or 0)
-            > (card.last_active_at / 1000.0) + 1.0
-            and is_alive
-        )
-        is_transcript_running = (
-            is_alive
-            and card.last_kind != "error"
-            and (
-                card.last_kind in IN_PROGRESS_KINDS
-                or (card.last_kind != "agent.say" and status == "running")
-            )
-        )
         reply_ts = getattr(card, "last_reply_at", None)
         last_reply_s = (
             (reply_ts / 1000.0) if isinstance(reply_ts, int | float) and reply_ts > 0 else None
         )
-        healed_completed_after_error = (
-            onto_rec is not None
-            and onto_rec.lifecycle_state == "error"
-            and status != "error"
-            and card.last_kind == "agent.say"
-            and last_reply_s is not None
-            and last_reply_s > float(getattr(onto_rec, "updated_at", 0) or 0) + 5.0
+        ev = evaluate_session_liveness_and_state(
+            session_id=card.session_id,
+            onto_rec=onto_rec,
+            card_status=card.status,
+            last_kind=getattr(card, "last_kind", None),
+            last_active_s=float(getattr(card, "last_active_at", 0) or 0) / 1000.0,
+            last_reply_s=last_reply_s,
+            digest_stuck=getattr(card, "digest_stuck", None),
+            in_tmux=alive,
+            liveness_flag=liveness[card.session_id],
+            core_alive=core_alive,
+            probes=probes,
+            now_s=now_s,
+            collapse_unmanaged_dead=True,
         )
-        # 本体五态收敛：
-        # 1. 正在跑的新轮次（常驻进程忙 / 刚 start_turn / 转录处于进行中态）必须干净切回 running，不得残留旧 error；
-        # 2. 前序 error 之后明确产出了新一轮正常助手回复（> updated_at + 5s）时自愈为 completed；
-        # 3. 真实 error 且当前未在跑时永不折叠为 done/completed；
-        # 4. 失联超 6h 僵尸 running/awaiting_input 批量收敛。
-        if is_busy_core or fresh_onto_turn or is_transcript_running:
-            status = "running"
-            lifecycle_state = "running"
-            if onto_rec is not None and onto_rec.lifecycle_state == "error":
-                pending_onto_heals.append((card.session_id, "running", ""))
-        elif healed_completed_after_error:
-            if status == "running":
-                status = "done"
-            lifecycle_state = "completed"
-            pending_onto_heals.append((card.session_id, "completed", ""))
-        elif status == "error" or lifecycle_state == "error":
-            status = "error"
-            lifecycle_state = "error"
-            if onto_rec is not None and onto_rec.lifecycle_state != "error":
-                pending_onto_heals.append(
-                    (card.session_id, "error", card.digest_stuck or "session_error")
-                )
-        else:
-            if not is_alive and status == "running":
-                status = "done" if card.last_kind == "agent.say" else "idle"
-                lifecycle_state = "completed"
-            elif status in ("done", "idle"):
-                lifecycle_state = lifecycle_state or "completed"
-            if (
-                onto_rec is not None
-                and onto_rec.lifecycle_state in {"running", "queued", "awaiting_input"}
-                and not is_alive
-                and (now_s - card.last_active_at / 1000.0) >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
-            ):
-                lifecycle_state = "completed"
-                if status == "running":
-                    status = "done" if card.last_kind == "agent.say" else "idle"
-                pending_onto_heals.append((card.session_id, "completed", None))
+        status = ev.ui_status
+        lifecycle_state = ev.lifecycle_state
+        is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive) or (
+            ev.actively_running
+        )
+        if ev.heal_target is not None:
+            pending_onto_heals.append(
+                (card.session_id, ev.heal_target, ev.heal_summary, ev.heal_waiting_reason)
+            )
         if status == "running" or (card.family == "coreagent" and is_alive):
             active_target_ids.add(card.session_id)
         reply_ts = getattr(card, "last_reply_at", None)
@@ -506,7 +482,7 @@ async def collect_workbench_session_rows(
         ):
             running_worker_parents.add(card.parent_session_id)
         computed_states.append((card, name, alive, status, is_alive, str(lifecycle_state or "completed")))
-    if pending_onto_heals:
+    if pending_onto_heals and can_write_ontology_store(onto_svc):
         with contextlib.suppress(Exception):
             await asyncio.to_thread(onto_svc.store.batch_reconcile_states, pending_onto_heals)
 
@@ -555,7 +531,7 @@ async def collect_workbench_session_rows(
             is_local_ops = card.session_id in local_ops_ids
             effective_origin = getattr(card, "origin", "human")
             if effective_origin != "worker" and (
-                (onto_rec is not None and onto_rec.origin == "schedule")
+                (onto_rec is not None and getattr(onto_rec, "origin", None) == "schedule")
                 or (is_local_ops and effective_origin == "human")
             ):
                 effective_origin = "schedule"

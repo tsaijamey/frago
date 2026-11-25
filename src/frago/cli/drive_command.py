@@ -20,6 +20,7 @@ import contextlib
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -57,6 +58,37 @@ def _drive_dir() -> Path:
 # ── sidecar 注册表 ─────────────────────────────────────────────────────────
 
 
+def _probe_proc_identity(pid: int) -> tuple[float | None, str | None]:
+    """Best-effort snapshot of ``(create_time_epoch, cmdline)`` for PID reuse checks."""
+    if pid <= 0:
+        return None, None
+    create_time: float | None = None
+    cmdline: str | None = None
+    with contextlib.suppress(Exception):
+        import psutil
+
+        if psutil.pid_exists(pid):
+            proc = psutil.Process(pid)
+            if proc.status() != psutil.STATUS_ZOMBIE:
+                create_time = float(proc.create_time())
+                parts = proc.cmdline()
+                joined = " ".join(parts).strip() if parts else ""
+                if joined:
+                    cmdline = joined
+    if cmdline is None:
+        with contextlib.suppress(Exception):
+            res = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                cmdline = res.stdout.strip()
+    return create_time, cmdline
+
+
 @dataclass
 class DriveEntry:
     name: str
@@ -67,15 +99,25 @@ class DriveEntry:
     tmux_name: str | None
     pid: int
     cwd: str
+    proc_create_time: float | None = None
+    proc_cmdline: str | None = None
+    registered_at: float | None = None
 
     def to_json(self) -> dict:
-        return {
+        payload: dict[str, object] = {
             "name": self.name,
             "agent_type": self.agent_type,
             "tmux_name": self.tmux_name,
             "pid": self.pid,
             "cwd": self.cwd,
         }
+        if self.proc_create_time is not None:
+            payload["proc_create_time"] = self.proc_create_time
+        if self.proc_cmdline is not None:
+            payload["proc_cmdline"] = self.proc_cmdline
+        if self.registered_at is not None:
+            payload["registered_at"] = self.registered_at
+        return payload
 
 
 def _sidecar_path(name: str) -> Path:
@@ -95,12 +137,18 @@ def _read_entry(name: str) -> DriveEntry | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        raw_ctime = data.get("proc_create_time")
+        raw_reg = data.get("registered_at")
+        raw_cmd = data.get("proc_cmdline")
         return DriveEntry(
             name=data["name"],
             agent_type=data["agent_type"],
             tmux_name=data.get("tmux_name"),
             pid=int(data["pid"]),
             cwd=data["cwd"],
+            proc_create_time=float(raw_ctime) if isinstance(raw_ctime, int | float) else None,
+            proc_cmdline=str(raw_cmd) if isinstance(raw_cmd, str) and raw_cmd.strip() else None,
+            registered_at=float(raw_reg) if isinstance(raw_reg, int | float) else None,
         )
     except (OSError, json.JSONDecodeError, KeyError, ValueError):
         return None
@@ -127,13 +175,18 @@ def register_transient_worker(
     记账失败不影响会话本身，故吞掉异常。
     """
     with contextlib.suppress(Exception):
+        target_pid = os.getpid() if pid is None else pid
+        proc_create_time, proc_cmdline = _probe_proc_identity(target_pid)
         _write_entry(
             DriveEntry(
                 name=name,
                 agent_type=agent_type,
                 tmux_name=tmux_name,
-                pid=os.getpid() if pid is None else pid,
+                pid=target_pid,
                 cwd=cwd,
+                proc_create_time=proc_create_time,
+                proc_cmdline=proc_cmdline,
+                registered_at=time.time(),
             )
         )
 
@@ -350,13 +403,18 @@ def drive_start(agent_type: str, name: str | None, use_profile: str | None) -> N
         )
         sys.exit(1)
 
+    start_pid = os.getpid()
+    proc_create_time, proc_cmdline = _probe_proc_identity(start_pid)
     _write_entry(
         DriveEntry(
             name=resolved,
             agent_type=agent_type,
             tmux_name=session.tmux_name,
-            pid=os.getpid(),
+            pid=start_pid,
             cwd=cwd,
+            proc_create_time=proc_create_time,
+            proc_cmdline=proc_cmdline,
+            registered_at=time.time(),
         )
     )
     # 记一笔这场常驻会话是谁派出去的，左栏据此把它折到派活的那一场下面。与一次性那条路
@@ -526,10 +584,72 @@ def drive_send(
         click.echo(pane, err=True)
         sys.exit(1)
 
-    result = session.send(prompt_text, timeout_s=timeout if timeout > 0 else None)
+    turn_seq: int | None = None
+    onto_svc = None
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        cand = get_default_session_service()
+        if (
+            cand.store.store_path != DEFAULT_SESSION_STORE_PATH
+            or not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
+            onto_svc = cand
+            existing = onto_svc.get_session(target_sid)
+            updated = onto_svc.start_turn(
+                target_sid,
+                agent_kernel_id=existing.agent_kernel if existing is not None else entry.agent_type,
+                origin=existing.origin if existing is not None else "terminal",
+            )
+            turn_seq = int(updated.turn_seq)
+
+    try:
+        result = session.send(prompt_text, timeout_s=timeout if timeout > 0 else None)
+    except Exception as exc:
+        if onto_svc is not None and turn_seq is not None:
+            with contextlib.suppress(Exception):
+                onto_svc.complete_turn_if_current(
+                    target_sid,
+                    turn_seq=turn_seq,
+                    target_state="error",
+                    summary=str(exc)[:500],
+                )
+        raise
 
     # 这一轮里驱动可能刚把窗口改了名（认领到真编号）。侧车要跟上，否则下一轮找不到它。
     _refresh_tmux_name(entry, session)
+
+    if onto_svc is not None and turn_seq is not None:
+        with contextlib.suppress(Exception):
+            if result.status == "timeout":
+                onto_svc.complete_turn_if_current(
+                    target_sid,
+                    turn_seq=turn_seq,
+                    target_state="error",
+                    summary=f"Turn timed out after {timeout}s",
+                )
+            elif result.status == "error":
+                onto_svc.complete_turn_if_current(
+                    target_sid,
+                    turn_seq=turn_seq,
+                    target_state="error",
+                    summary=(str(result.text or "") or "drive send error")[:500],
+                )
+            elif result.status == "needs_input":
+                onto_svc.complete_turn_if_current(
+                    target_sid,
+                    turn_seq=turn_seq,
+                    target_state="awaiting_input",
+                    waiting_reason="needs_input",
+                )
+            else:
+                onto_svc.complete_turn_if_current(
+                    target_sid,
+                    turn_seq=turn_seq,
+                    target_state="awaiting_input",
+                    waiting_reason="end_turn",
+                )
 
     # 等不到 done_signal 超时 → 报 timeout + 末屏 + 提示接管（负反馈）。
     if result.status == "timeout":

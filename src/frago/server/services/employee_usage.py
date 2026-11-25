@@ -19,7 +19,6 @@ from typing import Any
 
 from frago.employee import EmployeePostRecord
 from frago.session import record_reader
-from frago.session.session_index import IN_PROGRESS_KINDS
 
 _CACHE_TTL_S = 15.0
 _lock = threading.Lock()
@@ -102,47 +101,46 @@ class _UsageLiveness(Mapping[str, bool]):
         return sum(1 for _ in self)
 
 
-def _is_card_active(
+def _resolve_card_state_for_usage(
     card: Any,
     *,
+    onto_rec: Any | None,
     is_alive: bool,
     is_busy_core: bool,
-    need_decision: bool = False,
-) -> bool:
-    status = getattr(card, "status", None)
-    lifecycle = getattr(card, "lifecycle_state", None)
-    last_kind = getattr(card, "last_kind", None)
-    is_transcript_running = (
-        is_alive
-        and last_kind != "error"
-        and (
-            last_kind in IN_PROGRESS_KINDS
-            or (last_kind != "agent.say" and status == "running")
-        )
-    )
+    now_s: float,
+    core_alive: Mapping[str, bool] | None = None,
+    probes: Any | None = None,
+) -> tuple[str, str]:
+    """复刻工作台同源状态机收敛，产出 ``(status, lifecycle_state)``。"""
+    from frago.session.service import evaluate_session_liveness_and_state
 
-    if is_busy_core or is_transcript_running:
-        resolved_status = "running"
-        resolved_lifecycle = "running"
-    elif status == "error" or lifecycle == "error":
-        resolved_status = "error"
-        resolved_lifecycle = "error"
-    else:
-        if not is_alive and status == "running":
-            resolved_status = "done" if last_kind == "agent.say" else "idle"
-            resolved_lifecycle = "completed"
-        else:
-            resolved_status = status
-            resolved_lifecycle = lifecycle or (
-                "completed" if status in ("done", "idle") else None
-            )
-
-    return (
-        resolved_status == "running"
-        or resolved_lifecycle in ("running", "queued", "awaiting_input")
-        or bool(getattr(card, "need_decision", False))
-        or need_decision
+    reply_ts = getattr(card, "last_reply_at", None)
+    last_reply_s = (
+        (float(reply_ts) / 1000.0)
+        if isinstance(reply_ts, int | float) and reply_ts > 0
+        else None
     )
+    eff_core_alive = (
+        core_alive
+        if core_alive is not None
+        else ({card.session_id: True} if is_busy_core else {})
+    )
+    ev = evaluate_session_liveness_and_state(
+        session_id=str(getattr(card, "session_id", "") or ""),
+        onto_rec=onto_rec,
+        card_status=str(getattr(card, "status", "done") or "done"),
+        last_kind=getattr(card, "last_kind", None),
+        last_active_s=float(getattr(card, "last_active_at", 0) or 0) / 1000.0,
+        last_reply_s=last_reply_s,
+        digest_stuck=getattr(card, "digest_stuck", None),
+        in_tmux=bool(is_alive and not is_busy_core),
+        liveness_flag=is_alive,
+        core_alive=eff_core_alive,
+        probes=probes,
+        now_s=now_s,
+        collapse_unmanaged_dead=True,
+    )
+    return ev.ui_status, ev.lifecycle_state
 
 
 def _compute_usage_and_counts_from_sessions(
@@ -179,10 +177,55 @@ def _compute_usage_and_counts_from_sessions(
     except Exception:  # noqa: BLE001 — 会话目录不可读时降级，不阻断员工清单
         cards = []
 
+    try:
+        from frago.session.service import get_default_session_service
+
+        onto_by_sid: dict[str, Any] = {
+            rec.session_id: rec
+            for rec in get_default_session_service().list_sessions()
+            if getattr(rec, "session_id", None)
+        }
+    except Exception:  # noqa: BLE001
+        onto_by_sid = {}
+
+    try:
+        from frago.server.routes.workbench import (
+            _dispatch_states_by_caller,
+            _observer_slots_state,
+            _still_alive,
+        )
+    except Exception:  # noqa: BLE001
+        _dispatch_states_by_caller = None
+        _observer_slots_state = None
+        _still_alive = None
+
+    now_s = time.time()
+    now_ms = int(now_s * 1000)
+
+    probes = None
+    try:
+        from frago.session.service import collect_live_runtime_probes
+
+        live_tmux_ids = {
+            n[len("frago-agent-") :] for n in open_names if n.startswith("frago-agent-")
+        }
+        probes = collect_live_runtime_probes(
+            live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            now_s=now_s,
+        )
+    except Exception:  # noqa: BLE001
+        probes = None
+
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
     deduped_cards: list[Any] = []
     seen_sids: set[str] = set()
+    computed_cards: list[tuple[Any, Any | None, str, str, bool, bool]] = []
+    running_worker_parents: set[str] = set()
+    active_target_ids: set[str] = set()
+    caller_last_reply_ms: dict[str, int] = {}
+
     for card in cards:
         sid = getattr(card, "session_id", "")
         if not sid or sid in seen_sids:
@@ -190,9 +233,56 @@ def _compute_usage_and_counts_from_sessions(
         seen_sids.add(sid)
         deduped_cards.append(card)
         parent_by_sid[sid] = getattr(card, "parent_session_id", None)
-        emp_id = getattr(card, "employee_id", None) or active_employee_by_sid.get(sid)
+        onto_rec = onto_by_sid.get(sid)
+        emp_id = (
+            getattr(card, "employee_id", None)
+            or (getattr(onto_rec, "employee_id", None) if onto_rec is not None else None)
+            or active_employee_by_sid.get(sid)
+        )
         if emp_id:
             direct_employee_by_sid[sid] = emp_id
+
+        in_tmux = tmux_name_for(sid) in open_names
+        if _still_alive is not None:
+            is_alive = _still_alive(sid, in_tmux=in_tmux, core_alive=core_alive)
+        else:
+            is_alive = in_tmux or bool(core_alive.get(sid, False))
+        is_busy_core = core_alive.get(sid) is True
+        resolved_status, resolved_lifecycle = _resolve_card_state_for_usage(
+            card,
+            onto_rec=onto_rec,
+            is_alive=is_alive,
+            is_busy_core=is_busy_core,
+            now_s=now_s,
+            core_alive=core_alive,
+            probes=probes,
+        )
+        if resolved_status == "running" or (getattr(card, "family", None) == "coreagent" and is_alive):
+            active_target_ids.add(sid)
+        reply_ts = getattr(card, "last_reply_at", None)
+        if isinstance(reply_ts, int) and reply_ts > 0:
+            caller_last_reply_ms[sid] = reply_ts
+        if (
+            getattr(card, "origin", "human") == "worker"
+            and getattr(card, "parent_session_id", None)
+            and resolved_status == "running"
+        ):
+            running_worker_parents.add(card.parent_session_id)
+
+        computed_cards.append((card, onto_rec, resolved_status, resolved_lifecycle, is_alive, is_busy_core))
+
+    if _dispatch_states_by_caller is not None:
+        try:
+            running_callers, _callback_callers = _dispatch_states_by_caller(
+                active_target_ids=active_target_ids,
+                caller_last_reply_ms=caller_last_reply_ms,
+                now_ms=now_ms,
+            )
+        except Exception:  # noqa: BLE001
+            running_callers, _callback_callers = set(), set()
+    else:
+        running_callers, _callback_callers = set(), set()
+    effective_running_parents = running_worker_parents | running_callers
 
     def _resolve_employee_id(card: Any) -> str | None:
         direct = direct_employee_by_sid.get(card.session_id)
@@ -212,21 +302,11 @@ def _compute_usage_and_counts_from_sessions(
             cur = parent_by_sid.get(cur)
         return None
 
-    try:
-        from frago.server.routes.workbench import (
-            _observer_slots_state,
-            _session_needs_decision,
-        )
-    except Exception:  # noqa: BLE001
-        _observer_slots_state = None
-        _session_needs_decision = None
-
-    now_ms = int(time.time() * 1000)
     usage: dict[str, int] = {}
     counts: dict[str, dict[str, int]] = {
         post.member_post_id: {"active": 0, "total": 0} for post in records
     }
-    for card in deduped_cards:
+    for card, _onto_rec, resolved_status, resolved_lifecycle, _is_alive, _is_busy_core in computed_cards:
         emp_id = _resolve_employee_id(card)
         if not emp_id:
             continue
@@ -241,49 +321,63 @@ def _compute_usage_and_counts_from_sessions(
         bucket["total"] += 1
 
         sid = card.session_id
-        in_tmux = tmux_name_for(sid) in open_names
-        is_alive = in_tmux or bool(core_alive.get(sid, False))
-        is_busy_core = core_alive.get(sid) is True
-
-        need_decision = False
-        if (
-            _session_needs_decision is not None
-            and _observer_slots_state is not None
-            and getattr(card, "status", None) != "error"
-            and getattr(card, "origin", "human") != "worker"
-        ):
+        has_running_worker = sid in effective_running_parents
+        if _observer_slots_state is not None:
             try:
-                slots_need_decision, _all_done = _observer_slots_state(
+                _slots_need_decision, all_tasks_done = _observer_slots_state(
                     sid, getattr(card, "family", "")
                 )
-                need_decision = _session_needs_decision(
-                    card,
-                    status=str(getattr(card, "status", "done")),
-                    is_alive=is_alive,
-                    has_running_worker=False,
-                    callback_queued=False,
-                    now_ms=now_ms,
-                    slots_need_decision=slots_need_decision,
-                )
+                if all_tasks_done and resolved_status != "running":
+                    has_running_worker = False
             except Exception:  # noqa: BLE001
-                need_decision = False
+                pass
 
-        if _is_card_active(
-            card,
-            is_alive=is_alive,
-            is_busy_core=is_busy_core,
-            need_decision=need_decision,
+        if (
+            resolved_status == "running"
+            or resolved_lifecycle in ("running", "queued")
+            or has_running_worker
         ):
             bucket["active"] += 1
 
     # 尚在创建落盘窗口、尚未出现在 record_reader 中的 active_session_ids 也计入在办数与总数
+    from frago.session.service import _parse_iso_epoch
+
+    env_recent = _recent_selection_ms.get(_env_key(), {})
     for post in records:
         bucket = counts.setdefault(post.member_post_id, {"active": 0, "total": 0})
+        recent_ts = env_recent.get(post.member_post_id, 0)
+        post_updated_s = _parse_iso_epoch(getattr(post, "updated_at", None))
+        within_flush_window = (
+            (recent_ts > 0 and (now_ms - recent_ts) <= 60_000)
+            or (post_updated_s is not None and (now_s - post_updated_s) <= 60.0)
+        )
         for sid in post.active_session_ids:
             if sid and sid not in seen_sids:
                 seen_sids.add(sid)
-                bucket["active"] += 1
-                bucket["total"] += 1
+                onto_rec = onto_by_sid.get(sid)
+                if onto_rec is not None:
+                    is_unflushed_active = (
+                        getattr(onto_rec, "lifecycle_state", None) in ("running", "queued")
+                    )
+                else:
+                    is_unflushed_active = bool(
+                        sid in probes.live_drive_pids
+                        or sid in probes.live_core_markers
+                        or sid in probes.live_dispatch_targets
+                        or core_alive.get(sid) is True
+                        or (
+                            _still_alive is not None
+                            and _still_alive(
+                                sid,
+                                in_tmux=tmux_name_for(sid) in open_names,
+                                core_alive=core_alive,
+                            )
+                        )
+                        or within_flush_window
+                    )
+                if is_unflushed_active:
+                    bucket["active"] += 1
+                    bucket["total"] += 1
 
     return usage, counts
 

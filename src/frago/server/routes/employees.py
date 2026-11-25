@@ -159,8 +159,8 @@ async def list_employees() -> dict[str, Any]:
 def _is_session_active(row: dict[str, Any]) -> bool:
     return (
         row.get("status") == "running"
-        or row.get("lifecycle_state") in ("running", "queued", "awaiting_input")
-        or bool(row.get("need_decision"))
+        or row.get("lifecycle_state") in ("running", "queued")
+        or bool(row.get("has_running_worker"))
     )
 
 
@@ -205,7 +205,10 @@ async def list_employee_sessions(
 
     ordered = sorted(
         deduped,
-        key=lambda r: (0 if _is_session_active(r) else 1, -_session_activity_ts(r)),
+        key=lambda r: (
+            0 if _is_session_active(r) else (1 if r.get("need_decision") else 2),
+            -_session_activity_ts(r),
+        ),
     )
     active_rows = [r for r in ordered if _is_session_active(r)]
     completed_rows = [r for r in ordered if not _is_session_active(r)]

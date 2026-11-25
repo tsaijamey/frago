@@ -269,3 +269,53 @@ def test_guard5_protects_busy_coreagent_runner(
         verdict = coordinator.evaluate_guards(harness)
         assert verdict.is_protected is True
         assert "CoreAgent Runner Busy" in verdict.guard_name
+
+
+def test_guard3_ignores_terminal_superseded_jobs_and_patrol_reconciles_disk(
+    coordinator: AgentHarnessLifecycleCoordinator,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard 3 过滤已终态 superseded 单据且不阻断回收；巡检周期幂等自愈存量 queued/delivering。"""
+    from frago.session import async_dispatch
+
+    monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+
+    # 1) 即使直接模拟 list_dispatch_jobs 返回 superseded + queued，Guard 3 也不得误锁
+    stale_job = async_dispatch.AsyncDispatchJob(
+        job_id="disp-sup-queued",
+        kind="worker",
+        mode="new",
+        caller_session_id="caller-sup",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id="target-sup",
+        target_name="target-sup",
+        employee_id=None,
+        agent="claude",
+        cwd="/tmp",
+        prompt="p",
+        task_summary="p",
+        status="superseded",
+        superseded_by="disp-new",
+        delivery_state="queued",
+    )
+    with patch("frago.session.async_dispatch.list_dispatch_jobs", return_value=[stale_job]):
+        assert coordinator._is_async_dispatch_active("target-sup") is False
+        assert coordinator._is_async_dispatch_active("caller-sup") is False
+
+    # 2) 真实磁盘上的存量 superseded + queued 单据，在协调器巡检时自动幂等收敛为 failed
+    async_dispatch.save_dispatch_job(stale_job)
+    cfg_mock = MagicMock()
+    cfg_mock.idle_timeout_secs = 1800
+    cfg_mock.worker_idle_timeout_secs = 300
+    cfg_mock.observed_cooling_grace_secs = 120
+    with patch.object(coordinator, "discover_harnesses", return_value=[]):
+        coordinator._scan_and_reclaim_sync(cfg_mock)
+
+    reconciled = async_dispatch.load_dispatch_job("disp-sup-queued")
+    assert reconciled is not None
+    assert reconciled.status == "superseded"
+    assert reconciled.delivery_state == "failed"
+    assert coordinator._is_async_dispatch_active("target-sup") is False
+

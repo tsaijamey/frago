@@ -2407,8 +2407,9 @@ class TestEmployeeLedgerProactiveSweep:
 
         # 账本自己不在被扫描的范围里：employees 目录下的文件不产生任何账目
         assert not any(
-            "employees" in str(t.get("artifacts", [""])[0])
+            "employees" in str(artifact)
             for t in second_ledger.active_topics
+            for artifact in (t.get("artifacts") or [])
         )
 
         # 已有事项的结论推进：同一 topic_key 原地更新，条目数不变、状态换新

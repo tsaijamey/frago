@@ -596,16 +596,6 @@ class TestEnqueueStateAndModelRecycle:
                 "session_id": "core_cross_turn",
             }
         )
-        r2 = json.dumps(
-            {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": "第二轮完结",
-                "num_turns": 1,
-                "session_id": "core_cross_turn",
-            }
-        )
 
         # 第一轮 result：还有第 2 轮在途，必须保持 busy、不回收进程、不置 turn_done
         proc.stdout = iter([r1 + "\n"])
@@ -617,6 +607,7 @@ class TestEnqueueStateAndModelRecycle:
     def test_read_loop_step_by_step_cross_turn_and_mid_turn_interjection(self, monkeypatch):
         """逐步模拟常驻 stdout：验证连续两轮 result 逐次扣减 in_flight，以及中途插话被吸收后不锁死 busy。"""
         import queue as pyqueue
+
         from frago.server.services import workbench_queue
 
         auto_inject_calls: list[str] = []
@@ -738,5 +729,46 @@ class TestEnqueueStateAndModelRecycle:
         assert auto_inject_calls == ["core_interject"]
         step_out_b.close()
         tb.join(timeout=2)
+
+
+def test_v4_shutdown_kills_managed_tmux_and_marks_running_ontology_interrupted(
+    tmp_path, monkeypatch
+):
+    """V4: shutdown() 同步清理托管 frago-agent-core_* tmux 窗格并把中断运行态收口为 error。"""
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        tmp_path / "session-ontology-store.json",
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    onto_svc.start_turn("core_v4_busy", agent_kernel_id="coreagent", origin="web")
+
+    killed_tmux: list[str] = []
+
+    class _ManagedProc(_FakeProc):
+        tmux_name = "frago-agent-core_v4_busy"
+
+        def _kill_tmux_quietly(self):
+            killed_tmux.append(self.tmux_name)
+
+        def is_superseded(self):
+            return False
+
+    sess = cr._session_for("core_v4_busy", str(tmp_path), "Shutdown Test")
+    sess.proc = _ManagedProc()
+    sess.state = "busy"
+
+    cr.shutdown(grace_s=0.2)
+
+    assert killed_tmux == ["frago-agent-core_v4_busy"]
+    rec = onto_svc.get_session("core_v4_busy")
+    assert rec is not None
+    assert rec.lifecycle_state == "error"
+    assert rec.summary == "server_shutdown_interrupted"
+
 
 

@@ -576,109 +576,64 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
     # 本体五态消费端对齐：读取 SessionOntologyService 状态并收敛错误/僵尸态，防止读回误折叠。
     onto_by_sid: dict[str, Any] = {}
     with contextlib.suppress(Exception):
-        from frago.session.service import ZOMBIE_IDLE_TIMEOUT_SECONDS, get_default_session_service
+        from frago.session.service import (
+            can_write_ontology_store,
+            collect_live_runtime_probes,
+            evaluate_session_liveness_and_state,
+            get_default_session_service,
+        )
 
         onto_svc = get_default_session_service()
         onto_by_sid = {rec.session_id: rec for rec in onto_svc.list_sessions() if rec.session_id}
         now_s = time.time()
-        stale_cutoff_s = float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
-        pending_heals: list[tuple[str, str, str | None]] = []
+        live_tmux_ids: set[str] | None = None
+        core_alive = getattr(liveness, "_core_alive", None) if liveness is not None else None
+        if liveness is not None:
+            live_tmux_ids = set(liveness)
+        probes = collect_live_runtime_probes(
+            live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            now_s=now_s,
+        )
+        pending_heals: list[tuple[Any, ...]] = []
         for card in cards:
             rec = onto_by_sid.get(card.session_id)
             alive = liveness.get(card.session_id) if liveness is not None else None
-            age_s = max(0.0, now_s - (card.last_active_at / 1000.0))
             if rec is not None and rec.origin == "schedule" and card.origin != "worker":
                 card.origin = "schedule"
             if not card.employee_id and rec is not None and rec.employee_id:
                 card.employee_id = rec.employee_id
-            # 新轮次已启动或转录明确处于非错误进行中状态时，不得被前序遗留的 error 状态压死
-            has_fresh_onto_turn = (
-                rec is not None
-                and rec.lifecycle_state == "running"
-                and int(getattr(rec, "turn_seq", 0) or 0) > 0
-                and float(getattr(rec, "updated_at", 0) or 0) > (card.last_active_at / 1000.0) + 1.0
+            last_reply_s = (
+                (card.last_reply_at / 1000.0)
+                if isinstance(card.last_reply_at, int | float) and card.last_reply_at > 0
+                else None
             )
-            fresh_onto_turn = has_fresh_onto_turn and (
-                alive is True
-                or (
-                    liveness is None
-                    and (now_s - float(getattr(rec, "updated_at", 0) or 0)) < stale_cutoff_s
-                )
+            ev = evaluate_session_liveness_and_state(
+                session_id=card.session_id,
+                onto_rec=rec,
+                card_status=card.status,
+                last_kind=card.last_kind,
+                last_active_s=float(card.last_active_at or 0) / 1000.0,
+                last_reply_s=last_reply_s,
+                digest_stuck=card.digest_stuck,
+                in_tmux=bool(alive is True),
+                liveness_flag=alive,
+                core_alive=core_alive,
+                probes=probes,
+                now_s=now_s,
+                collapse_unmanaged_dead=bool(alive is False),
             )
-            # 仅认明确的进程存活 + 未闭环步骤；禁止仅凭 liveness is None 下的 90 秒窗口覆写本体 error
-            transcript_running = (
-                alive is True
-                and card.last_kind != "error"
-                and card.last_kind in session_index.IN_PROGRESS_KINDS
-            )
-            if fresh_onto_turn or transcript_running:
-                card.status = "running"
-                card.lifecycle_state = "running"
+            card.status = ev.ui_status  # type: ignore[assignment]
+            card.lifecycle_state = ev.lifecycle_state
+            if ev.ui_status == "running":
                 card.digest_stuck = None
-                if rec is not None and rec.lifecycle_state == "error":
-                    pending_heals.append((card.session_id, "running", ""))
-                continue
-            if card.status == "error":
-                if (
-                    rec is not None
-                    and rec.lifecycle_state != "error"
-                    and not (liveness is None and has_fresh_onto_turn)
-                ):
-                    pending_heals.append(
-                        (card.session_id, "error", card.digest_stuck or "session_error")
-                    )
-                card.lifecycle_state = "error"
-                continue
-            if rec is not None and rec.lifecycle_state == "error":
-                last_reply_s = (
-                    (card.last_reply_at / 1000.0)
-                    if isinstance(card.last_reply_at, int | float) and card.last_reply_at > 0
-                    else None
-                )
-                onto_updated_s = float(getattr(rec, "updated_at", 0) or 0)
-                if (
-                    card.status != "error"
-                    and card.last_kind == "agent.say"
-                    and last_reply_s is not None
-                    and last_reply_s > onto_updated_s + 5.0
-                ):
-                    # 前序 error 之后明确产出了新一轮正常助手回复（> updated_at + 5s），自愈收敛为 completed
-                    if card.status == "running":
-                        card.status = "done"
-                    card.lifecycle_state = "completed"
+            if ev.heal_target is not None:
+                if ev.heal_target == "completed":
                     card.digest_stuck = None
-                    pending_heals.append((card.session_id, "completed", ""))
-                else:
-                    card.status = "error"
-                    card.lifecycle_state = "error"
-                continue
-            if rec is not None:
-                lstate = str(rec.lifecycle_state or "").lower()
-                if (
-                    lstate in {"running", "queued", "awaiting_input"}
-                    and alive is False
-                    and age_s >= stale_cutoff_s
-                ):
-                    card.lifecycle_state = "completed"
-                    if card.status == "running":
-                        card.status = "done" if card.last_kind == "agent.say" else "idle"
-                    pending_heals.append((card.session_id, "completed", None))
-                else:
-                    card.lifecycle_state = lstate or "completed"
-                    if lstate in {"completed", "cancelled"} and card.status == "running":
-                        card.status = "done" if card.last_kind == "agent.say" else "idle"
-                    elif lstate == "awaiting_input" and card.status == "running":
-                        card.status = "idle"
-            else:
-                if card.status == "running":
-                    card.lifecycle_state = "completed" if (alive is False and age_s >= stale_cutoff_s) else "running"
-                    if card.lifecycle_state == "completed":
-                        card.status = "done" if card.last_kind == "agent.say" else "idle"
-                elif card.status == "done":
-                    card.lifecycle_state = "completed"
-                else:
-                    card.lifecycle_state = "completed"
-        if pending_heals:
+                pending_heals.append(
+                    (card.session_id, ev.heal_target, ev.heal_summary, ev.heal_waiting_reason)
+                )
+        if pending_heals and can_write_ontology_store(onto_svc):
             with contextlib.suppress(Exception):
                 onto_svc.store.batch_reconcile_states(pending_heals)
     return cards

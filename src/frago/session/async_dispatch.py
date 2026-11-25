@@ -89,6 +89,7 @@ class AsyncDispatchJob:
     status: str = "pending"  # "pending" | "running" | "delivering" | "completed" | "failed" | "superseded"
     turn_seq: int = 0
     superseded_by: str | None = None
+    watcher_pid: int | None = None
     exit_code: int = 0
     output: str = ""
     error: str = ""
@@ -218,11 +219,135 @@ def finalize_dispatch_job(
     return job_status
 
 
+def _mark_job_superseded(
+    job: AsyncDispatchJob,
+    *,
+    superseded_by: str | None = None,
+    reason: str | None = None,
+    close_stale_agy: bool = True,
+) -> AsyncDispatchJob:
+    """将派发单统一收口为 ``superseded``，并通过本体契约将 ``delivery_state`` 收敛为 ``failed``。"""
+    if load_dispatch_job(job.job_id) is None:
+        save_dispatch_job(job)
+
+    persisted = load_dispatch_job(job.job_id) or job
+    sup_by = (superseded_by or persisted.superseded_by or job.superseded_by or "").strip() or None
+    err_msg = (
+        (reason or "").strip()
+        or (f"Superseded by {sup_by}" if sup_by else "")
+        or (persisted.error or "").strip()
+        or (job.error or "").strip()
+        or "Superseded"
+    )
+
+    cur_delivery = getattr(persisted, "delivery_state", "queued") or "queued"
+    if cur_delivery in ("queued", "delivering"):
+        record_callback_delivery_outcome(
+            persisted.job_id,
+            from_state=cur_delivery,
+            to_state="failed",
+            reason=err_msg,
+            prior_delivery_state=cur_delivery,
+        )
+        persisted = load_dispatch_job(persisted.job_id) or persisted
+
+    persisted.status = "superseded"
+    persisted.superseded_by = sup_by
+    persisted.completed_at = persisted.completed_at or _utc_now()
+    persisted.error = err_msg
+    save_dispatch_job(persisted)
+
+    if close_stale_agy:
+        _maybe_terminate_superseded_agy_session(persisted)
+
+    return persisted
+
+
+def _maybe_terminate_superseded_agy_session(job: AsyncDispatchJob) -> bool:
+    """被顶替的旧 ``agy`` 会话若最新回合已完结且未处于活跃工具调用中，经本体服务收口状态。"""
+    raw_sid = (job.target_session_id or "").strip()
+    if not raw_sid:
+        return False
+    resolved_sid, _ = _resolve_bound_session_id(raw_sid)
+    target_sid = (resolved_sid or raw_sid).strip()
+
+    with contextlib.suppress(Exception):
+        from frago.session.service import TERMINAL_STATES, get_default_session_service
+
+        onto_svc = get_default_session_service()
+        rec = onto_svc.get_session(target_sid)
+        if rec is None and raw_sid != target_sid:
+            rec = onto_svc.get_session(raw_sid)
+            if rec is not None:
+                target_sid = raw_sid
+
+        is_agy = (str(job.agent or "").strip().lower() == "agy") or (
+            rec is not None and rec.agent_kernel == "agy"
+        )
+        if not is_agy or rec is None or rec.lifecycle_state in TERMINAL_STATES:
+            return False
+
+        # 若仍有同一目标会话的活跃派发单在跑（如刚入队的续跑新单），禁止提前终结
+        for active in list_dispatch_jobs(active_only=True, _reconcile=False):
+            if active.job_id == job.job_id:
+                continue
+            active_raw = (active.target_session_id or "").strip()
+            active_resolved, _ = _resolve_bound_session_id(active_raw)
+            if active_raw in (raw_sid, target_sid) or (
+                active_resolved and active_resolved in (raw_sid, target_sid)
+            ):
+                return False
+
+        # 确认目标 agy 会话不在忙态 / 工具调用队列中
+        with contextlib.suppress(Exception):
+            from frago.server.services import workbench_queue
+
+            if workbench_queue.is_session_busy(target_sid):
+                return False
+
+        from frago.session.agy_store import latest_turn
+
+        turn = latest_turn(target_sid)
+        if turn is None or not turn.done:
+            return False
+
+        onto_svc.terminate_agent_session(
+            session_id=target_sid,
+            terminal_status="completed",
+            summary=f"Superseded by {job.superseded_by or 'newer_turn'} (latest agy turn done)",
+        )
+        return True
+    return False
+
+
+def reconcile_superseded_dispatch_jobs() -> list[str]:
+    """幂等扫描并自愈存量 ``superseded + queued/delivering`` 派发单与已完结旧 ``agy`` 会话。"""
+    reconciled: list[str] = []
+    root = dispatch_store_dir()
+    for p in sorted(root.glob("*.json")):
+        job = load_dispatch_job(p)
+        if job is None or job.status != "superseded":
+            continue
+        cur_delivery = getattr(job, "delivery_state", "queued") or "queued"
+        if cur_delivery in ("queued", "delivering"):
+            _mark_job_superseded(
+                job,
+                superseded_by=job.superseded_by,
+                reason=job.error or None,
+                close_stale_agy=True,
+            )
+            reconciled.append(job.job_id)
+        else:
+            _maybe_terminate_superseded_agy_session(job)
+    return reconciled
+
+
 def list_dispatch_jobs(
     *,
     caller_session_id: str | None = None,
     target_session_id: str | None = None,
     active_only: bool = False,
+    _reconcile: bool = True,
 ) -> list[AsyncDispatchJob]:
     """按条件检索异步派发任务单。"""
     root = dispatch_store_dir()
@@ -231,6 +356,17 @@ def list_dispatch_jobs(
         job = load_dispatch_job(p)
         if job is None:
             continue
+        if (
+            _reconcile
+            and job.status == "superseded"
+            and (getattr(job, "delivery_state", "queued") or "queued") in ("queued", "delivering")
+        ):
+            job = _mark_job_superseded(
+                job,
+                superseded_by=job.superseded_by,
+                reason=job.error or None,
+                close_stale_agy=True,
+            )
         if caller_session_id and job.caller_session_id != caller_session_id:
             continue
         if target_session_id and job.target_session_id != target_session_id:
@@ -317,20 +453,32 @@ def supersede_active_jobs_for_target(
     ):
         if old_job.job_id == new_job_id:
             continue
-        old_job.status = "superseded"
-        old_job.superseded_by = new_job_id
-        old_job.completed_at = _utc_now()
-        old_job.error = f"Superseded by {new_job_id}"
-        if getattr(old_job, "delivery_state", "queued") in ("queued", "delivering"):
-            old_job.delivery_state = "failed"
-            old_job.delivery_error = f"Superseded by {new_job_id}"
-        save_dispatch_job(old_job)
+        _mark_job_superseded(
+            old_job,
+            superseded_by=new_job_id,
+            reason=f"Superseded by {new_job_id}",
+        )
         superseded_ids.append(old_job.job_id)
     return superseded_ids
 
 
-def _next_turn_seq_for_target(target_session_id: str) -> int:
-    """Allocate a strictly monotonic ``turn_seq`` for ``target_session_id``."""
+def _can_write_ontology(svc: Any) -> bool:
+    from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+    return (
+        svc.store.store_path != DEFAULT_SESSION_STORE_PATH
+        or not os.environ.get("PYTEST_CURRENT_TEST")
+    )
+
+
+def _next_turn_seq_for_target(
+    target_session_id: str,
+    *,
+    agent_kernel: str = "claude",
+    origin: str = "worker",
+    employee_id: str | None = None,
+) -> int:
+    """Allocate a strictly monotonic ``turn_seq`` for ``target_session_id`` and start turn in ontology."""
     clean_sid = str(target_session_id or "").strip()
     max_seq = 0
     if clean_sid:
@@ -340,11 +488,107 @@ def _next_turn_seq_for_target(target_session_id: str) -> int:
             from frago.session.service import get_default_session_service
 
             svc = get_default_session_service()
-            rec = svc.get_session(clean_sid)
-            if rec is not None:
-                updated = svc.start_turn(clean_sid, agent_kernel_id=rec.agent_kernel, origin=rec.origin)
-                max_seq = max(max_seq, int(updated.turn_seq) - 1)
+            if _can_write_ontology(svc):
+                rec = svc.get_session(clean_sid)
+                kernel = rec.agent_kernel if rec is not None else (agent_kernel or "claude")
+                orig = rec.origin if rec is not None else (origin or "worker")
+                updated = svc.start_turn(clean_sid, agent_kernel_id=kernel, origin=orig)
+                if employee_id and not updated.employee_id:
+                    from frago.session.store import SessionOntologyRecord
+
+                    svc.store.upsert_relation(
+                        SessionOntologyRecord(
+                            session_id=clean_sid,
+                            agent_kernel=updated.agent_kernel,
+                            origin=updated.origin,
+                            is_worker=updated.is_worker,
+                            relation_kind=updated.relation_kind,
+                            employee_id=employee_id,
+                        )
+                    )
+                return max(max_seq + 1, int(updated.turn_seq))
     return max_seq + 1
+
+
+def _is_resident_interactive_alive(session_id: str) -> bool:
+    """Return True if ``session_id`` still has a live interactive tmux/resident shell after turn end."""
+    if not session_id:
+        return False
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.tmux_session import tmux_name_for
+        from frago.server.services import coreagent_runner, tmux_sessions_service
+
+        if coreagent_runner.running(session_id):
+            return True
+        if tmux_name_for(session_id) in tmux_sessions_service.open_session_names():
+            return True
+    return False
+
+
+def _closeout_dispatch_target(
+    job: AsyncDispatchJob,
+    *,
+    turn_status: str,
+    answer_text: str = "",
+    error_text: str = "",
+    old_target: str | None = None,
+) -> None:
+    """Close out target worker/employee session in SessionOntologyService immediately after execution."""
+    clean_sid = str(job.target_session_id or "").strip()
+    if not clean_sid:
+        return
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+
+        svc = get_default_session_service()
+        if not _can_write_ontology(svc):
+            return
+
+        if old_target and old_target.strip() and old_target.strip() != clean_sid:
+            old_rec = svc.get_session(old_target.strip())
+            if old_rec is not None and old_rec.lifecycle_state in ("running", "queued"):
+                svc.complete_turn_if_current(
+                    old_target.strip(),
+                    turn_seq=int(getattr(job, "turn_seq", 0) or old_rec.turn_seq or 1),
+                    target_state="completed",
+                )
+
+        default_origin = "worker" if job.kind == "worker" else "terminal"
+        svc.ensure_managed_session(
+            clean_sid,
+            agent_kernel_id=job.agent or "claude",
+            origin=default_origin,
+            initial_state="running",
+        )
+
+        norm_status = str(turn_status or "ok").strip().lower()
+        target_state: str
+        waiting_reason: str | None = None
+        summary: str | None = None
+        if norm_status == "needs_input":
+            target_state = "awaiting_input"
+            waiting_reason = "needs_input"
+        elif norm_status in ("error", "timeout"):
+            target_state = "error"
+            summary = (
+                (error_text or answer_text or f"{job.kind} turn ended with status '{norm_status}'")
+                .strip()[:500]
+            )
+        elif job.kind == "drive_send" or (
+            job.kind == "employee" and _is_resident_interactive_alive(clean_sid)
+        ):
+            target_state = "awaiting_input"
+            waiting_reason = "end_turn"
+        else:
+            target_state = "completed"
+
+        svc.complete_turn_if_current(
+            clean_sid,
+            turn_seq=int(getattr(job, "turn_seq", 0) or 1),
+            target_state=target_state,
+            waiting_reason=waiting_reason,
+            summary=summary,
+        )
 
 
 def is_job_superseded(job: AsyncDispatchJob) -> tuple[bool, str | None]:
@@ -976,7 +1220,12 @@ def dispatch_employee_turn_async(
         resume=resume,
         model=model,
         status="running",
-        turn_seq=_next_turn_seq_for_target(target_session_id),
+        turn_seq=_next_turn_seq_for_target(
+            target_session_id,
+            agent_kernel=agent,
+            origin="worker",
+            employee_id=employee_id,
+        ),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
@@ -1030,7 +1279,11 @@ def dispatch_worker_turn_async(
         timeout=timeout,
         env_list=list(env_list or []),
         status="running",
-        turn_seq=_next_turn_seq_for_target(target_session_id),
+        turn_seq=_next_turn_seq_for_target(
+            target_session_id,
+            agent_kernel=agent,
+            origin="worker",
+        ),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
@@ -1075,7 +1328,11 @@ def dispatch_drive_send_async(
         task_summary=prompt[:240],
         timeout=int(timeout),
         status="running",
-        turn_seq=_next_turn_seq_for_target(target_session_id),
+        turn_seq=_next_turn_seq_for_target(
+            target_session_id,
+            agent_kernel=agent,
+            origin="terminal",
+        ),
     )
     job_path = save_dispatch_job(job)
     supersede_active_jobs_for_target(
@@ -1159,6 +1416,13 @@ def _execute_employee_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
             if clean_ans
             else f"Employee turn ended with status '{turn_status}'"
         )
+    _closeout_dispatch_target(
+        job,
+        turn_status=turn_status,
+        answer_text=clean_ans,
+        error_text=err,
+        old_target=old_target,
+    )
     return (0 if ok else 1), clean_ans, err
 
 
@@ -1221,6 +1485,13 @@ def _execute_worker_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
             if clean_ans
             else f"Worker turn ended with status '{turn_status}'"
         )
+    _closeout_dispatch_target(
+        job,
+        turn_status=turn_status,
+        answer_text=clean_ans,
+        error_text=err,
+        old_target=old_target,
+    )
     return (0 if ok else 1), clean_ans, err
 
 
@@ -1246,15 +1517,26 @@ def _execute_drive_send_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
         if not driver.ready_signal.matches(pane):
             pane, healed = _try_clear_residual_input(session, driver, pane)
         if not (healed or driver.ready_signal.matches(pane)):
-            return 1, "", f"Session {name!r} is not ready for input"
+            err_msg = f"Session {name!r} is not ready for input"
+            _closeout_dispatch_target(job, turn_status="error", error_text=err_msg)
+            return 1, "", err_msg
         result = session.send(
             job.prompt,
             timeout_s=float(job.timeout) if job.timeout and job.timeout > 0 else None,
         )
         _refresh_tmux_name(entry, session)
         ok = result.status == "ok"
-        return (0 if ok else 1), str(result.text or "").strip(), ("" if ok else f"status={result.status}")
+        ans = str(result.text or "").strip()
+        err_msg = "" if ok else f"status={result.status}"
+        _closeout_dispatch_target(
+            job,
+            turn_status=str(result.status or "ok"),
+            answer_text=ans,
+            error_text=err_msg,
+        )
+        return (0 if ok else 1), ans, err_msg
     except Exception as exc:
+        _closeout_dispatch_target(job, turn_status="error", error_text=str(exc))
         return 1, "", str(exc)
 
 
@@ -1266,11 +1548,7 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
 
     superseded, sup_by = is_job_superseded(job)
     if superseded:
-        job.status = "superseded"
-        job.superseded_by = sup_by or job.superseded_by
-        job.completed_at = job.completed_at or _utc_now()
-        save_dispatch_job(job)
-        return job
+        return _mark_job_superseded(job, superseded_by=sup_by)
 
     orig_env = dict(os.environ)
     try:
@@ -1286,6 +1564,7 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
         for k, v in cleaned.items():
             os.environ[k] = v
 
+        job.watcher_pid = os.getpid()
         job.status = "running"
         save_dispatch_job(job)
 
@@ -1299,12 +1578,7 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
 
             superseded, sup_by = is_job_superseded(job)
             if superseded:
-                job.status = "superseded"
-                job.superseded_by = sup_by or job.superseded_by
-                job.completed_at = _utc_now()
-                job.error = f"Superseded by {job.superseded_by}" if job.superseded_by else "Superseded"
-                save_dispatch_job(job)
-                return job
+                return _mark_job_superseded(job, superseded_by=sup_by)
 
             # 多跳屏障：若目标会话（如同侪员工 B）在回合内又发起了子异步派发，等待其收口并提取最终结论
             cascaded_out = wait_for_pending_child_dispatches(
@@ -1322,12 +1596,12 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
         except Exception as exc:
             superseded, sup_by = is_job_superseded(job)
             if superseded:
-                job.status = "superseded"
-                job.superseded_by = sup_by or job.superseded_by
-                job.completed_at = _utc_now()
-                job.error = f"Superseded by {job.superseded_by}" if job.superseded_by else "Superseded"
-                save_dispatch_job(job)
-                return job
+                return _mark_job_superseded(job, superseded_by=sup_by)
+            _closeout_dispatch_target(
+                job,
+                turn_status="error",
+                error_text=str(exc),
+            )
             job.exit_code = 1
             job.error = str(exc)
             job.status = "running"
@@ -1335,11 +1609,7 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
 
         superseded, sup_by = is_job_superseded(job)
         if superseded:
-            job.status = "superseded"
-            job.superseded_by = sup_by or job.superseded_by
-            job.completed_at = _utc_now()
-            save_dispatch_job(job)
-            return job
+            return _mark_job_superseded(job, superseded_by=sup_by)
 
         callback_prompt = format_callback_prompt(job)
         delivered = False

@@ -596,3 +596,109 @@ class TestCleanOnlyTouchesManagedSessions:
 
         assert session_dir.exists()
         assert raw.exists()
+
+
+class TestOfflineAgyWorkerWithoutLatestTurnReconcile:
+    """缺陷 2 回归：离线且 agy_store.latest_turn() 为 None 的 agy Worker 在 CLI 与读侧正确收口，且不误伤冷启动与 awaiting_input。"""
+
+    def _seed_agy_worker(
+        self,
+        svc,
+        monkeypatch,
+        session_id: str,
+        *,
+        age_s: float,
+        lifecycle_state: str = "running",
+        is_worker: bool = True,
+        origin: str = "worker",
+    ) -> None:
+        from frago.session.store import SessionOntologyRecord
+
+        now = datetime.now(UTC)
+        ts = now - timedelta(seconds=age_s)
+        write_metadata(
+            MonitoredSession(
+                session_id=session_id,
+                agent_type=AgentType.AGY,
+                status=SessionStatus.RUNNING,
+                project_path="/tmp/p",
+                source_file=f"tmux://agy/{session_id}",
+                started_at=ts,
+                last_activity=ts,
+            )
+        )
+        with monkeypatch.context() as m:
+            m.setattr("frago.session.store.time.time", lambda: ts.timestamp())
+            svc.store.save(
+                SessionOntologyRecord(
+                    session_id=session_id,
+                    agent_kernel="agy",
+                    origin=origin,
+                    lifecycle_state=lifecycle_state,
+                    is_worker=is_worker,
+                    turn_seq=1,
+                    created_at=int(ts.timestamp()),
+                    updated_at=int(ts.timestamp()),
+                )
+            )
+
+    def test_offline_no_turn_agy_worker_heals_by_dispatch_or_300s_crash(
+        self, mock_home, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        import frago.session.storage as storage_mod
+        from frago.session import agy_store
+        from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        svc = SessionOntologyService(
+            store=SessionOntologyStore(
+                store_path=mock_home / "workbench" / "session-ontology-store.json",
+                legacy_ledger_path=mock_home / "workbench" / "agent-launches.json",
+            )
+        )
+        monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
+
+        sid_crash = "33c3f025-1af1-4b65-8322-e1a4e35b1f5e"
+        sid_settled_ok = "183fa7b9-6298-40b6-a3f4-be41764734a2"
+        sid_cold = "coldstart-1111-4b65-8322-e1a4e35b1f5e"
+        sid_wait = "awaiting-2222-4b65-8322-e1a4e35b1f5e"
+
+        self._seed_agy_worker(svc, monkeypatch, sid_crash, age_s=1900.0, lifecycle_state="running")
+        self._seed_agy_worker(svc, monkeypatch, sid_settled_ok, age_s=90.0, lifecycle_state="running")
+        self._seed_agy_worker(svc, monkeypatch, sid_cold, age_s=30.0, lifecycle_state="running")
+        self._seed_agy_worker(svc, monkeypatch, sid_wait, age_s=1800.0, lifecycle_state="awaiting_input")
+
+        monkeypatch.setattr(storage_mod, "_live_tmux_session_ids", lambda: set())
+        monkeypatch.setattr(storage_mod, "_live_coreagent_states", lambda: {})
+        monkeypatch.setattr(agy_store, "latest_turn", lambda _sid: None)
+
+        fake_probes = LiveRuntimeProbes(
+            latest_dispatch_by_target={
+                sid_settled_ok: SimpleNamespace(
+                    status="completed", exit_code=0, error="", turn_seq=1
+                ),
+            }
+        )
+        monkeypatch.setattr(
+            "frago.session.service.collect_live_runtime_probes",
+            lambda **_kwargs: fake_probes,
+        )
+
+        running = list_sessions(agent_type=AgentType.AGY, status=SessionStatus.RUNNING, limit=50)
+        running_ids = {s.session_id for s in running}
+
+        # 离线超 300s 无派发单 -> 落为 error 并移出 running
+        # 派发单已终态且超 60s -> 落为 completed 并移出 running
+        assert sid_crash not in running_ids
+        assert sid_settled_ok not in running_ids
+        # <60s 冷启动保持 running；awaiting_input 保持 awaiting_input 不被误收
+        assert sid_cold in running_ids
+        assert sid_wait not in running_ids
+
+        assert svc.store.get(sid_crash).lifecycle_state == "error"
+        assert svc.store.get(sid_settled_ok).lifecycle_state == "completed"
+        assert svc.store.get(sid_cold).lifecycle_state == "running"
+        assert svc.store.get(sid_wait).lifecycle_state == "awaiting_input"
+

@@ -144,6 +144,11 @@ class AgentHarnessLifecycleCoordinator:
         return await asyncio.to_thread(self._scan_and_reclaim_sync, cfg)
 
     def _scan_and_reclaim_sync(self, cfg: Any) -> list[dict[str, Any]]:
+        with contextlib.suppress(Exception):
+            from frago.session.async_dispatch import reconcile_superseded_dispatch_jobs
+
+            reconcile_superseded_dispatch_jobs()
+
         now = time.time()
         discovered = self.discover_harnesses()
         results: list[dict[str, Any]] = []
@@ -533,12 +538,15 @@ class AgentHarnessLifecycleCoordinator:
         """检查会话作为 caller 或 target 是否有未决未送达的异步派发任务。"""
         if not session_id:
             return False
+        _terminal_statuses = ("completed", "failed", "cancelled", "superseded")
         try:
             from frago.session.async_dispatch import list_dispatch_jobs
 
             # 作为目标正在被派发执行的
             target_jobs = list_dispatch_jobs(target_session_id=session_id)
             for j in target_jobs:
+                if j.status in _terminal_statuses:
+                    continue
                 if j.status in ("pending", "running", "delivering"):
                     return True
                 if getattr(j, "delivery_state", None) in ("queued", "delivering"):
@@ -547,6 +555,8 @@ class AgentHarnessLifecycleCoordinator:
             # 作为调用方正在等待异步回传唤醒的
             caller_jobs = list_dispatch_jobs(caller_session_id=session_id)
             for j in caller_jobs:
+                if j.status in _terminal_statuses:
+                    continue
                 if j.status in ("pending", "running", "delivering"):
                     return True
                 if getattr(j, "delivery_state", None) in ("queued", "delivering"):

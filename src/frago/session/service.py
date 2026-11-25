@@ -23,9 +23,17 @@ NEVER imports `frago.server` or `frago.cli`.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
+import os
+import shlex
+import subprocess
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from frago.ontology import (
@@ -516,6 +524,7 @@ class SessionOntologyService:
         last_activity_ts: float | None = None,
         observed_error: str | None = None,
         observed_terminal_state: str | None = None,
+        waiting_reason: str | None = None,
         observed_active: bool = False,
         turn_seq: int | None = None,
         stale_after_seconds: float = ZOMBIE_IDLE_TIMEOUT_SECONDS,
@@ -530,7 +539,8 @@ class SessionOntologyService:
            was previously mis-folded as ``completed`` (or stuck ``running``), it heals to ``error``.
         3. Disconnected sessions (``is_alive is False``) stuck in ``running`` or ``queued`` beyond
            ``stale_after_seconds`` (default 6h) converge to ``error`` (if error observed) or
-           ``completed`` — eliminating >6h zombie ``running`` sessions.
+           ``completed`` — eliminating >6h zombie ``running`` sessions. ``awaiting_input`` is NEVER
+           auto-completed below ``ZOMBIE_IDLE_TIMEOUT_SECONDS`` (6h).
         """
         clean_sid = str(session_id or "").strip()
         if not clean_sid:
@@ -562,6 +572,7 @@ class SessionOntologyService:
         current = rec.lifecycle_state
         target = current
         new_summary = rec.summary
+        new_waiting_reason = rec.waiting_reason
 
         clean_error = str(observed_error).strip() if observed_error else ""
         clean_obs_terminal = (
@@ -569,11 +580,17 @@ class SessionOntologyService:
             if observed_terminal_state
             else None
         )
+        zombie_states = (
+            {"running", "queued", "awaiting_input"}
+            if float(stale_after_seconds) >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
+            else {"running", "queued"}
+        )
 
         if observed_active and not clean_error:
             # Active turn observed (e.g., new user prompt / tool call / live runner) supersedes
             # any stale error/completed state from a previous turn.
             target = "running"
+            new_waiting_reason = None
             if current == "error":
                 new_summary = ""
         elif clean_error:
@@ -581,26 +598,43 @@ class SessionOntologyService:
             if is_alive is not True or current in {"running", "queued", "completed"}:
                 target = "error"
                 new_summary = clean_error[:500]
+                new_waiting_reason = None
         elif clean_obs_terminal in TERMINAL_STATES:
             if current == "error" and clean_obs_terminal == "completed":
                 target = "error"
             elif is_alive is not True:
                 target = clean_obs_terminal
-        elif current in {"running", "queued", "awaiting_input"} and is_alive is False and age >= float(stale_after_seconds):
+                new_waiting_reason = None
+        elif clean_obs_terminal == "awaiting_input":
+            if current == "error":
+                target = "error"
+            elif is_alive is not True or current in {"running", "queued", "awaiting_input"}:
+                target = "awaiting_input"
+                if waiting_reason is not None:
+                    new_waiting_reason = waiting_reason
+        elif current in zombie_states and is_alive is False and age >= float(stale_after_seconds):
             target = "completed"
-        elif current in {"running", "queued", "awaiting_input"} and is_alive is None and age >= float(stale_after_seconds):
-            # When caller has no live signal and inactivity exceeded stale threshold, converge zombie running/queued/awaiting_input
+            new_waiting_reason = None
+        elif current in zombie_states and is_alive is None and age >= float(stale_after_seconds):
+            # When caller has no live signal and inactivity exceeded stale threshold, converge zombie sessions
             target = "completed"
+            new_waiting_reason = None
 
-        if target != current or (new_summary != rec.summary):
+        if (
+            target != current
+            or new_summary != rec.summary
+            or new_waiting_reason != rec.waiting_reason
+        ):
             if not persist:
                 rec.lifecycle_state = target
                 rec.summary = new_summary
+                rec.waiting_reason = new_waiting_reason
                 return rec
             try:
                 updated = self._store.update_lifecycle_state(
                     clean_sid,
                     target,
+                    waiting_reason=new_waiting_reason if new_waiting_reason != rec.waiting_reason else None,
                     summary=new_summary if new_summary != rec.summary else None,
                     expected_turn_seq=turn_seq,
                 )
@@ -713,3 +747,673 @@ _DEFAULT_SESSION_SERVICE = SessionOntologyService()
 
 def get_default_session_service() -> SessionOntologyService:
     return _DEFAULT_SESSION_SERVICE
+
+
+SHORT_SETTLED_GRACE_SECONDS = 60.0
+DISCONNECT_CRASH_GRACE_SECONDS = 300.0
+IN_PROGRESS_TRANSCRIPT_KINDS: frozenset[str] = frozenset(
+    {"tool.call", "tool.result", "subagent.dispatch", "user.say", "agent.think"}
+)
+
+
+def can_write_ontology_store(svc: SessionOntologyService | None = None) -> bool:
+    """Return True when writing to ``svc.store`` is safe (respecting pytest home protection)."""
+    from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+    target = svc if svc is not None else get_default_session_service()
+    store_path = getattr(getattr(target, "store", None), "store_path", None)
+    return (
+        store_path != DEFAULT_SESSION_STORE_PATH
+        or not os.environ.get("PYTEST_CURRENT_TEST")
+    )
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        if not psutil.pid_exists(pid):
+            return False
+        with contextlib.suppress(psutil.Error, OSError):
+            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                return False
+        return True
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+            return True
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+
+
+def _parse_iso_epoch(value: Any) -> float | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+@dataclass
+class LiveRuntimeProbes:
+    """Cross-process physical runtime liveness snapshot (drive PIDs, core markers, async_dispatch)."""
+
+    live_drive_pids: set[str] = field(default_factory=set)
+    live_drive_tmux: dict[str, str] = field(default_factory=dict)
+    live_core_markers: set[str] = field(default_factory=set)
+    live_dispatch_targets: set[str] = field(default_factory=set)
+    latest_dispatch_by_target: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class EvaluatedSessionState:
+    """Converged read-side session status + ontology lifecycle + optional heal directive."""
+
+    ui_status: str
+    lifecycle_state: str
+    physically_alive: bool
+    actively_running: bool
+    heal_target: str | None = None
+    heal_summary: str | None = None
+    heal_waiting_reason: str | None = None
+
+
+_AGENT_PROCESS_NAMES: frozenset[str] = frozenset(
+    {"frago", "frago-core", "coreagent", "claude", "codex", "opencode", "agy", "tmux"}
+)
+
+
+def _probe_pid_process_info(pid: int) -> tuple[str | None, float | None]:
+    """Return ``(cmdline, create_time_epoch)`` for a live PID, or ``(None, None)``."""
+    if pid <= 0:
+        return None, None
+    cmdline: str | None = None
+    create_time: float | None = None
+    with contextlib.suppress(Exception):
+        import psutil
+
+        if not psutil.pid_exists(pid):
+            return None, None
+        proc = psutil.Process(pid)
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return None, None
+        create_time = float(proc.create_time())
+        parts = proc.cmdline()
+        joined = " ".join(parts).strip() if parts else ""
+        if joined:
+            cmdline = joined
+
+    if cmdline is None:
+        with contextlib.suppress(Exception):
+            res = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                cmdline = res.stdout.strip()
+
+    if cmdline is not None and create_time is None:
+        with contextlib.suppress(Exception):
+            res = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                dt = datetime.strptime(" ".join(res.stdout.split()), "%a %b %d %H:%M:%S %Y")
+                create_time = dt.timestamp()
+
+    return cmdline, create_time
+
+
+def _is_agent_process_cmdline(cmdline: str) -> bool:
+    """Return True iff *cmdline* belongs to a frago / agent / tmux runtime process."""
+    raw = str(cmdline or "").strip()
+    if not raw:
+        return False
+    head = raw.split(" -", 1)[0].strip()
+    head_exe = Path(head).name.lower() if head else ""
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+    if not tokens:
+        return False
+    tok0_exe = Path(tokens[0]).name.lower()
+
+    if head_exe in _AGENT_PROCESS_NAMES or tok0_exe in _AGENT_PROCESS_NAMES:
+        return True
+
+    is_python = head_exe.startswith("python") or tok0_exe.startswith("python")
+    is_wrapper = is_python or tok0_exe in {"uv", "node", "env", "bash", "sh", "zsh"}
+    if is_wrapper:
+        for tok in tokens[1:]:
+            tok_name = Path(tok).name.lower()
+            if tok_name in _AGENT_PROCESS_NAMES:
+                return True
+            if is_python and (
+                tok.lower() == "frago"
+                or tok.lower().startswith("frago.")
+                or "/frago/" in tok.lower()
+                or "\\frago\\" in tok.lower()
+            ):
+                return True
+        if is_python and "-m frago" in raw.lower():
+            return True
+
+    return False
+
+
+def _is_valid_drive_pid_owner(
+    pid: int,
+    data: Mapping[str, Any],
+    *,
+    file_mtime: float | None = None,
+) -> bool:
+    """Verify *pid* is alive, belongs to an agent/frago process, and is not OS-reused."""
+    if not isinstance(pid, int) or pid <= 0 or not _pid_is_alive(pid):
+        return False
+    cmdline, live_ctime = _probe_pid_process_info(pid)
+    if not cmdline or not _is_agent_process_cmdline(cmdline):
+        return False
+
+    recorded_ctime = data.get("proc_create_time")
+    if isinstance(recorded_ctime, int | float) and float(recorded_ctime) > 0:
+        if live_ctime is not None and abs(float(live_ctime) - float(recorded_ctime)) > 5.0:
+            return False
+    else:
+        reg_at = data.get("registered_at")
+        ref_ts = (
+            float(reg_at)
+            if isinstance(reg_at, int | float) and float(reg_at) > 0
+            else file_mtime
+        )
+        if (
+            ref_ts is not None
+            and ref_ts > 0
+            and live_ctime is not None
+            and float(live_ctime) > float(ref_ts) + 60.0
+        ):
+            return False
+
+    return True
+
+
+def collect_live_runtime_probes(
+    *,
+    live_tmux_ids: set[str] | None = None,
+    core_alive: Mapping[str, bool] | None = None,
+    now_s: float | None = None,
+) -> LiveRuntimeProbes:
+    """Collect cross-process runtime probes across drive registry, coreagent markers, and async_dispatch."""
+    probes = LiveRuntimeProbes()
+    cur_now = float(now_s if now_s is not None else time.time())
+
+    # 1. Transient drive entries (~/.frago/drive/*.json)
+    with contextlib.suppress(Exception):
+        from frago.employee.store import frago_home
+
+        drive_dir = frago_home() / "drive"
+        if drive_dir.is_dir():
+            for path in drive_dir.glob("*.json"):
+                with contextlib.suppress(Exception):
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        continue
+                    sid = str(data.get("session_id") or data.get("name") or path.stem).strip()
+                    if not sid:
+                        continue
+                    file_mtime: float | None = None
+                    with contextlib.suppress(OSError):
+                        file_mtime = path.stat().st_mtime
+                    pid = data.get("pid")
+                    if isinstance(pid, int) and _is_valid_drive_pid_owner(
+                        pid, data, file_mtime=file_mtime
+                    ):
+                        probes.live_drive_pids.add(sid)
+                        if path.stem and path.stem != sid:
+                            probes.live_drive_pids.add(path.stem)
+                    tmux_name = str(data.get("tmux_name") or "").strip()
+                    if tmux_name:
+                        tmux_sid = (
+                            tmux_name[len("frago-agent-") :]
+                            if tmux_name.startswith("frago-agent-")
+                            else sid
+                        )
+                        if (
+                            live_tmux_ids is None
+                            or tmux_sid in live_tmux_ids
+                            or sid in live_tmux_ids
+                        ):
+                            probes.live_drive_tmux[sid] = tmux_name
+
+    # 2. CoreAgent active pane markers (~/.frago/coreagent/panes/*.active_run)
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.coreagent_pane_host import panes_dir
+
+        pdir = panes_dir()
+        if pdir.is_dir():
+            for marker in pdir.glob("*.active_run"):
+                with contextlib.suppress(Exception):
+                    run_str = marker.read_text(encoding="utf-8", errors="replace").strip()
+                    if not run_str:
+                        continue
+                    run_dir = Path(run_str)
+                    if (
+                        not run_dir.is_dir()
+                        or (run_dir / "exit.code").is_file()
+                        or (run_dir / "superseded").is_file()
+                    ):
+                        continue
+                    pid_file = run_dir / "core.pid"
+                    if not pid_file.is_file():
+                        continue
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    if not _pid_is_alive(pid):
+                        continue
+                    probes.live_core_markers.add(marker.stem)
+                    launch_file = run_dir / "launch.json"
+                    if launch_file.is_file():
+                        launch = json.loads(launch_file.read_text(encoding="utf-8"))
+                        if isinstance(launch, dict):
+                            lsid = str(launch.get("session_id") or "").strip()
+                            if lsid:
+                                probes.live_core_markers.add(lsid)
+
+    # 3. Async dispatch ledger (~/.frago/sessions/async_dispatches/*.json)
+    with contextlib.suppress(Exception):
+        from frago.session.async_dispatch import list_dispatch_jobs
+
+        best_key: dict[str, tuple[int, float, float]] = {}
+        for job in list_dispatch_jobs(active_only=False):
+            tid = str(getattr(job, "target_session_id", "") or "").strip()
+            if not tid:
+                continue
+            rank = (
+                int(getattr(job, "turn_seq", 0) or 0),
+                _parse_iso_epoch(getattr(job, "updated_at", None)) or 0.0,
+                _parse_iso_epoch(getattr(job, "created_at", None)) or 0.0,
+            )
+            prev = best_key.get(tid)
+            if prev is None or rank >= prev:
+                best_key[tid] = rank
+                probes.latest_dispatch_by_target[tid] = job
+
+            st = str(getattr(job, "status", "") or "").strip().lower()
+            if st in ("pending", "running"):
+                wpid = getattr(job, "watcher_pid", None)
+                created_s = _parse_iso_epoch(getattr(job, "created_at", None))
+                watcher_alive = isinstance(wpid, int) and wpid > 0 and _pid_is_alive(wpid)
+                within_grace = (
+                    created_s is not None
+                    and (cur_now - created_s) <= SHORT_SETTLED_GRACE_SECONDS
+                )
+                target_alive = (
+                    (live_tmux_ids is not None and tid in live_tmux_ids)
+                    or (core_alive is not None and tid in core_alive)
+                    or (tid in probes.live_drive_pids)
+                    or (tid in probes.live_core_markers)
+                )
+                if watcher_alive or within_grace or target_alive:
+                    probes.live_dispatch_targets.add(tid)
+
+    return probes
+
+
+def _normalize_transcript_kind(last_kind: str | None) -> str | None:
+    if not last_kind:
+        return None
+    mapping = {
+        "assistant_text": "agent.say",
+        "turn_end": "agent.say",
+        "assistant_tool": "tool.call",
+        "assistant_think": "agent.think",
+        "user": "user.say",
+    }
+    clean = str(last_kind).strip()
+    return mapping.get(clean, clean)
+
+
+def evaluate_session_liveness_and_state(
+    *,
+    session_id: str,
+    onto_rec: SessionOntologyRecord | None,
+    card_status: str,
+    last_kind: str | None,
+    last_active_s: float,
+    last_reply_s: float | None = None,
+    digest_stuck: str | None = None,
+    in_tmux: bool = False,
+    liveness_flag: bool | None = None,
+    core_alive: Mapping[str, bool] | None = None,
+    probes: LiveRuntimeProbes | None = None,
+    now_s: float | None = None,
+    collapse_unmanaged_dead: bool = True,
+) -> EvaluatedSessionState:
+    """Shared 6-precondition read-side evaluator (60s settled / 300s mid-turn crash / 21600s zombie).
+
+    Enforces:
+    1. Source state for 60s/300s self-heal is ONLY ``running`` or ``queued`` (NEVER ``awaiting_input``).
+    2. Full physical offline check (tmux, coreagent resident pool, drive PID, core marker, live dispatch).
+    3. 60s race-window floor from ``max(last_active_s, onto_updated_s)``.
+    4. Settled evidence (``agent.say``/``done``/``idle``/``error`` or settled dispatch job) vs
+       mid-turn crash (``IN_PROGRESS_TRANSCRIPT_KINDS`` waits 300s then heals to ``error``).
+    5. Error fidelity (error signals MUST become ``error``, ``needs_input`` -> ``awaiting_input``).
+    6. 21600s (6h) ultimate fallback for stale ``awaiting_input`` and unmanaged remnants.
+    """
+    now = float(now_s if now_s is not None else time.time())
+    norm_kind = _normalize_transcript_kind(last_kind)
+    norm_card_status = str(card_status or "idle").strip().lower()
+
+    is_core_busy = core_alive is not None and core_alive.get(session_id) is True
+    is_core_resident = core_alive is not None and session_id in core_alive
+    has_drive_pid = probes is not None and session_id in probes.live_drive_pids
+    has_drive_tmux = probes is not None and session_id in probes.live_drive_tmux
+    has_core_marker = probes is not None and session_id in probes.live_core_markers
+    has_live_dispatch = probes is not None and session_id in probes.live_dispatch_targets
+
+    physically_alive = bool(
+        in_tmux
+        or liveness_flag is True
+        or is_core_resident
+        or has_drive_pid
+        or has_drive_tmux
+        or has_core_marker
+        or has_live_dispatch
+    )
+    actively_running = bool(
+        in_tmux
+        or liveness_flag is True
+        or is_core_busy
+        or has_drive_pid
+        or has_drive_tmux
+        or has_core_marker
+        or has_live_dispatch
+    )
+
+    onto_state = (
+        str(getattr(onto_rec, "lifecycle_state", "") or "").strip().lower()
+        if onto_rec is not None
+        else None
+    )
+    onto_updated_s = (
+        float(getattr(onto_rec, "updated_at", 0) or 0) if onto_rec is not None else 0.0
+    )
+    onto_turn_seq = (
+        int(getattr(onto_rec, "turn_seq", 0) or 0) if onto_rec is not None else 0
+    )
+
+    has_fresh_onto_turn = (
+        onto_rec is not None
+        and onto_state == "running"
+        and onto_turn_seq > 0
+        and onto_updated_s > last_active_s + 1.0
+    )
+    fresh_onto_turn = has_fresh_onto_turn and (
+        actively_running
+        or (
+            liveness_flag is None
+            and probes is None
+            and (now - onto_updated_s) < float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
+        )
+        or (
+            liveness_flag is None
+            and (now - onto_updated_s) < SHORT_SETTLED_GRACE_SECONDS
+        )
+    )
+    can_reopen_terminal_onto = is_core_busy or has_live_dispatch
+    is_transcript_running = (
+        actively_running
+        and norm_kind != "error"
+        and (
+            (onto_state not in {"completed", "cancelled"} or can_reopen_terminal_onto)
+            and (
+                norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS
+                or (
+                    onto_state not in {"completed", "cancelled", "awaiting_input"}
+                    and norm_kind != "agent.say"
+                    and norm_card_status == "running"
+                )
+            )
+        )
+    )
+    resumed_newer_transcript = (
+        onto_rec is not None
+        and onto_state == "error"
+        and norm_card_status == "running"
+        and norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS
+        and liveness_flag is not False
+        and last_active_s > onto_updated_s + 2.0
+        and (now - last_active_s) < DISCONNECT_CRASH_GRACE_SECONDS
+    )
+
+    if is_core_busy or fresh_onto_turn or is_transcript_running or resumed_newer_transcript:
+        return EvaluatedSessionState(
+            ui_status="running",
+            lifecycle_state="running",
+            physically_alive=physically_alive,
+            actively_running=actively_running or resumed_newer_transcript,
+            heal_target="running" if onto_state == "error" else None,
+            heal_summary="" if onto_state == "error" else None,
+        )
+
+    if (
+        onto_rec is not None
+        and onto_state == "error"
+        and norm_card_status != "error"
+        and norm_kind == "agent.say"
+        and last_reply_s is not None
+        and last_reply_s > onto_updated_s + 5.0
+    ):
+        return EvaluatedSessionState(
+            ui_status="done" if norm_card_status == "running" else norm_card_status,
+            lifecycle_state="completed",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+            heal_target="completed",
+            heal_summary="",
+        )
+
+    if norm_card_status == "error" or norm_kind == "error":
+        should_heal_error = (
+            onto_rec is not None
+            and onto_state != "error"
+            and not (liveness_flag is None and has_fresh_onto_turn)
+        )
+        return EvaluatedSessionState(
+            ui_status="error",
+            lifecycle_state="error",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+            heal_target="error" if should_heal_error else None,
+            heal_summary=(digest_stuck or "session_error") if should_heal_error else None,
+        )
+
+    if onto_state == "error":
+        return EvaluatedSessionState(
+            ui_status="error",
+            lifecycle_state="error",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+        )
+
+    if onto_state in {"completed", "cancelled"}:
+        ui = (
+            ("done" if norm_kind == "agent.say" else "idle")
+            if norm_card_status == "running"
+            else norm_card_status
+        )
+        return EvaluatedSessionState(
+            ui_status=ui,
+            lifecycle_state=onto_state,
+            physically_alive=physically_alive,
+            actively_running=False,
+        )
+
+    ref_ts = (
+        max(last_active_s, onto_updated_s)
+        if onto_rec is not None and onto_updated_s > 0
+        else last_active_s
+    )
+    age_s = max(0.0, now - ref_ts)
+    activity_age_s = max(0.0, now - last_active_s)
+
+    latest_job = probes.latest_dispatch_by_target.get(session_id) if probes is not None else None
+    job_turn = int(getattr(latest_job, "turn_seq", 0) or 0) if latest_job is not None else 0
+    job_matches = latest_job is not None and (onto_rec is None or job_turn >= onto_turn_seq)
+    job_status = str(getattr(latest_job, "status", "") or "").strip().lower() if job_matches else ""
+    job_settled = job_status in {"completed", "failed", "superseded", "cancelled"}
+    job_exit_code = int(getattr(latest_job, "exit_code", 0) or 0) if job_matches else 0
+    job_error = str(getattr(latest_job, "error", "") or "").strip() if job_matches else ""
+
+    transcript_settled = (norm_kind not in IN_PROGRESS_TRANSCRIPT_KINDS) and (
+        norm_kind in ("agent.say", "error")
+        or norm_card_status in ("done", "idle", "completed", "error")
+    )
+    onto_is_worker = bool(
+        onto_rec is not None
+        and (
+            bool(getattr(onto_rec, "is_worker", False))
+            or str(getattr(onto_rec, "origin", "") or "").strip().lower() == "worker"
+        )
+    )
+    missing_transcript_crashed = (
+        norm_kind is None
+        and not transcript_settled
+        and not job_settled
+        and (liveness_flag is False or (onto_is_worker and probes is not None))
+    )
+    in_progress_crashed = (
+        (norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS) or missing_transcript_crashed
+    ) and not job_settled
+
+    # Case A: onto in running/queued (or unmanaged running)
+    if onto_state in {"running", "queued"} or (onto_rec is None and norm_card_status == "running"):
+        if not physically_alive:
+            if age_s >= SHORT_SETTLED_GRACE_SECONDS and (transcript_settled or job_settled):
+                if job_status == "failed" or (job_settled and job_exit_code != 0):
+                    if "needs_input" in job_error.lower() or job_exit_code == 2:
+                        return EvaluatedSessionState(
+                            ui_status="done" if norm_kind == "agent.say" else "idle",
+                            lifecycle_state="awaiting_input",
+                            physically_alive=False,
+                            actively_running=False,
+                            heal_target="awaiting_input" if onto_rec is not None else None,
+                            heal_waiting_reason="needs_input" if onto_rec is not None else None,
+                        )
+                    return EvaluatedSessionState(
+                        ui_status="error",
+                        lifecycle_state="error",
+                        physically_alive=False,
+                        actively_running=False,
+                        heal_target="error" if onto_rec is not None else None,
+                        heal_summary=(job_error or "dispatch_failed")[:500]
+                        if onto_rec is not None
+                        else None,
+                    )
+                return EvaluatedSessionState(
+                    ui_status="done" if norm_kind == "agent.say" else "idle",
+                    lifecycle_state="completed",
+                    physically_alive=False,
+                    actively_running=False,
+                    heal_target="completed" if onto_rec is not None else None,
+                    heal_summary="" if onto_rec is not None else None,
+                )
+
+            if in_progress_crashed and age_s >= DISCONNECT_CRASH_GRACE_SECONDS:
+                return EvaluatedSessionState(
+                    ui_status="error",
+                    lifecycle_state="error",
+                    physically_alive=False,
+                    actively_running=False,
+                    heal_target="error" if onto_rec is not None else None,
+                    heal_summary="process_terminated_mid_turn" if onto_rec is not None else None,
+                )
+
+            if activity_age_s >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS):
+                return EvaluatedSessionState(
+                    ui_status="done" if norm_kind == "agent.say" else "idle",
+                    lifecycle_state="completed",
+                    physically_alive=False,
+                    actively_running=False,
+                    heal_target="completed" if onto_rec is not None else None,
+                )
+
+            # Unmanaged dead running cards in workbench/usage (when collapse_unmanaged_dead is True)
+            if onto_rec is None and collapse_unmanaged_dead and norm_card_status == "running":
+                return EvaluatedSessionState(
+                    ui_status="done" if norm_kind == "agent.say" else "idle",
+                    lifecycle_state="completed",
+                    physically_alive=False,
+                    actively_running=False,
+                )
+
+        if onto_state == "running":
+            return EvaluatedSessionState(
+                ui_status="running",
+                lifecycle_state="running",
+                physically_alive=physically_alive,
+                actively_running=actively_running,
+            )
+        if onto_state == "queued":
+            return EvaluatedSessionState(
+                ui_status=norm_card_status,
+                lifecycle_state="queued",
+                physically_alive=physically_alive,
+                actively_running=actively_running,
+            )
+        return EvaluatedSessionState(
+            ui_status=norm_card_status,
+            lifecycle_state="running" if norm_card_status == "running" else "completed",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+        )
+
+    # Case B: onto in awaiting_input (NEVER self-heal below 21600s)
+    if onto_state == "awaiting_input":
+        ui = (
+            ("done" if norm_kind == "agent.say" else "idle")
+            if norm_card_status == "running"
+            else norm_card_status
+        )
+        if not physically_alive and activity_age_s >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS):
+            return EvaluatedSessionState(
+                ui_status=ui,
+                lifecycle_state="completed",
+                physically_alive=False,
+                actively_running=False,
+                heal_target="completed",
+            )
+        return EvaluatedSessionState(
+            ui_status=ui,
+            lifecycle_state="awaiting_input",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+        )
+
+    # Case C: unmanaged non-running card
+    if not physically_alive and norm_card_status == "running" and collapse_unmanaged_dead:
+        return EvaluatedSessionState(
+            ui_status="done" if norm_kind == "agent.say" else "idle",
+            lifecycle_state="completed",
+            physically_alive=False,
+            actively_running=False,
+        )
+
+    return EvaluatedSessionState(
+        ui_status=norm_card_status,
+        lifecycle_state=onto_state
+        or ("running" if norm_card_status == "running" else "completed"),
+        physically_alive=physically_alive,
+        actively_running=actively_running,
+    )

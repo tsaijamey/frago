@@ -428,6 +428,87 @@ class SessionOntologyStore:
             records[record.session_id] = record
             return self._write_disk_unlocked(records)
 
+    def upsert_relation(self, record: SessionOntologyRecord) -> bool:
+        """Insert a relation record or incrementally merge lineage fields without clobbering lifecycle_state."""
+        if not record.session_id:
+            return False
+        with self._locked():
+            records = self._read_disk_unlocked(raise_on_error=True)
+            existing = records.get(record.session_id)
+            if existing is None:
+                record.updated_at = int(time.time())
+                records[record.session_id] = record
+                return self._write_disk_unlocked(records)
+
+            changed = False
+            if (
+                record.parent_session_id
+                and record.parent_session_id != existing.session_id
+                and not existing.parent_session_id
+            ):
+                existing.parent_session_id = record.parent_session_id
+                changed = True
+            if record.relation_kind and not existing.relation_kind:
+                existing.relation_kind = record.relation_kind
+                changed = True
+            elif (
+                record.relation_kind == "dispatch"
+                and existing.relation_kind not in ("dispatch", "branch", "handoff")
+            ):
+                existing.relation_kind = "dispatch"
+                changed = True
+            if record.is_worker or record.relation_kind == "dispatch":
+                if not existing.is_worker:
+                    existing.is_worker = True
+                    changed = True
+                if existing.origin != "worker":
+                    existing.origin = "worker"
+                    changed = True
+            if record.cwd and not existing.cwd:
+                existing.cwd = record.cwd
+                changed = True
+            if record.prompt_head and not existing.prompt_head:
+                existing.prompt_head = record.prompt_head
+                changed = True
+            if record.agent_kernel and not existing.agent_kernel:
+                existing.agent_kernel = record.agent_kernel
+                changed = True
+            if record.employee_id and not existing.employee_id:
+                existing.employee_id = record.employee_id
+                changed = True
+            if record.relation_kind == "branch" and record.extra:
+                for key in ("anchor", "note", "closed_at", "closed_by"):
+                    if (
+                        key in record.extra
+                        and record.extra[key] is not None
+                        and key not in existing.extra
+                    ):
+                        existing.extra[key] = record.extra[key]
+                        changed = True
+
+            # NEVER overwrite lifecycle_state, turn_seq, summary, waiting_reason, step_count, created_at
+            raw_store = self._load_json_with_lkg(
+                self.store_path,
+                expected_type=dict,
+                raise_on_error=True,
+            )
+            store_sessions = (
+                raw_store.get("sessions") if isinstance(raw_store, dict) else None
+            )
+            in_primary_store = (
+                isinstance(store_sessions, dict) and record.session_id in store_sessions
+            ) or (
+                isinstance(store_sessions, list)
+                and any(
+                    isinstance(item, dict)
+                    and str(item.get("session_id") or "").strip() == record.session_id
+                    for item in store_sessions
+                )
+            )
+            if not changed and in_primary_store:
+                return True
+            return self._write_disk_unlocked(records)
+
     def list_all(self) -> list[SessionOntologyRecord]:
         """List all active session ontology records ordered by updated_at desc."""
         records = self._read_cached()
@@ -492,10 +573,13 @@ class SessionOntologyStore:
                     f"Late turn event rejected for '{clean_id}': "
                     f"event turn_seq={expected_turn_seq} < current turn_seq={rec.turn_seq}"
                 )
-            rec.lifecycle_state = normalize_session_lifecycle_state(new_state)
+            normalized = normalize_session_lifecycle_state(new_state)
+            rec.lifecycle_state = normalized
             rec.updated_at = int(time.time())
             if waiting_reason is not None:
                 rec.waiting_reason = str(waiting_reason)
+            elif normalized in {"running", "completed", "error", "cancelled"}:
+                rec.waiting_reason = None
             if summary is not None:
                 rec.summary = str(summary)
             if not self._write_disk_unlocked(records):
@@ -506,16 +590,20 @@ class SessionOntologyStore:
 
     def batch_reconcile_states(
         self,
-        updates: list[tuple[str, str, str | None]],
+        updates: list[tuple[Any, ...]],
     ) -> int:
-        """Apply multiple `(session_id, target_state, summary)` reconciliations in one atomic write."""
+        """Apply multiple `(session_id, target_state, summary[, waiting_reason])` reconciliations atomically."""
         if not updates:
             return 0
         with self._locked():
             records = self._read_disk_unlocked(raise_on_error=True)
             now_ts = int(time.time())
             changed = 0
-            for raw_sid, raw_state, raw_summary in updates:
+            for item in updates:
+                raw_sid = item[0]
+                raw_state = item[1]
+                raw_summary = item[2] if len(item) > 2 else None
+                raw_waiting_reason = item[3] if len(item) > 3 else None
                 clean_id = str(raw_sid or "").strip()
                 if not clean_id:
                     continue
@@ -523,8 +611,13 @@ class SessionOntologyStore:
                 if rec is None:
                     continue
                 target = normalize_session_lifecycle_state(raw_state)
-                if rec.lifecycle_state == target and (
-                    raw_summary is None or rec.summary == raw_summary
+                if (
+                    rec.lifecycle_state == target
+                    and (raw_summary is None or rec.summary == raw_summary)
+                    and (
+                        raw_waiting_reason is None
+                        or rec.waiting_reason == raw_waiting_reason
+                    )
                 ):
                     continue
                 was_error = rec.lifecycle_state == "error"
@@ -534,6 +627,10 @@ class SessionOntologyStore:
                     rec.summary = str(raw_summary)
                 elif was_error and target == "running":
                     rec.summary = ""
+                if raw_waiting_reason is not None:
+                    rec.waiting_reason = str(raw_waiting_reason)
+                elif target != "awaiting_input":
+                    rec.waiting_reason = None
                 changed += 1
             if changed and not self._write_disk_unlocked(records):
                 raise FileGuardError("Failed to persist batch lifecycle state reconciliations")

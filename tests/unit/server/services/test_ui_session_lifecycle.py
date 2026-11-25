@@ -400,8 +400,14 @@ def test_get_instance_is_singleton(monkeypatch):
     assert isinstance(a, life.UiSessionLifecycleService)
 
 
-def test_start_is_idempotent_and_stop_cancels():
+def test_start_is_idempotent_and_stop_cancels(monkeypatch):
     from frago.server.services import ui_session_lifecycle as life
+
+    monkeypatch.setattr(
+        life.UiSessionLifecycleService,
+        "reconcile_startup_orphans",
+        lambda self, **_kw: {"markers_cleaned": 0, "tmux_killed": 0, "onto_reconciled": 0},
+    )
 
     async def scenario():
         svc = life.UiSessionLifecycleService(scan_interval_s=100.0)
@@ -430,8 +436,14 @@ def test_stop_is_noop_when_never_started():
     assert svc._task is None
 
 
-def test_start_after_done_task_spawns_new_one():
+def test_start_after_done_task_spawns_new_one(monkeypatch):
     from frago.server.services import ui_session_lifecycle as life
+
+    monkeypatch.setattr(
+        life.UiSessionLifecycleService,
+        "reconcile_startup_orphans",
+        lambda self, **_kw: {"markers_cleaned": 0, "tmux_killed": 0, "onto_reconciled": 0},
+    )
 
     async def scenario():
         svc = life.UiSessionLifecycleService(scan_interval_s=100.0)
@@ -481,3 +493,78 @@ def test_loop_survives_scan_exception(monkeypatch):
     # Scan was attempted and its exception did not propagate out of the loop.
     assert scans["n"] >= 1
     assert sleeps[0] == 7.0
+
+
+def test_v4_reconcile_startup_orphans_cleans_dead_panes_and_spares_live(monkeypatch, tmp_path):
+    """V4: 服务启动期清理孤立死窗格与死 marker 并收敛陈旧本体，同时放过附着/活跃会话。"""
+    from frago.agent_driver import coreagent_pane_host as host
+    from frago.server.services import coreagent_runner
+    from frago.server.services import ui_session_lifecycle as life
+    from frago.session import service as session_service_mod
+    from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    panes_root = tmp_path / "panes"
+    panes_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(panes_root))
+
+    dead_marker = panes_root / "core_orphan_dead.active_run"
+    dead_marker.write_text(str(tmp_path / "missing_run"), encoding="utf-8")
+
+    store = SessionOntologyStore(
+        tmp_path / "session-ontology-store.json",
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    onto_svc.start_turn("core_orphan_dead", agent_kernel_id="coreagent", origin="web")
+    onto_svc.start_turn("core_attached_live", agent_kernel_id="coreagent", origin="web")
+
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(
+        session_service_mod,
+        "collect_live_runtime_probes",
+        lambda **_kw: LiveRuntimeProbes(),
+    )
+    monkeypatch.setattr(
+        life,
+        "_list_coreagent_tmux_panes",
+        lambda: [
+            life._OrphanTmuxPane(
+                tmux_name="frago-agent-core_orphan_dead",
+                session_id="core_orphan_dead",
+                attached_count=0,
+                activity_ts=100.0,
+                pane_cmd="zsh",
+                pane_dead=True,
+            ),
+            life._OrphanTmuxPane(
+                tmux_name="frago-agent-core_attached_live",
+                session_id="core_attached_live",
+                attached_count=1,
+                activity_ts=100.0,
+                pane_cmd="python3",
+                pane_dead=False,
+            ),
+        ],
+    )
+    killed: list[str] = []
+    monkeypatch.setattr(
+        life,
+        "_kill_tmux_session",
+        lambda name: killed.append(name) or True,
+    )
+    monkeypatch.setattr(host, "panes_dir", lambda: panes_root)
+
+    svc = life.UiSessionLifecycleService()
+    summary = svc.reconcile_startup_orphans(now_s=time.time() + 10)
+
+    assert summary["markers_cleaned"] == 1
+    assert not dead_marker.exists()
+    assert killed == ["frago-agent-core_orphan_dead"]
+    assert summary["tmux_killed"] == 1
+    dead_rec = onto_svc.get_session("core_orphan_dead")
+    assert dead_rec is not None and dead_rec.lifecycle_state == "completed"
+    live_rec = onto_svc.get_session("core_attached_live")
+    assert live_rec is not None and live_rec.lifecycle_state == "running"
+

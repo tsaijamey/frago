@@ -329,7 +329,7 @@ def record_relation(
         # 一致，下一次任一方落盘就会收敛，不会丢记录。
         with contextlib.suppress(Exception):
             store = get_default_session_store()
-            store.save(SessionOntologyRecord.from_dict(entry))
+            store.upsert_relation(SessionOntologyRecord.from_dict(entry))
     except Exception:  # noqa: BLE001 — 记账失败最多让左栏认不出这层关系
         logger.debug("could not record relation for %s", child_session_id, exc_info=True)
         return False

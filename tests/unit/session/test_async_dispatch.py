@@ -1054,4 +1054,456 @@ def test_coreagent_async_dispatch_and_resume_preserve_non_default_profile_id(
     assert run_calls[2]["model"] == "hy4std"
 
 
+def test_supersede_converges_delivery_state_via_ontology_across_all_write_sites(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """5 处 superseded 写点全部走公共收口 helper，并经本体契约把 delivery_state 收敛为 failed。"""
+
+    def _make_job(job_id: str, *, delivery_state: str = "queued") -> async_dispatch.AsyncDispatchJob:
+        j = async_dispatch.AsyncDispatchJob(
+            job_id=job_id,
+            kind="worker",
+            mode="new",
+            caller_session_id="caller-1",
+            caller_employee_id=None,
+            caller_cwd="/tmp",
+            target_session_id="target-1",
+            target_name="target-1",
+            employee_id=None,
+            agent="claude",
+            cwd="/tmp",
+            prompt="hello",
+            task_summary="hello",
+            status="running",
+            turn_seq=1,
+            delivery_state=delivery_state,
+        )
+        async_dispatch.save_dispatch_job(j)
+        return j
+
+    # 1) 写点 1：supersede_active_jobs_for_target（覆盖 queued 与 delivering 两种起点）
+    _make_job("disp-old-q", delivery_state="queued")
+    _make_job("disp-old-d", delivery_state="delivering")
+    sup_ids = async_dispatch.supersede_active_jobs_for_target(
+        "target-1",
+        new_job_id="disp-new-1",
+        caller_session_id="caller-1",
+    )
+    assert set(sup_ids) == {"disp-old-q", "disp-old-d"}
+    for old_id in sup_ids:
+        loaded = async_dispatch.load_dispatch_job(old_id)
+        assert loaded is not None
+        assert loaded.status == "superseded"
+        assert loaded.delivery_state == "failed"
+        assert loaded.superseded_by == "disp-new-1"
+        assert loaded.error == "Superseded by disp-new-1"
+        assert loaded.delivery_error == "Superseded by disp-new-1"
+
+    # 清理前序单据，依次验证 execute_dispatch_job 中 4 处 superseded 检查点
+    for p in async_dispatch.dispatch_store_dir().glob("*.json"):
+        p.unlink()
+
+    # 2) 写点 2：execute_dispatch_job 入口即被顶替
+    j2 = _make_job("disp-exec-pre")
+    p2 = async_dispatch.save_dispatch_job(j2)
+    monkeypatch.setattr(async_dispatch, "is_job_superseded", lambda _j: (True, "disp-win-2"))
+    res2 = async_dispatch.execute_dispatch_job(p2)
+    assert res2 is not None and res2.status == "superseded" and res2.delivery_state == "failed"
+    assert res2.error == "Superseded by disp-win-2"
+
+    # 3) 写点 3：_execute_worker_job 返回后被顶替
+    j3 = _make_job("disp-exec-post")
+    p3 = async_dispatch.save_dispatch_job(j3)
+    calls3 = {"n": 0}
+
+    def _sup_after_run(_j: async_dispatch.AsyncDispatchJob) -> tuple[bool, str | None]:
+        calls3["n"] += 1
+        return (False, None) if calls3["n"] == 1 else (True, "disp-win-3")
+
+    monkeypatch.setattr(async_dispatch, "is_job_superseded", _sup_after_run)
+    monkeypatch.setattr(async_dispatch, "_execute_worker_job", lambda _j: (0, "ok", ""))
+    res3 = async_dispatch.execute_dispatch_job(p3)
+    assert res3 is not None and res3.status == "superseded" and res3.delivery_state == "failed"
+    assert res3.error == "Superseded by disp-win-3"
+
+    # 4) 写点 4：_execute_worker_job 抛异常时被顶替
+    j4 = _make_job("disp-exec-exc")
+    p4 = async_dispatch.save_dispatch_job(j4)
+    calls4 = {"n": 0}
+
+    def _sup_in_exc(_j: async_dispatch.AsyncDispatchJob) -> tuple[bool, str | None]:
+        calls4["n"] += 1
+        return (False, None) if calls4["n"] == 1 else (True, "disp-win-4")
+
+    monkeypatch.setattr(async_dispatch, "is_job_superseded", _sup_in_exc)
+    monkeypatch.setattr(
+        async_dispatch,
+        "_execute_worker_job",
+        lambda _j: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    res4 = async_dispatch.execute_dispatch_job(p4)
+    assert res4 is not None and res4.status == "superseded" and res4.delivery_state == "failed"
+    assert res4.error == "Superseded by disp-win-4"
+
+    # 5) 写点 5：wait_for_pending_child_dispatches 之后、回投之前被顶替
+    j5 = _make_job("disp-exec-cascade")
+    p5 = async_dispatch.save_dispatch_job(j5)
+    calls5 = {"n": 0}
+
+    def _sup_post_cascade(_j: async_dispatch.AsyncDispatchJob) -> tuple[bool, str | None]:
+        calls5["n"] += 1
+        return (False, None) if calls5["n"] <= 2 else (True, "disp-win-5")
+
+    monkeypatch.setattr(async_dispatch, "is_job_superseded", _sup_post_cascade)
+    monkeypatch.setattr(async_dispatch, "_execute_worker_job", lambda _j: (0, "ok", ""))
+    monkeypatch.setattr(async_dispatch, "wait_for_pending_child_dispatches", lambda *_a, **_kw: "")
+    res5 = async_dispatch.execute_dispatch_job(p5)
+    assert res5 is not None and res5.status == "superseded" and res5.delivery_state == "failed"
+    assert res5.error == "Superseded by disp-win-5"
+
+
+def test_reconcile_superseded_dispatch_jobs_is_idempotent(isolated_frago_env: Path) -> None:
+    """存量 superseded + queued/delivering 残留单据在巡检/读取时自动幂等收敛为 failed。"""
+    legacy_q = async_dispatch.AsyncDispatchJob(
+        job_id="disp-legacy-q",
+        kind="worker",
+        mode="new",
+        caller_session_id="c-1",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id="t-1",
+        target_name="t-1",
+        employee_id=None,
+        agent="claude",
+        cwd="/tmp",
+        prompt="p",
+        task_summary="p",
+        status="superseded",
+        superseded_by="disp-newer",
+        delivery_state="queued",
+    )
+    legacy_d = async_dispatch.AsyncDispatchJob(
+        job_id="disp-legacy-d",
+        kind="worker",
+        mode="new",
+        caller_session_id="c-1",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id="t-2",
+        target_name="t-2",
+        employee_id=None,
+        agent="claude",
+        cwd="/tmp",
+        prompt="p",
+        task_summary="p",
+        status="superseded",
+        superseded_by="disp-newer-2",
+        delivery_state="delivering",
+    )
+    async_dispatch.save_dispatch_job(legacy_q)
+    async_dispatch.save_dispatch_job(legacy_d)
+
+    first = async_dispatch.reconcile_superseded_dispatch_jobs()
+    assert set(first) == {"disp-legacy-q", "disp-legacy-d"}
+    assert async_dispatch.load_dispatch_job("disp-legacy-q").delivery_state == "failed"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job("disp-legacy-d").delivery_state == "failed"  # type: ignore[union-attr]
+
+    # 二次运行幂等，无重复跃迁
+    second = async_dispatch.reconcile_superseded_dispatch_jobs()
+    assert second == []
+
+
+def test_superseded_agy_session_terminates_only_when_latest_turn_done(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """被顶替旧 agy 会话仅在最新回合已完结且非忙态时经本体服务收口；仍在工具调用中绝不误杀。"""
+    from frago.session import agy_store
+    from frago.session import service as session_service_mod
+    from frago.session.agy_store import AgyTurn
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    launches_file = isolated_frago_env / "agent-launches.json"
+    launches_file.write_text("[]\n", encoding="utf-8")
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=launches_file,
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+    terminate_calls: list[dict[str, Any]] = []
+    orig_terminate = svc.terminate_agent_session
+
+    def _spy_terminate(*, session_id: str, terminal_status: str = "completed", summary: str | None = None):
+        terminate_calls.append(
+            {"session_id": session_id, "terminal_status": terminal_status, "summary": summary}
+        )
+        return orig_terminate(session_id=session_id, terminal_status=terminal_status, summary=summary)
+
+    monkeypatch.setattr(svc, "terminate_agent_session", _spy_terminate)
+
+    sid_busy = "agy-busy-1111"
+    sid_done = "agy-done-2222"
+    svc.ensure_managed_session(sid_busy, agent_kernel_id="agy", origin="worker", initial_state="running")
+    svc.ensure_managed_session(sid_done, agent_kernel_id="agy", origin="worker", initial_state="running")
+
+    launches_before = launches_file.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+
+    def _fake_latest_turn(sid: str) -> AgyTurn | None:
+        if sid == sid_busy:
+            return AgyTurn(
+                turn_id="1",
+                done=False,
+                text="",
+                error=None,
+            )
+        if sid == sid_done:
+            return AgyTurn(
+                turn_id="2",
+                done=True,
+                text="finished",
+                error=None,
+            )
+        return None
+
+    monkeypatch.setattr(agy_store, "latest_turn", _fake_latest_turn)
+
+    job_busy = async_dispatch.AsyncDispatchJob(
+        job_id="disp-agy-busy",
+        kind="worker",
+        mode="new",
+        caller_session_id="c-1",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id=sid_busy,
+        target_name=sid_busy,
+        employee_id=None,
+        agent="agy",
+        cwd="/tmp",
+        prompt="p",
+        task_summary="p",
+        status="running",
+        delivery_state="queued",
+    )
+    job_done = async_dispatch.AsyncDispatchJob(
+        job_id="disp-agy-done",
+        kind="worker",
+        mode="new",
+        caller_session_id="c-1",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id=sid_done,
+        target_name=sid_done,
+        employee_id=None,
+        agent="agy",
+        cwd="/tmp",
+        prompt="p",
+        task_summary="p",
+        status="running",
+        delivery_state="queued",
+    )
+    async_dispatch.save_dispatch_job(job_busy)
+    async_dispatch.save_dispatch_job(job_done)
+
+    # 1) 仍在活跃工具调用中：不收口本体（仍为 running）
+    async_dispatch._mark_job_superseded(job_busy, superseded_by="disp-new-busy")
+    rec_busy = svc.get_session(sid_busy)
+    assert rec_busy is not None and rec_busy.lifecycle_state == "running"
+    assert terminate_calls == []
+
+    # 2) 最新回合已完结且非忙态：经 SessionOntologyService.terminate_agent_session 收口为 completed
+    async_dispatch._mark_job_superseded(job_done, superseded_by="disp-new-done")
+    rec_done = svc.get_session(sid_done)
+    assert rec_done is not None and rec_done.lifecycle_state == "completed"
+    assert [c["session_id"] for c in terminate_calls] == [sid_done]
+    assert terminate_calls[0]["terminal_status"] == "completed"
+    # 严禁篡改或追加写入 agent-launches.json（无关系会话不得落入老账本）
+    assert launches_file.read_text(encoding="utf-8") == launches_before
+
+
+def test_v1_dispatch_and_relation_closeout_fidelity(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V1: worker/employee 单轮完成后写侧立即收口至 completed/error/awaiting_input，且 upsert_relation 不刷回 running。"""
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+    # 避免真实投递回调到父会话，同时断言「回调排队投递前」Worker 本体已即时收口
+    state_at_callback: list[str] = []
+    monkeypatch.setattr(async_dispatch, "wait_for_pending_child_dispatches", lambda *_a, **_kw: "")
+
+    def _spy_deliver(caller_sid: str, _prompt: str, **_kw) -> bool:
+        # 此时尚未完成回调送达，Worker 自身必须已收口
+        _ = caller_sid
+        state_at_callback.append("called")
+        return True
+
+    monkeypatch.setattr(async_dispatch, "deliver_callback_to_session", _spy_deliver)
+
+    outcomes = [
+        ("worker", "core_v1_ok", (0, "done", ""), "completed", None),
+        ("worker", "core_v1_err", (1, "", "boom"), "error", None),
+        ("worker", "core_v1_need", (2, "need auth", "needs_input"), "awaiting_input", "needs_input"),
+        ("employee", "emp_v1_ok", (0, "emp done", ""), "completed", None),
+    ]
+    for idx, (kind, sid, result_tuple, expected_state, expected_reason) in enumerate(outcomes, start=1):
+        rec = svc.start_turn(sid, agent_kernel_id="coreagent", origin="worker")
+        job = async_dispatch.AsyncDispatchJob(
+            job_id=f"disp-v1-{idx}",
+            kind=kind,
+            mode="new",
+            caller_session_id="caller-v1",
+            caller_employee_id=None,
+            caller_cwd="/tmp",
+            target_session_id=sid,
+            target_name=sid,
+            employee_id="dev-bot" if kind == "employee" else None,
+            agent="coreagent",
+            cwd="/tmp",
+            prompt="do work",
+            task_summary="do work",
+            status="running",
+            turn_seq=rec.turn_seq,
+        )
+        p = async_dispatch.save_dispatch_job(job)
+
+        def _fake_exec(j: async_dispatch.AsyncDispatchJob, *, _rt=result_tuple):
+            rc, out, err = _rt
+            turn_st = "needs_input" if rc == 2 else ("error" if rc != 0 else "ok")
+            async_dispatch._closeout_dispatch_target(
+                j, turn_status=turn_st, answer_text=out, error_text=err
+            )
+            return rc, out, err
+
+        def _spy_deliver_for_sid(_caller: str, _prompt: str, *, _sid=sid, _exp=expected_state, **_kw) -> bool:
+            pre_cb = svc.get_session(_sid)
+            assert pre_cb is not None and pre_cb.lifecycle_state == _exp
+            state_at_callback.append(_sid)
+            return True
+
+        monkeypatch.setattr(async_dispatch, "deliver_callback_to_session", _spy_deliver_for_sid)
+        monkeypatch.setattr(async_dispatch, "_execute_worker_job", _fake_exec)
+        monkeypatch.setattr(async_dispatch, "_execute_employee_job", _fake_exec)
+        async_dispatch.execute_dispatch_job(p)
+
+        got = svc.get_session(sid)
+        assert got is not None
+        assert got.lifecycle_state == expected_state
+        assert got.waiting_reason == expected_reason
+
+        # 迟到的关系记账不得把已收口状态刷回 running
+        store.upsert_relation(
+            SessionOntologyRecord(
+                session_id=sid,
+                agent_kernel="coreagent",
+                parent_session_id="caller-v1",
+                relation_kind="dispatch",
+                is_worker=True,
+                origin="worker",
+                lifecycle_state="running",
+            )
+        )
+        after_rel = svc.get_session(sid)
+        assert after_rel is not None
+        assert after_rel.lifecycle_state == expected_state
+        assert after_rel.parent_session_id == "caller-v1"
+
+
+def test_v3_worker_resume_reopens_and_drops_stale_turn_seq(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V3: completed/error Worker 经 start_turn 合法续跑并清空旧 error，过期 turn_seq 迟到收尾被丢弃。"""
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+    sid = "core_v3_resume"
+    r1 = svc.start_turn(sid, agent_kernel_id="coreagent", origin="worker")
+    assert r1.turn_seq == 1
+    svc.complete_turn_if_current(sid, turn_seq=1, target_state="error", summary="old_failure")
+    err_rec = svc.get_session(sid)
+    assert err_rec is not None and err_rec.lifecycle_state == "error"
+
+    # 续跑开启第 2 轮：合法回到 running，turn_seq=2，旧 error 摘要清空
+    seq2 = async_dispatch._next_turn_seq_for_target(sid, agent_kernel="coreagent", origin="worker")
+    assert seq2 == 2
+    r2 = svc.get_session(sid)
+    assert r2 is not None
+    assert r2.lifecycle_state == "running"
+    assert r2.turn_seq == 2
+    assert r2.summary == ""
+
+    # 模拟第 1 轮迟到收尾携带 turn_seq=1：必须被单调栅栏丢弃，不踩踏第 2 轮
+    stale_job = async_dispatch.AsyncDispatchJob(
+        job_id="disp-v3-stale",
+        kind="worker",
+        mode="new",
+        caller_session_id="caller-v3",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id=sid,
+        target_name=sid,
+        employee_id=None,
+        agent="coreagent",
+        cwd="/tmp",
+        prompt="t1",
+        task_summary="t1",
+        status="running",
+        turn_seq=1,
+    )
+    async_dispatch._closeout_dispatch_target(stale_job, turn_status="ok", answer_text="late t1")
+    still_running = svc.get_session(sid)
+    assert still_running is not None
+    assert still_running.lifecycle_state == "running"
+    assert still_running.turn_seq == 2
+
+    # 第 2 轮正常收尾后回落为 completed
+    cur_job = async_dispatch.AsyncDispatchJob(
+        job_id="disp-v3-cur",
+        kind="worker",
+        mode="resume",
+        caller_session_id="caller-v3",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id=sid,
+        target_name=sid,
+        employee_id=None,
+        agent="coreagent",
+        cwd="/tmp",
+        prompt="t2",
+        task_summary="t2",
+        status="running",
+        turn_seq=2,
+    )
+    async_dispatch._closeout_dispatch_target(cur_job, turn_status="ok", answer_text="ok t2")
+    done_rec = svc.get_session(sid)
+    assert done_rec is not None
+    assert done_rec.lifecycle_state == "completed"
+    assert done_rec.turn_seq == 2
+
+
+
+
 

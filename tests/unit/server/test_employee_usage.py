@@ -261,7 +261,7 @@ def test_list_employees_counts_apply_liveness_closing_and_need_decision(
             status="running",
             employee_id="beta-bot",
         ),
-        # 3. 虽 status=done，但 observer 处于 need_decision -> 计为 active
+        # 3. status=done 且 observer 处于 need_decision -> 待拍板不混算进运行中 active
         SessionCard(
             session_id="s-need-decision",
             family="codex",
@@ -306,4 +306,73 @@ def test_list_employees_counts_apply_liveness_closing_and_need_decision(
     assert list(live_map) == ["s-live"]
 
     by_id = {item["member_post_id"]: item for item in res.json()["employees"]}
-    assert by_id["beta-bot"]["session_counts"] == {"active": 2, "total": 3}
+    assert by_id["beta-bot"]["session_counts"] == {"active": 1, "total": 3}
+
+
+def test_list_employees_counts_match_sessions_route_for_schedule_and_done_tasks(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/api/employees` 的牌面 active/total 口径与 `/api/employees/{id}/sessions` 对齐。"""
+    monkeypatch.setenv("FRAGO_HOME", str(tmp_path / "frago_home"))
+    save_post(EmployeePostRecord(member_post_id="ops-bot", title="Ops"))
+
+    cards = [
+        # local_ops / schedule 来源即使未显式置 origin=schedule 也不应触发 need_decision
+        SessionCard(
+            session_id="s-local-ops",
+            family="claude-code",
+            title="Local ops",
+            directory="/tmp",
+            created_at=1_700_000_100_000,
+            last_active_at=1_700_000_200_000,
+            last_reply_at=1_700_000_200_000,
+            status="done",
+            last_kind="agent.say",
+            origin="human",
+            employee_id="ops-bot",
+        ),
+        # 全任务已办结 + 未在跑，不应误判为活跃
+        SessionCard(
+            session_id="s-all-done",
+            family="codex",
+            title="All done",
+            directory="/tmp",
+            created_at=1_700_000_300_000,
+            last_active_at=1_700_000_400_000,
+            last_reply_at=1_700_000_400_000,
+            status="done",
+            last_kind="agent.say",
+            origin="human",
+            employee_id="ops-bot",
+        ),
+    ]
+    monkeypatch.setattr(tmux_sessions_service, "open_session_names", lambda: set())
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(record_reader, "list_sessions", lambda **_kw: cards)
+    monkeypatch.setattr(
+        "frago.server.routes.workbench.workbench_groups.local_ops_session_ids",
+        lambda: {"s-local-ops"},
+    )
+    monkeypatch.setattr(
+        workbench_routes,
+        "_observer_slots_state",
+        lambda sid, _fam: (False, sid == "s-all-done"),
+    )
+    monkeypatch.setattr(workbench_routes, "_keep_watching_only", lambda _alive: None)
+
+    emp_res = client.get("/api/employees")
+    assert emp_res.status_code == 200
+    ops_emp = next(e for e in emp_res.json()["employees"] if e["member_post_id"] == "ops-bot")
+
+    sess_res = client.get("/api/employees/ops-bot/sessions")
+    assert sess_res.status_code == 200
+    sess_body = sess_res.json()
+
+    assert ops_emp["session_counts"] == {
+        "active": sess_body["active_count"],
+        "total": sess_body["total"],
+    }
+    assert ops_emp["session_counts"] == {"active": 0, "total": 2}
+

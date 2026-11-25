@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -242,6 +243,17 @@ def _live_tmux_session_ids() -> set[str] | None:
     return live
 
 
+def _live_coreagent_states() -> dict[str, bool]:
+    """Read in-process CoreAgent runner states when already loaded (CLI stays zero-import-overhead)."""
+    mod = sys.modules.get("frago.server.services.coreagent_runner")
+    if mod is not None:
+        fn = getattr(mod, "live_states", None)
+        if callable(fn):
+            with contextlib.suppress(Exception):
+                return dict(fn())
+    return {}
+
+
 def _load_ontology_index() -> dict[str, Any]:
     """Load SessionOntologyService records keyed by session_id (best-effort)."""
     try:
@@ -285,118 +297,101 @@ def _reconcile_monitored_status(
     *,
     onto_map: dict[str, Any] | None = None,
     live_tmux_ids: set[str] | None = None,
+    core_alive: dict[str, bool] | None = None,
+    probes: Any = None,
     persist_reconciliation: bool = False,
 ) -> SessionStatus:
-    """Resolve authoritative session status through SessionOntologyService five-state rules."""
+    """Resolve authoritative session status through shared SessionOntologyService rules."""
     onto_rec = onto_map.get(session.session_id) if onto_map else None
     idle = _activity_idle_seconds(session.last_activity, now)
     is_tmux_hosted = str(session.source_file or "").startswith("tmux://")
-    is_alive: bool | None = None
-    if live_tmux_ids is not None and is_tmux_hosted:
-        is_alive = session.session_id in live_tmux_ids
-    elif live_tmux_ids is not None and session.session_id in live_tmux_ids:
-        is_alive = True
+    in_tmux = bool(live_tmux_ids is not None and session.session_id in live_tmux_ids)
 
-    # 1. Explicit authoritative error from transcript/metadata MUST never be folded into completed,
-    #    unless a newer active turn has explicitly started in ontology and is currently alive.
+    last_kind: str | None = None
+    last_reply_s: float | None = None
     if session.status == SessionStatus.ERROR:
-        fresh_onto_turn = (
-            onto_rec is not None
-            and str(onto_rec.lifecycle_state or "").strip().lower() == "running"
-            and int(getattr(onto_rec, "turn_seq", 0) or 0) > 0
-            and is_alive is True
-            and float(getattr(onto_rec, "updated_at", 0) or 0)
-            > session.last_activity.timestamp() + 1.0
-        )
-        if fresh_onto_turn:
-            return SessionStatus.RUNNING
-        if persist_reconciliation and onto_rec is not None and onto_rec.lifecycle_state != "error":
+        last_kind = "error"
+    elif session.status == SessionStatus.COMPLETED:
+        last_kind = "agent.say"
+
+    if session.agent_type == AgentType.COREAGENT and session.source_file:
+        src_path = Path(str(session.source_file))
+        if src_path.is_file():
             with contextlib.suppress(Exception):
-                from frago.session.service import get_default_session_service
+                from frago.session import coreagent_store
 
-                get_default_session_service().reconcile_session_lifecycle(
-                    session.session_id,
-                    agent_kernel_id=session.agent_type.value,
-                    is_alive=False,
-                    last_activity_ts=session.last_activity.timestamp(),
-                    observed_error="transcript_error",
-                    persist=True,
+                stats = coreagent_store.inspect_session_file(src_path, now=now)
+                if stats is not None:
+                    if stats.last_event_kind:
+                        last_kind = stats.last_event_kind
+                    if stats.last_reply_at is not None:
+                        last_reply_s = stats.last_reply_at.timestamp()
+    elif session.agent_type == AgentType.AGY and session.session_id:
+        with contextlib.suppress(Exception):
+            from frago.session import agy_store
+
+            turn = agy_store.latest_turn(session.session_id)
+            if turn is not None:
+                if turn.error:
+                    last_kind = "error"
+                elif turn.done:
+                    last_kind = "agent.say"
+                else:
+                    last_kind = "tool.call"
+
+    # If caller hasn't probed runtime yet and session is managed, collect once cheaply
+    eff_probes = probes
+    if eff_probes is None and onto_rec is not None:
+        with contextlib.suppress(Exception):
+            from frago.session.service import collect_live_runtime_probes
+
+            eff_probes = collect_live_runtime_probes(
+                live_tmux_ids=live_tmux_ids,
+                core_alive=core_alive,
+                now_s=now.timestamp(),
+            )
+
+    from frago.session.service import (
+        can_write_ontology_store,
+        evaluate_session_liveness_and_state,
+        get_default_session_service,
+    )
+
+    liveness_flag: bool | None = None
+    if live_tmux_ids is not None and is_tmux_hosted:
+        liveness_flag = in_tmux
+
+    ev = evaluate_session_liveness_and_state(
+        session_id=session.session_id,
+        onto_rec=onto_rec,
+        card_status=session.status.value,
+        last_kind=last_kind,
+        last_active_s=session.last_activity.timestamp(),
+        last_reply_s=last_reply_s,
+        in_tmux=in_tmux,
+        liveness_flag=liveness_flag,
+        core_alive=core_alive,
+        probes=eff_probes,
+        now_s=now.timestamp(),
+        collapse_unmanaged_dead=bool(
+            is_tmux_hosted and live_tmux_ids is not None and not in_tmux and idle > TMUX_DISCONNECT_GRACE_SECONDS
+        ),
+    )
+
+    if persist_reconciliation and ev.heal_target is not None:
+        with contextlib.suppress(Exception):
+            svc = get_default_session_service()
+            if can_write_ontology_store(svc):
+                svc.store.batch_reconcile_states(
+                    [(session.session_id, ev.heal_target, ev.heal_summary, ev.heal_waiting_reason)]
                 )
+
+    if ev.ui_status == "error" or ev.lifecycle_state == "error":
         return SessionStatus.ERROR
-
-    # 2. Consult ontology store if this session is managed there.
-    if onto_rec is not None:
-        onto_state = str(onto_rec.lifecycle_state or "").strip().lower()
-        if onto_state == "error" and session.status == SessionStatus.RUNNING and (
-            is_alive is True
-            or session.last_activity.timestamp() > float(getattr(onto_rec, "updated_at", 0) or 0) + 2.0
-        ):
-            if persist_reconciliation:
-                with contextlib.suppress(Exception):
-                    from frago.session.service import get_default_session_service
-
-                    get_default_session_service().reconcile_session_lifecycle(
-                        session.session_id,
-                        agent_kernel_id=session.agent_type.value,
-                        is_alive=True,
-                        last_activity_ts=session.last_activity.timestamp(),
-                        observed_active=True,
-                        persist=True,
-                    )
-            return SessionStatus.RUNNING
-        if onto_state == "error" and session.status == SessionStatus.COMPLETED:
-            healed_completed = False
-            if session.agent_type == AgentType.COREAGENT and session.source_file:
-                src_path = Path(str(session.source_file))
-                if src_path.is_file():
-                    with contextlib.suppress(Exception):
-                        from frago.session import coreagent_store
-
-                        stats = coreagent_store.inspect_session_file(src_path, now=now)
-                        onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
-                        if (
-                            stats is not None
-                            and stats.status == SessionStatus.COMPLETED
-                            and stats.last_event_kind in ("assistant_text", "turn_end")
-                            and stats.last_reply_at is not None
-                            and stats.last_reply_at.timestamp() > onto_updated + 5.0
-                        ):
-                            healed_completed = True
-            if healed_completed:
-                if persist_reconciliation:
-                    with contextlib.suppress(Exception):
-                        from frago.session.service import get_default_session_service
-
-                        get_default_session_service().store.batch_reconcile_states(
-                            [(session.session_id, "completed", "")]
-                        )
-                return SessionStatus.COMPLETED
-        if onto_state in {"error", "cancelled", "completed"}:
-            return _status_from_ontology_state(onto_state)
-        if onto_state in {"running", "queued", "awaiting_input"}:
-            disconnected_tmux = is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS
-            stale_zombie = idle > STALE_RUNNING_SECONDS and is_alive is not True
-            if (onto_state in {"running", "queued"} and disconnected_tmux) or stale_zombie:
-                if persist_reconciliation:
-                    with contextlib.suppress(Exception):
-                        from frago.session.service import get_default_session_service
-
-                        get_default_session_service().reconcile_session_lifecycle(
-                            session.session_id,
-                            agent_kernel_id=session.agent_type.value,
-                            is_alive=False,
-                            last_activity_ts=session.last_activity.timestamp(),
-                            stale_after_seconds=0 if disconnected_tmux else STALE_RUNNING_SECONDS,
-                            now_ts=now.timestamp(),
-                            persist=True,
-                        )
-                return SessionStatus.COMPLETED
-            return _status_from_ontology_state(onto_state)
-
-    # 3. Fallback when session is not yet in SessionOntologyStore:
-    #    disconnected tmux:// sessions or >6h stale running sessions must converge.
-    if session.status == SessionStatus.RUNNING and is_alive is False and idle > TMUX_DISCONNECT_GRACE_SECONDS:
-        return SessionStatus.COMPLETED
+    if ev.ui_status == "running" or ev.lifecycle_state == "running":
+        return SessionStatus.RUNNING
+    if ev.lifecycle_state in {"awaiting_input", "queued", "cancelled", "completed"}:
+        return _status_from_ontology_state(ev.lifecycle_state)
     return _live_status(session.status, session.last_activity, now)
 
 
@@ -1189,6 +1184,17 @@ def count_sessions(
     now = datetime.now()
     onto_map = _load_ontology_index() if status else {}
     live_tmux_ids = _live_tmux_session_ids() if status else None
+    core_alive = _live_coreagent_states() if status else None
+    probes = None
+    if status:
+        with contextlib.suppress(Exception):
+            from frago.session.service import collect_live_runtime_probes
+
+            probes = collect_live_runtime_probes(
+                live_tmux_ids=live_tmux_ids,
+                core_alive=core_alive,
+                now_s=now.timestamp(),
+            )
     running_cutoff = (
         now.timestamp() - STALE_RUNNING_SECONDS
         if status == SessionStatus.RUNNING
@@ -1231,6 +1237,8 @@ def count_sessions(
                     now,
                     onto_map=onto_map,
                     live_tmux_ids=live_tmux_ids,
+                    core_alive=core_alive,
+                    probes=probes,
                     persist_reconciliation=False,
                 )
                 if session_status != status:
@@ -1274,6 +1282,16 @@ def list_sessions(
     now = datetime.now()
     onto_map = _load_ontology_index()
     live_tmux_ids = _live_tmux_session_ids()
+    core_alive = _live_coreagent_states()
+    probes = None
+    with contextlib.suppress(Exception):
+        from frago.session.service import collect_live_runtime_probes
+
+        probes = collect_live_runtime_probes(
+            live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            now_s=now.timestamp(),
+        )
     # 只找 running 时，最后文件修改时刻早于 STALE_RUNNING_SECONDS 的目录不可能是
     # running——直接挡在候选集外，避免由于在跑会话少于 limit 而触发全量翻倍重扫。
     running_cutoff = (
@@ -1300,20 +1318,34 @@ def list_sessions(
                     continue
                 if running_cutoff is not None and mtime < running_cutoff:
                     onto_rec = onto_map.get(entry.name)
+                    physically_up = (
+                        (live_tmux_ids is not None and entry.name in live_tmux_ids)
+                        or (core_alive is not None and entry.name in core_alive)
+                        or (
+                            probes is not None
+                            and (
+                                entry.name in probes.live_drive_pids
+                                or entry.name in probes.live_core_markers
+                                or entry.name in probes.live_dispatch_targets
+                            )
+                        )
+                    )
                     if (
                         onto_rec is not None
                         and str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
                         in {"running", "queued", "awaiting_input"}
-                        and (live_tmux_ids is None or entry.name not in live_tmux_ids)
+                        and not physically_up
                     ):
                         stale_onto_heals.append((entry.name, "completed", None))
                     continue
                 candidates.append((mtime, Path(entry.path)))
     if stale_onto_heals:
         with contextlib.suppress(Exception):
-            from frago.session.service import get_default_session_service
+            from frago.session.service import can_write_ontology_store, get_default_session_service
 
-            get_default_session_service().store.batch_reconcile_states(stale_onto_heals)
+            svc = get_default_session_service()
+            if can_write_ontology_store(svc):
+                svc.store.batch_reconcile_states(stale_onto_heals)
 
     # Phase 2: mtime 只是「创建时刻的上界」——文件只会在会话开始之后才存在、才被写。
     # 先按 mtime 取一个窗口，窗口内读准创建时刻；窗口外每一场都满足
@@ -1345,12 +1377,14 @@ def list_sessions(
             if session is None:
                 continue
 
-            # 统一走本体五态收口（失联 tmux / >6h 僵尸收敛 + error 不折叠）。
+            # 统一走本体五态收口（失联 tmux / 60s 已交卷 / 300s 断连 / >6h 僵尸收敛 + error 不折叠）。
             session.status = _reconcile_monitored_status(
                 session,
                 now,
                 onto_map=onto_map,
                 live_tmux_ids=live_tmux_ids,
+                core_alive=core_alive,
+                probes=probes,
                 persist_reconciliation=True,
             )
             if status and session.status != status:
@@ -1392,6 +1426,16 @@ def find_session_by_prefix(
     now = datetime.now()
     onto_map = _load_ontology_index()
     live_tmux_ids = _live_tmux_session_ids()
+    core_alive = _live_coreagent_states()
+    probes = None
+    with contextlib.suppress(Exception):
+        from frago.session.service import collect_live_runtime_probes
+
+        probes = collect_live_runtime_probes(
+            live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            now_s=now.timestamp(),
+        )
     session = read_metadata(prefix, agent_type)
     if session is not None:
         session.status = _reconcile_monitored_status(
@@ -1399,6 +1443,8 @@ def find_session_by_prefix(
             now,
             onto_map=onto_map,
             live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            probes=probes,
             persist_reconciliation=True,
         )
         return session
@@ -1424,6 +1470,8 @@ def find_session_by_prefix(
             now,
             onto_map=onto_map,
             live_tmux_ids=live_tmux_ids,
+            core_alive=core_alive,
+            probes=probes,
             persist_reconciliation=True,
         )
         return session

@@ -95,6 +95,17 @@ def _coreagent_rows(excerpt_chars: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for snap in live:
         card = cards.get(snap.session_id)
+        eff_state = snap.state
+        if eff_state == "starting":
+            card_settled = (
+                card is not None
+                and card.status in ("done", "idle", "error")
+                and (card.last_active_at / 1000.0) >= snap.touched_at - 1.0
+            )
+            if card_settled:
+                eff_state = "idle"
+            elif (now - snap.touched_at) > 60.0:
+                continue
         digest = ""
         if card is not None:
             digest = card.digest_stuck or card.digest_done or ""
@@ -111,13 +122,13 @@ def _coreagent_rows(excerpt_chars: int) -> list[dict[str, Any]]:
                 "excerpt": digest[:excerpt_chars],
                 "memory_mb": mem.get(snap.pid, 0) if snap.pid is not None else 0,
                 # starting 也算在干活：它正在把这一场拉起来，此刻停掉等于半途撤火。
-                "busy": snap.state in ("starting", "busy"),
+                "busy": eff_state in ("starting", "busy"),
                 "managed": False,
                 "client_alive": True,
-                "awaiting_input": snap.state == "idle",
+                "awaiting_input": eff_state == "idle",
                 "closing_text": "",
                 "kind": "coreagent",
-                "state": snap.state,
+                "state": eff_state,
                 "directory": (card.directory if card is not None else "") or snap.cwd,
                 "tmux_name": getattr(snap, "tmux_name", None),
             }
