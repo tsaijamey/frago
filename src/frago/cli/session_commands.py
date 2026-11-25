@@ -1147,3 +1147,161 @@ def sync_cmd(
             click.echo(f"  - {err}")
         if len(result.errors) > 5:
             click.echo(f"  ... and {len(result.errors) - 5} more errors")
+
+
+@session_group.command("read", cls=AgentFriendlyCommand)
+@click.argument("session_id")
+@click.option(
+    "--offset",
+    type=int,
+    default=0,
+    show_default=True,
+    help="0-based starting message index",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=20,
+    show_default=True,
+    help="Maximum messages to return per page (1-500)",
+)
+@click.option(
+    "--tail",
+    is_flag=True,
+    help="Read the last `limit` messages from the end of the session",
+)
+@click.option(
+    "--role",
+    type=click.Choice(["assistant", "user", "conversation", "all"]),
+    default="assistant",
+    show_default=True,
+    help="Record role filter (lossless original text, no truncation)",
+)
+@click.option(
+    "--latest-turn",
+    is_flag=True,
+    help="Scope to messages in the latest task/turn interval only",
+)
+@click.option(
+    "--char-offset",
+    type=int,
+    default=0,
+    show_default=True,
+    help="0-based character offset inside the paginated concatenated text",
+)
+@click.option(
+    "--max-chars",
+    type=int,
+    default=None,
+    help="Optional maximum characters to emit in `text` for character-level pagination",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output lossless records and pagination metadata in JSON format",
+)
+def read_cmd(
+    session_id: str,
+    offset: int,
+    limit: int,
+    tail: bool,
+    role: str,
+    latest_turn: bool,
+    char_offset: int,
+    max_chars: int | None,
+    json_output: bool,
+):
+    """
+    Losslessly read session messages with deterministic pagination (no LLM needed).
+
+    Works consistently across all 5 kernels (claude, codex, opencode, agy, coreagent)
+    via ``record_reader`` and accepts a full session ID, unique prefix, or ``self``.
+
+    \b
+    Examples:
+      frago session read 48c10a46
+      frago session read 48c10a46 --latest-turn
+      frago session read 48c10a46 --role conversation --offset 20 --limit 20
+      frago session read 48c10a46 --char-offset 0 --max-chars 4000 --json
+    """
+    import json as json_module
+
+    from frago.session.report_offload import (
+        SessionReadAmbiguous,
+        SessionReadError,
+        SessionReadNotFound,
+        read_session_messages,
+    )
+
+    from .agent_friendly import BusinessError
+
+    target_sid = session_id
+    if target_sid.strip().lower() == "self":
+        from frago.session.self_id import resolve_self
+
+        resolved_self = resolve_self()
+        if not resolved_self or not resolved_self.session_id:
+            raise BusinessError(
+                "Cannot resolve current session identity for 'self'",
+                "frago session list  # inspect available sessions and pass a session_id",
+            )
+        target_sid = resolved_self.session_id
+
+    try:
+        page = read_session_messages(
+            target_sid,
+            offset=offset,
+            limit=limit,
+            tail=tail,
+            role=role,
+            latest_turn=latest_turn,
+            char_offset=char_offset,
+            max_chars=max_chars,
+        )
+    except SessionReadNotFound as exc:
+        raise BusinessError(
+            str(exc),
+            "frago session list  # list available sessions and locate the session id",
+        ) from exc
+    except SessionReadAmbiguous as exc:
+        raise BusinessError(
+            str(exc),
+            "frago session list  # pass a longer prefix or full session id",
+        ) from exc
+    except (SessionReadError, ValueError) as exc:
+        raise BusinessError(
+            str(exc),
+            f"frago session read {target_sid} --offset 0 --limit 20",
+        ) from exc
+
+    if json_output:
+        click.echo(json_module.dumps(page.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    click.echo(
+        f"Session: {page.session_id} ({page.family}, role={page.role}, "
+        f"items={len(page.items)}/{page.total_items}, offset={page.offset}, "
+        f"total_chars={page.total_chars})"
+    )
+    click.echo("-" * 72)
+    if page.text:
+        click.echo(page.text)
+    else:
+        click.echo("(no matching records in this slice)")
+
+    if page.char_has_more and page.next_char_offset is not None:
+        turn_flag = " --latest-turn" if page.latest_turn else ""
+        click.echo(
+            f"\n[next] frago session read {page.session_id} --role {page.role}"
+            f"{turn_flag} --offset {page.offset} --limit {page.limit}"
+            f" --char-offset {page.next_char_offset} --max-chars {page.max_chars}",
+            err=True,
+        )
+    elif page.has_more and page.next_offset is not None:
+        turn_flag = " --latest-turn" if page.latest_turn else ""
+        click.echo(
+            f"\n[next] frago session read {page.session_id} --role {page.role}"
+            f"{turn_flag} --offset {page.next_offset} --limit {page.limit}",
+            err=True,
+        )

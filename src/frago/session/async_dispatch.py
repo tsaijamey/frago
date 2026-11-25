@@ -35,6 +35,11 @@ from frago.ontology import (
     build_record_callback_delivery_outcome_contract,
     ontological_action,
 )
+from frago.session.report_offload import (
+    current_next_seq,
+    extract_latest_substantive_assistant_output,
+    extract_task_interval_report,
+)
 from frago.session.self_id import (
     SESSION_IDENTITY_ENV,
     _resolve_bound_session_id,
@@ -93,6 +98,9 @@ class AsyncDispatchJob:
     exit_code: int = 0
     output: str = ""
     error: str = ""
+    report_file: str | None = None
+    report_total_chars: int | None = None
+    report_truncated: bool = False
     delivery_state: str = "queued"  # "queued" | "delivering" | "delivered" | "failed"
     delivery_attempts: int = 0
     delivery_error: str | None = None
@@ -796,7 +804,13 @@ _CALLBACK_BODY_MAX_CHARS = 600
 _CALLBACK_BODY_HEAD_CHARS = 420
 
 
-def summarize_callback_body(body: str, target_session_id: str) -> str:
+def summarize_callback_body(
+    body: str,
+    target_session_id: str,
+    *,
+    report_file: str | None = None,
+    total_chars: int | None = None,
+) -> str:
     """把回传正文压成「前段核心内容 + 省略字数提示 + 查全指引」。
 
     短正文（不超过 ``_CALLBACK_BODY_MAX_CHARS``）原样返回，不丢任何信息；超长正文保留前段
@@ -811,10 +825,20 @@ def summarize_callback_body(body: str, target_session_id: str) -> str:
     # 一并当成代码块内容吞掉，父会话反而看不到「去哪里取全文」。
     if head.count("```") % 2 == 1:
         head = f"{head}\n```"
+    effective_total = total_chars if total_chars is not None else len(body)
+    if report_file:
+        return (
+            f"{head}\n\n"
+            f"……（正文过长，此处省略 {omitted} 字，总计 {effective_total} 字。"
+            f"完整内容已写入落盘的交付报告 `{report_file}`；"
+            f"也可使用 `frago session read {target_session_id}` 分页无损读取，"
+            f"或 `frago session ask {target_session_id} 「要提取的问题」` 查询目标会话。）"
+        )
     return (
         f"{head}\n\n"
-        f"……（正文过长，此处省略 {omitted} 字。完整内容请用 "
-        f"`frago session ask {target_session_id} 「要提取的问题」` 读取目标会话，"
+        f"……（正文过长，此处省略 {omitted} 字，总计 {effective_total} 字。完整内容请用 "
+        f"`frago session read {target_session_id}` 分页无损读取，"
+        f"或 `frago session ask {target_session_id} 「要提取的问题」` 读取目标会话，"
         f"或直接查阅该会话落盘的交付报告。）"
     )
 
@@ -827,7 +851,19 @@ def format_callback_prompt(job: AsyncDispatchJob) -> str:
         body = f"[执行异常] {job.error.strip()}"
     if not body:
         body = "（目标会话已完成回合，未捕获到额外文本输出，请按需核查目标会话记录。）"
-    body = summarize_callback_body(body, job.target_session_id)
+    total_chars = job.report_total_chars if job.report_total_chars is not None else len(body)
+    body = summarize_callback_body(
+        body,
+        job.target_session_id,
+        report_file=job.report_file,
+        total_chars=total_chars,
+    )
+    report_line = ""
+    if job.report_file:
+        report_line = (
+            f"- 交付报告：`{job.report_file}`（总计 {total_chars} 字，"
+            f"分页读取：`frago session read {job.target_session_id}`）\n"
+        )
 
     if job.kind == "employee":
         mode_zh = "任务移交 (invoke)" if job.mode == "invoke" else "协查提问 (ask)"
@@ -838,7 +874,8 @@ def format_callback_prompt(job: AsyncDispatchJob) -> str:
             f"【同侪员工异步回传】来自 `{job.employee_id}`（会话 `{job.target_session_id}`，模式：{mode_zh}）\n"
             f"- 派发单号：`{job.job_id}`\n"
             f"- 原始诉求：{job.task_summary}\n"
-            f"- 执行状态：`{status_label}` (exit_code={job.exit_code})\n\n"
+            f"- 执行状态：`{status_label}` (exit_code={job.exit_code})\n"
+            f"{report_line}\n"
             f"### 同侪员工返回结论\n"
             f"{body}\n\n"
             f"---\n"
@@ -860,7 +897,8 @@ def format_callback_prompt(job: AsyncDispatchJob) -> str:
         f"【下属 Worker 异步回传】来自 Worker 会话 `{job.target_session_id}`（模式：{mode_zh}，内核：`{job.agent}`）\n"
         f"- 派发单号：`{job.job_id}`\n"
         f"- 任务摘要：{job.task_summary}\n"
-        f"- 执行状态：`{status_label}` (exit_code={job.exit_code})\n\n"
+        f"- 执行状态：`{status_label}` (exit_code={job.exit_code})\n"
+        f"{report_line}\n"
         f"### Worker 交付结果\n"
         f"{body}\n\n"
         f"---\n"
@@ -874,20 +912,7 @@ def format_callback_prompt(job: AsyncDispatchJob) -> str:
 
 def _extract_latest_assistant_output(session_id: str) -> str | None:
     """从目标会话的记录中提取最新一条实质性 assistant 文本（排除纯 [dispatched] 过渡回执）。"""
-    with contextlib.suppress(Exception):
-        from frago.session.browse import read_session_detail
-
-        detail = read_session_detail(session_id)
-        if detail and isinstance(detail.get("messages"), list):
-            for msg in reversed(detail["messages"]):
-                if not isinstance(msg, dict):
-                    continue
-                if msg.get("role") != "assistant":
-                    continue
-                content = str(msg.get("content") or msg.get("text") or "").strip()
-                if content and not content.startswith("[dispatched]"):
-                    return content
-    return None
+    return extract_latest_substantive_assistant_output(session_id)
 
 
 def wait_for_pending_child_dispatches(
@@ -1540,6 +1565,30 @@ def _execute_drive_send_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
         return 1, "", str(exc)
 
 
+def _apply_task_interval_report(
+    job: AsyncDispatchJob,
+    raw_output: str,
+    *,
+    baseline_seq: int | None,
+) -> str:
+    """统一提取当次任务区间全部实质 assistant 正文，并在超限/多轮时旁路落盘只读报告。"""
+    resolved_sid = _resolve_bound_session_id(job.target_session_id)[0] or job.target_session_id
+    report = extract_task_interval_report(
+        resolved_sid,
+        baseline_seq=baseline_seq,
+        fallback_text=raw_output,
+        threshold=_CALLBACK_BODY_MAX_CHARS,
+        head_chars=_CALLBACK_BODY_HEAD_CHARS,
+        offload=True,
+        job_id=job.job_id,
+        base_home=frago_home(),
+    )
+    job.report_file = report.report_file
+    job.report_total_chars = report.total_chars
+    job.report_truncated = report.truncated
+    return report.full_text
+
+
 def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
     """后台 watcher 主流程：执行目标回合 -> 等待子级联任务 -> 组装报文并回投父会话。"""
     job = load_dispatch_job(job_path)
@@ -1568,6 +1617,12 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
         job.status = "running"
         save_dispatch_job(job)
 
+        if job.kind == "worker" and job.mode == "new":
+            baseline_seq: int | None = 0
+        else:
+            pre_sid = _resolve_bound_session_id(job.target_session_id)[0] or job.target_session_id
+            baseline_seq = current_next_seq(pre_sid)
+
         try:
             if job.kind == "employee":
                 rc, out, err = _execute_employee_job(job)
@@ -1588,8 +1643,14 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
             if cascaded_out:
                 out = cascaded_out
 
+            full_out = _apply_task_interval_report(
+                job,
+                out or "",
+                baseline_seq=baseline_seq,
+            )
+
             job.exit_code = int(rc)
-            job.output = out or ""
+            job.output = full_out
             job.error = err or ""
             job.status = "running"
             save_dispatch_job(job)

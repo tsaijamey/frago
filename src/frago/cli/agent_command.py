@@ -245,6 +245,9 @@ def _emit_and_exit(
     duration_ms: int,
     human_note: str | None,
     json_out: bool,
+    report_file: str | None = None,
+    total_chars: int | None = None,
+    truncated: bool = False,
 ) -> None:
     """发射一次停机结果并按契约退出。
 
@@ -256,6 +259,7 @@ def _emit_and_exit(
     """
     exit_code = _EXIT_CODES[status]
     if json_out:
+        effective_total = total_chars if total_chars is not None else len(text)
         payload = {
             "status": status,
             "exit_code": exit_code,
@@ -263,6 +267,9 @@ def _emit_and_exit(
             "tmux_name": tmux_name,
             "text": text,
             "duration_ms": duration_ms,
+            "total_chars": effective_total,
+            "truncated": bool(truncated),
+            "report_file": report_file,
         }
         click.echo(json.dumps(payload, ensure_ascii=False))
     elif text:
@@ -500,6 +507,10 @@ def _run_tmux_driver(
     run_env = dict(env) if env else {}
     run_env.setdefault("FRAGO_CONV_KEY", os.environ.get("FRAGO_CONV_KEY") or sid)
 
+    from frago.session.report_offload import current_next_seq, extract_task_interval_report
+
+    baseline_seq: int | None = 0 if session_id is None else current_next_seq(onto_sid)
+
     # 自有新会话（非借住别人的 tmux）才登记名册：一次性 worker 也该被 `frago agent ls`
     # 看见、按名字停掉。外壳进程被外部杀掉时 finally 不执行，名册里那条会留下——那正是
     # 我们要的：跑飞的孤儿仍可按名字收走（见 frago book agent-worker-driving）。
@@ -640,6 +651,20 @@ def _run_tmux_driver(
             origin=default_origin,
         )
 
+    report = extract_task_interval_report(
+        resolved_sid,
+        baseline_seq=baseline_seq,
+        fallback_text=result.text,
+        offload=True,
+    )
+    emitted_text = report.summary_text if report.truncated else report.full_text
+    if not json_out and report.truncated and report.report_file:
+        emitted_text = (
+            f"{report.summary_text}\n\n"
+            f"……（正文过长，总计 {report.total_chars} 字；完整交付报告：`{report.report_file}`，"
+            f"分页无损读取：`frago session read {resolved_sid}`）"
+        )
+
     notes = {
         "needs_input": "[!] Agent needs input (auth wall / permission / clarification)",
         "timeout": f"[!] Turn timed out after {timeout}s",
@@ -647,12 +672,15 @@ def _run_tmux_driver(
     }
     _emit_and_exit(
         status=result.status,
-        text=result.text,
+        text=emitted_text,
         session_id=sid,
         tmux_name=tmux_name,
         duration_ms=result.duration_ms,
         human_note=notes.get(result.status),
         json_out=json_out,
+        report_file=report.report_file,
+        total_chars=report.total_chars,
+        truncated=report.truncated,
     )
 
 
@@ -741,6 +769,10 @@ def _run_kernel(
     run_env.setdefault("FRAGO_SESSION_ID", sid)
     run_env.setdefault("FRAGO_CONV_KEY", os.environ.get("FRAGO_CONV_KEY") or sid)
 
+    from frago.session.report_offload import current_next_seq, extract_task_interval_report
+
+    baseline_seq: int | None = 0 if session_id is None else current_next_seq(sid)
+
     try:
         turn = kernel_backend.run_turn(
             prompt_text,
@@ -783,6 +815,20 @@ def _run_kernel(
     # 记账不在这里——已经挪到 `_on_spawn`，进程起来的那一刻就写（见那里的注释）。放在这
     # 里的话，账要等整轮跑完才落，worker 在跑的这几分钟里在左栏是一张散在主干上的卡片。
 
+    report = extract_task_interval_report(
+        sid,
+        baseline_seq=baseline_seq,
+        fallback_text=turn.text,
+        offload=True,
+    )
+    emitted_text = report.summary_text if report.truncated else report.full_text
+    if not json_out and report.truncated and report.report_file:
+        emitted_text = (
+            f"{report.summary_text}\n\n"
+            f"……（正文过长，总计 {report.total_chars} 字；完整交付报告：`{report.report_file}`，"
+            f"分页无损读取：`frago session read {sid}`）"
+        )
+
     notes = {
         "needs_input": f"[!] CoreAgent 要人介入（认证墙 / 连接没配好）：{turn.text[:300]}",
         "timeout": f"[!] Turn timed out after {timeout}s",
@@ -790,12 +836,15 @@ def _run_kernel(
     }
     _emit_and_exit(
         status=turn.status,
-        text=turn.text,
+        text=emitted_text,
         session_id=sid,
         tmux_name=getattr(turn, "tmux_name", None),
         duration_ms=turn.duration_ms,
         human_note=notes.get(turn.status),
         json_out=json_out,
+        report_file=report.report_file,
+        total_chars=report.total_chars,
+        truncated=report.truncated,
     )
 
 
