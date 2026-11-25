@@ -1068,4 +1068,100 @@ describe('员工页', () => {
     expect(secondLoadMoreSignal.aborted).toBe(true);
     vi.unstubAllGlobals();
   });
+
+  it('30s 自动轮询刷新保持当前选中员工牌位与已展开分页不跳回第 1 页', async () => {
+    vi.useFakeTimers();
+    const requestedUrls: string[] = [];
+    const makeList = (empId: string, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        session_id: `${empId}-s-${i}`,
+        family: 'claude-code',
+        title: `${empId} 会话 ${i}`,
+        directory: '/Users/frago/Repos/frago',
+        created_at: 1_700_000_000_000 - i * 1000,
+        last_active_at: 1_700_000_000_000 - i * 1000,
+        last_reply_at: 1_700_000_000_000 - i * 1000,
+        status: 'done',
+        lifecycle_state: 'completed',
+        digest_done: '已完成',
+        digest_stuck: null,
+        in_tmux: false,
+        alive: false,
+        has_running_worker: false,
+        need_decision: false,
+        employee_id: empId,
+        employee_title: empId,
+        employee_color: 'amber',
+      }));
+
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        list: () =>
+          new Response(
+            JSON.stringify({
+              employees: [
+                makePost({ member_post_id: 'stock', title: 'Stock 投研' }),
+                makePost({ member_post_id: 'ops', title: 'Ops 运维' }),
+              ],
+              total: 2,
+            }),
+            { status: 200 }
+          ),
+        sessions: (empId, url) => {
+          requestedUrls.push(url);
+          const qs = new URL(url, 'http://localhost').searchParams;
+          const limit = Number(qs.get('limit') ?? 20);
+          const offset = Number(qs.get('offset') ?? 0);
+          const all = makeList(empId, 25);
+          const slice = all.slice(offset, offset + limit);
+          return new Response(
+            JSON.stringify({
+              employee_id: empId,
+              sessions: slice,
+              total: 25,
+              active_count: 0,
+              completed_count: 25,
+              has_more: offset + slice.length < 25,
+            }),
+            { status: 200 }
+          );
+        },
+      })
+    );
+
+    render(<EmployeesPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 切到第二张卡（ops）并展开到第 25 条
+    fireEvent.click(screen.getByTestId('employee-card-ops'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('employee-sessions-load-more')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('employee-sessions-load-more'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('employee-session-row-ops-s-24')).toBeTruthy();
+
+    // 推进 30s 触发 useAutoRefresh
+    requestedUrls.length = 0;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    expect(requestedUrls.some((u) => u.includes('/employees/ops/sessions') && u.includes('limit=25&offset=0'))).toBe(
+      true
+    );
+    expect(screen.getByTestId('employee-session-row-ops-s-24')).toBeTruthy();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 });

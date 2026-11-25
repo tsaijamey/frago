@@ -38,7 +38,7 @@ function isSessionRunning(s: WorkbenchSession): boolean {
     s.status === 'running' ||
     s.lifecycle_state === 'running' ||
     s.lifecycle_state === 'queued' ||
-    s.lifecycle_state === 'awaiting_input'
+    Boolean(s.has_running_worker)
   );
 }
 
@@ -242,13 +242,17 @@ export default function EmployeeSessionsPanel({
                           <span className="st-badge error">
                             {t('employees.sessions.error')}
                           </span>
+                        ) : s.need_decision ? (
+                          <span className="st-badge decision">
+                            {t('employees.sessions.needDecision')}
+                          </span>
                         ) : (
                           <span className="st-badge completed">
                             {t('employees.sessions.completed')}
                           </span>
                         )}
 
-                        {s.need_decision ? (
+                        {running && s.need_decision ? (
                           <span className="st-badge decision">
                             {t('employees.sessions.needDecision')}
                           </span>

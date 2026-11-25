@@ -135,20 +135,51 @@ export function useEmployeeSessions(
       setSessions([]);
       setHasMore(false);
     }
-    const requestLimit = keyChanged
+    const targetLimit = keyChanged
       ? pageSize
-      : Math.min(200, Math.max(pageSize, loadedCountRef.current));
+      : Math.max(pageSize, loadedCountRef.current);
 
     setLoading(true);
     setLoadingMore(false);
     setError(null);
 
-    fetchEmployeeSessions(employeeId, {
-      status,
-      limit: requestLimit,
-      offset: 0,
-      signal: controller.signal,
-    })
+    const runReload = async () => {
+      if (targetLimit <= 200) {
+        return fetchEmployeeSessions(employeeId, {
+          status,
+          limit: targetLimit,
+          offset: 0,
+          signal: controller.signal,
+        });
+      }
+
+      const first = await fetchEmployeeSessions(employeeId, {
+        status,
+        limit: 200,
+        offset: 0,
+        signal: controller.signal,
+      });
+      const collected = [...first.sessions];
+      let lastRes = first;
+      while (lastRes.has_more && collected.length < targetLimit) {
+        const chunkLimit = Math.min(200, targetLimit - collected.length);
+        const nextPage = await fetchEmployeeSessions(employeeId, {
+          status,
+          limit: chunkLimit,
+          offset: collected.length,
+          signal: controller.signal,
+        });
+        lastRes = nextPage;
+        if (nextPage.sessions.length === 0) break;
+        collected.push(...nextPage.sessions);
+      }
+      return {
+        ...lastRes,
+        sessions: collected,
+      };
+    };
+
+    runReload()
       .then((res) => {
         if (reqSeq.current !== seq || controller.signal.aborted) return;
         loadedCountRef.current = res.sessions.length;
