@@ -9,7 +9,10 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import RecordStream, {
   buildTalkSegments,
+  collapseRuns,
+  findVisualLastStopRecord,
   groupRecords,
+  isStopMessageRecord,
   lensOf,
   normalizeStreamLensParam,
   talkView,
@@ -2898,5 +2901,717 @@ describe('DeliveryTriad — Codex apply_patch 识别', () => {
     ]);
   });
 });
+
+describe('切换会话滚动定位：视觉末条为 stop 时顶对齐', () => {
+  function baseProps(over: Partial<Parameters<typeof RecordStream>[0]> = {}) {
+    return {
+      sessionId: 'ses-init',
+      records: [] as WorkbenchRecord[],
+      loading: false,
+      loadingOlder: false,
+      hasOlder: false,
+      error: null,
+      onLoadOlder: () => {},
+      ...over,
+    };
+  }
+
+  /**
+   * 模拟真实浏览器的滚动几何、钳位 scrollTo、元素定位与可控 ResizeObserver：
+   * - `positions` 映射 data-record-id 到元素相对内容顶部的 { top, height }，
+   * - `getBoundingClientRect()` 动态减去当前 scroller.scrollTop（并加上视口顶边 60px），
+   * - `scrollTo` 按 `[0, Math.max(0, scrollHeight - clientHeight)]` 同步钳位更新 `scrollTop`，
+   * - 返回 `triggerResize()` 用于显式触发已注册的 `ResizeObserver` 回调。
+   */
+  function installRealLayoutGeometry(
+    scrollHeightRef: { value: number },
+    clientHeight: number,
+    positions: Record<string, { top: number; height: number }>,
+    opts: { viewTop?: number; paddingTop?: number } = {}
+  ) {
+    const viewTop = opts.viewTop ?? 60;
+    const paddingTop = opts.paddingTop ?? 16;
+
+    const origScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    const origClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    const origScrollTo = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
+    const origResizeObserver = globalThis.ResizeObserver;
+    const origGetComputedStyle = window.getComputedStyle;
+
+    const resizeCallbacks = new Set<ResizeObserverCallback>();
+    class MockResizeObserver implements ResizeObserver {
+      private cb: ResizeObserverCallback;
+      constructor(cb: ResizeObserverCallback) {
+        this.cb = cb;
+        resizeCallbacks.add(cb);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        resizeCallbacks.delete(this.cb);
+      }
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.getAttribute?.('data-testid') === 'record-stream-scroll') {
+          return scrollHeightRef.value;
+        }
+        return 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.getAttribute?.('data-testid') === 'record-stream-scroll') {
+          return clientHeight;
+        }
+        return 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value(this: HTMLElement, arg1?: ScrollToOptions | number, arg2?: number) {
+        const rawTop =
+          typeof arg1 === 'number'
+            ? typeof arg2 === 'number'
+              ? arg2
+              : this.scrollTop
+            : typeof arg1?.top === 'number'
+              ? arg1.top
+              : this.scrollTop;
+        const maxTop = Math.max(0, this.scrollHeight - this.clientHeight);
+        this.scrollTop = Math.max(0, Math.min(rawTop, maxTop));
+      },
+    });
+
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute?.('data-testid') === 'record-stream-scroll') {
+          return {
+            top: viewTop,
+            bottom: viewTop + clientHeight,
+            left: 0,
+            right: 800,
+            width: 800,
+            height: clientHeight,
+            x: 0,
+            y: viewTop,
+            toJSON: () => {},
+          } as DOMRect;
+        }
+        const rid = this.getAttribute?.('data-record-id');
+        if (rid && positions[rid]) {
+          const scroller = this.closest('[data-testid="record-stream-scroll"]') as HTMLElement | null;
+          const scrollTop = scroller?.scrollTop ?? 0;
+          const top = viewTop + positions[rid].top - scrollTop;
+          const height = positions[rid].height;
+          return {
+            top,
+            bottom: top + height,
+            left: 20,
+            right: 760,
+            width: 740,
+            height,
+            x: 20,
+            y: top,
+            toJSON: () => {},
+          } as DOMRect;
+        }
+        return {
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        } as DOMRect;
+      });
+
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((elt: Element) => {
+      const baseStyle = origGetComputedStyle.call(window, elt);
+      if (elt instanceof HTMLElement && elt.getAttribute('data-testid') === 'record-stream-scroll') {
+        return new Proxy(baseStyle, {
+          get(target, prop) {
+            if (prop === 'paddingTop') return `${paddingTop}px`;
+            const val = Reflect.get(target, prop);
+            return typeof val === 'function' ? val.bind(target) : val;
+          },
+        });
+      }
+      return baseStyle;
+    });
+
+    const triggerResize = () => {
+      act(() => {
+        for (const cb of Array.from(resizeCallbacks)) {
+          cb([], {} as ResizeObserver);
+        }
+      });
+    };
+
+    const cleanup = () => {
+      rectSpy.mockRestore();
+      vi.restoreAllMocks();
+      globalThis.ResizeObserver = origResizeObserver;
+      if (origScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', origScrollHeight);
+      } else {
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+      }
+      if (origClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'clientHeight', origClientHeight);
+      } else {
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+      }
+      if (origScrollTo) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollTo', origScrollTo);
+      } else {
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollTo;
+      }
+    };
+
+    return { cleanup, triggerResize };
+  }
+
+  it('视觉末条判定函数严格以当前镜头折叠过滤后的渲染列表为准，且保持五内核同构', () => {
+    const u1 = record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '请排查' } });
+    const th1 = record({ id: 'th1', seq: 1, kind: 'agent.think', payload: { text: '分析中' } });
+    const tc1 = record({
+      id: 'tc1',
+      seq: 2,
+      kind: 'tool.call',
+      payload: { call_id: 'c1', tool_name: 'Read', args: {} },
+    });
+    const tr1 = record({
+      id: 'tr1',
+      seq: 3,
+      kind: 'tool.result',
+      payload: { call_id: 'c1', tool_name: 'Read', status: 'ok', body: 'ok' },
+    });
+    const stopSay = record({
+      id: 'a-stop',
+      seq: 4,
+      kind: 'agent.say',
+      payload: { text: '长回复正文' },
+    });
+    const subSay = record({
+      id: 'sub-say',
+      seq: 5,
+      kind: 'agent.say',
+      agent_path: ['worker-1'],
+      payload: { text: '子 agent 回复' },
+    });
+    const envelope = record({
+      id: 'env-1',
+      seq: 6,
+      kind: 'call.envelope',
+      payload: { duration_ms: 1200 },
+    });
+    const usage = record({
+      id: 'usage-1',
+      seq: 7,
+      kind: 'usage.tick',
+      payload: { context_tokens: 4200 },
+    });
+    const silentHook = record({
+      id: 'hook-silent',
+      seq: 8,
+      kind: 'context.inject',
+      payload: { source: 'hook', hook_event: 'Stop', blocks: [] },
+    });
+
+    // 1. 主会话 agent.say 是 stop，子 agent 的 agent.say 不是主会话 stop
+    expect(isStopMessageRecord(stopSay)).toBe(true);
+    expect(isStopMessageRecord(subSay)).toBe(false);
+    expect(isStopMessageRecord(u1)).toBe(false);
+
+    // 2. Talk 镜头下：即便原始数组尾部是 call.envelope / usage.tick / silent hook，
+    //    经 buildTalkSegments 过滤后视觉末条仍是 a-stop
+    const withTrailingMeta = [u1, th1, tc1, tr1, stopSay, envelope, usage, silentHook];
+    expect(findVisualLastStopRecord(buildTalkSegments(withTrailingMeta))?.id).toBe('a-stop');
+
+    // 3. All 镜头下：call.envelope + usage.tick 会合成为可见 SystemRun 胶囊在最末尾，
+    //    视觉末条是 SystemRun 而非 stopSay
+    expect(
+      findVisualLastStopRecord(collapseRuns(withTrailingMeta, { tools: true, system: true }))
+    ).toBeNull();
+
+    // 4. All 镜头下：若 stopSay 后面仅跟了一条返回 null 的空思考（不渲染可见内容），
+    //    视觉末条依然是 stopSay
+    const emptyThink = record({ id: 'th-empty', seq: 5, kind: 'agent.think', payload: { text: '   ' } });
+    expect(
+      findVisualLastStopRecord(
+        collapseRuns([u1, stopSay, emptyThink], { tools: true, system: true })
+      )?.id
+    ).toBe('a-stop');
+
+    // 5. Talk 镜头下：先前有过 agent.say，但末尾仍在工具调用/思考中（折叠为 talk-agg），
+    //    视觉末条是 talk-agg（非 stop）
+    const inProgressAfterSay = [
+      u1,
+      record({ id: 'a-mid', seq: 1, kind: 'agent.say', payload: { text: '我先去查下日志' } }),
+      record({ id: 'tc2', seq: 2, kind: 'tool.call', payload: { call_id: 'c2', tool_name: 'Bash', args: {} } }),
+    ];
+    expect(findVisualLastStopRecord(buildTalkSegments(inProgressAfterSay))).toBeNull();
+
+    // 6. 若末尾存在独立兜底「Agent on it」进展提示，即使前面是 stop 也视为进行中（非 stop）
+    expect(findVisualLastStopRecord(buildTalkSegments([u1, stopSay]), true)).toBeNull();
+  });
+
+  it('切换会话后，视觉末条为长 stop 消息时滚动到该消息顶部并紧贴镜头栏下方顶边', () => {
+    const scrollHeightRef = { value: 2400 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'b-u1': { top: 100, height: 120 },
+      'b-stop': { top: 900, height: 1460 },
+    });
+    try {
+      const sesARecords = [
+        record({ id: 'a-u1', session_id: 'ses-A', seq: 0, kind: 'user.say', payload: { text: '会话A问题' } }),
+      ];
+      const sesBRecords = [
+        record({ id: 'b-u1', session_id: 'ses-B', seq: 0, kind: 'user.say', payload: { text: '会话B问题' } }),
+        record({ id: 'b-stop', session_id: 'ses-B', seq: 1, kind: 'agent.say', payload: { text: '长回复\n'.repeat(60) } }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-A', records: sesARecords })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      // 模拟真实工作台切换过程：先置空 loading=true，再加载完成传入 ses-B 记录
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-B', records: [], loading: true })} />);
+      rerender(
+        <RecordStream {...baseProps({ sessionId: 'ses-B', records: sesBRecords, loading: false })} />
+      );
+
+      // b-stop 顶部在 900，减去容器 pt-4(16px) 呼吸距，精确停在 884（而不是滑到底部 1600）
+      expect(scroller.scrollTop).toBe(884);
+      // 距离底部 2400 - 884 - 800 = 716 > 240，右下角亮「跳到最新」按钮方便直达底部
+      expect(screen.getByTestId('jump-to-latest')).toBeTruthy();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('切换会话后，视觉末条非 stop 消息（如用户提问或进行中工具调用）保持贴底不反向滚动', () => {
+    const scrollHeightRef = { value: 2200 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'b-u1': { top: 1700, height: 120 },
+      'c-mid': { top: 1200, height: 100 },
+    });
+    try {
+      const sesARecords = [
+        record({ id: 'a-u1', session_id: 'ses-A', seq: 0, kind: 'user.say', payload: { text: 'A' } }),
+      ];
+      const sesBUserEnd = [
+        record({ id: 'b-u1', session_id: 'ses-B', seq: 0, kind: 'user.say', payload: { text: '用户刚发的消息' } }),
+      ];
+      const sesCToolProgress = [
+        record({ id: 'c-u1', session_id: 'ses-C', seq: 0, kind: 'user.say', payload: { text: '查一下' } }),
+        record({ id: 'c-mid', session_id: 'ses-C', seq: 1, kind: 'agent.say', payload: { text: '先去查' } }),
+        record({
+          id: 'c-tc1',
+          session_id: 'ses-C',
+          seq: 2,
+          kind: 'tool.call',
+          payload: { call_id: 'c1', tool_name: 'Bash', args: {} },
+        }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-A', records: sesARecords })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      // 切换到视觉末条为 user.say 的会话 B -> 贴底（钳位 maxTop = 2200 - 800 = 1400）
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-B', records: [], loading: true })} />);
+      rerender(
+        <RecordStream {...baseProps({ sessionId: 'ses-B', records: sesBUserEnd, loading: false })} />
+      );
+      expect(scroller.scrollTop).toBe(1400);
+
+      // 切换到存在过中间 agent.say、但末尾是折叠态工具调用的会话 C -> 不反向滚动到 c-mid，保持贴底
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-C', records: [], loading: true })} />);
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-C', records: sesCToolProgress, loading: false })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(1400);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('当前镜头过滤/折叠掉尾部非可见事件后，仍严格以最终渲染出的视觉末条为准判定', () => {
+    const scrollHeightRef = { value: 2500 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'f-u1': { top: 100, height: 100 },
+      'f-stop': { top: 960, height: 1500 },
+    });
+    try {
+      const sesFilteredRecords = [
+        record({ id: 'f-u1', session_id: 'ses-F', seq: 0, kind: 'user.say', payload: { text: '问题' } }),
+        record({ id: 'f-stop', session_id: 'ses-F', seq: 1, kind: 'agent.say', payload: { text: '完整终答' } }),
+        // 原始数组末尾挂了三种在 Talk 镜头中不可见的尾部记账事件
+        record({ id: 'f-env', session_id: 'ses-F', seq: 2, kind: 'call.envelope', payload: { duration_ms: 800 } }),
+        record({ id: 'f-usage', session_id: 'ses-F', seq: 3, kind: 'usage.tick', payload: { context_tokens: 9000 } }),
+        record({
+          id: 'f-hook',
+          session_id: 'ses-F',
+          seq: 4,
+          kind: 'context.inject',
+          payload: { source: 'hook', hook_event: 'Stop', blocks: [] },
+        }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-0', records: [] })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-F', records: sesFilteredRecords, loading: false })}
+        />
+      );
+      // 原始数组末项是 silent hook，但 Talk 镜头视觉末条是 f-stop，应滚到 f-stop 顶部 (960 - 16 = 944)
+      expect(scroller.scrollTop).toBe(944);
+
+      // 若切到 All 镜头后再切去同样结构的另一个会话 ses-G：All 镜头会把 call.envelope/usage.tick
+      // 渲染成末位可见 SystemRun 胶囊，因此视觉末条不是 stop，应保持贴底（2500 - 800 = 1700）
+      fireEvent.click(screen.getByTestId('lens-all'));
+      const sesGRecords = sesFilteredRecords.map((r) => ({ ...r, id: r.id.replace('f-', 'g-'), session_id: 'ses-G' }));
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-G', records: [], loading: true })} />);
+      rerender(
+        <RecordStream {...baseProps({ sessionId: 'ses-G', records: sesGRecords, loading: false })} />
+      );
+      expect(scroller.scrollTop).toBe(1700);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('切换后用户手动滚轮浏览不会被反向抢回，停在 stop 顶部时追加非可见/新事件也不跳动', () => {
+    const scrollHeightRef = { value: 2400 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'm-u1': { top: 100, height: 100 },
+      'm-stop': { top: 800, height: 1560 },
+    });
+    try {
+      const sesMRecords = [
+        record({ id: 'm-u1', session_id: 'ses-M', seq: 0, kind: 'user.say', payload: { text: '问' } }),
+        record({ id: 'm-stop', session_id: 'ses-M', seq: 1, kind: 'agent.say', payload: { text: '长答案' } }),
+      ];
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-M', records: sesMRecords })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+      // 初始已顶对齐到 800 - 16 = 784
+      expect(scroller.scrollTop).toBe(784);
+
+      // 1. 用户手动滚轮往上翻看上文到 320
+      fireEvent.wheel(scroller);
+      scroller.scrollTop = 320;
+      fireEvent.scroll(scroller);
+      expect(scroller.scrollTop).toBe(320);
+
+      // 2. 即使后台轮询重拉/末尾补充了一个隐形 usage.tick，也绝不抢滚回顶部或底部
+      scrollHeightRef.value = 2460;
+      const withUsage = [
+        ...sesMRecords,
+        record({ id: 'm-usage', session_id: 'ses-M', seq: 2, kind: 'usage.tick', payload: { context_tokens: 1200 } }),
+      ];
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-M', records: withUsage })} />);
+      expect(scroller.scrollTop).toBe(320);
+
+      // 3. 重新切到另一个带长 stop 的会话 ses-N，若未手动滚动则停在 stop 顶部；
+      //    此时即使追加流式事件（followArmed 为 false），视口仍稳定停在 stop 顶部不被拉到底
+      const sesNRecords = [
+        record({ id: 'n-u1', session_id: 'ses-N', seq: 0, kind: 'user.say', payload: { text: 'N问' } }),
+        record({ id: 'm-stop', session_id: 'ses-N', seq: 1, kind: 'agent.say', payload: { text: 'N长答' } }),
+      ];
+      scrollHeightRef.value = 2400;
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-N', records: sesNRecords })} />);
+      expect(scroller.scrollTop).toBe(784);
+
+      scrollHeightRef.value = 2500;
+      rerender(
+        <RecordStream
+          {...baseProps({
+            sessionId: 'ses-N',
+            records: [
+              ...sesNRecords,
+              record({ id: 'n-u2', session_id: 'ses-N', seq: 2, kind: 'call.envelope', payload: { duration_ms: 500 } }),
+            ],
+          })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(784);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('同会话内流式追加非 stop 内容时持续保持贴底，不误触发反向跳动', () => {
+    const scrollHeightRef = { value: 2000 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      's-u1': { top: 1500, height: 120 },
+      's-say1': { top: 1200, height: 200 },
+    });
+    try {
+      // 会话刚切入时末条是 user.say（非 stop）-> 贴底并武装跟随（钳位 2000 - 800 = 1200）
+      const initial = [
+        record({ id: 's-u1', session_id: 'ses-S', seq: 0, kind: 'user.say', payload: { text: '开工' } }),
+      ];
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-S', records: initial })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+      expect(scroller.scrollTop).toBe(1200);
+
+      // 同会话流式追加 tool.call（非 stop）-> 平滑跟底，不反向跳动（钳位 2250 - 800 = 1450）
+      scrollHeightRef.value = 2250;
+      const step1 = [
+        ...initial,
+        record({
+          id: 's-tc1',
+          session_id: 'ses-S',
+          seq: 1,
+          kind: 'tool.call',
+          payload: { call_id: 'c1', tool_name: 'Read', args: {} },
+        }),
+      ];
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-S', records: step1 })} />);
+      expect(scroller.scrollTop).toBe(1450);
+
+      // 同会话内流式输出一段中间 agent.say 后再增量变长 -> 因非切换会话触发，继续正常贴底而不反向跳到 s-say1 顶部
+      scrollHeightRef.value = 2900;
+      const midSay = record({
+        id: 's-say1',
+        session_id: 'ses-S',
+        seq: 2,
+        kind: 'agent.say',
+        payload: { text: '正在输出前半段...' },
+      });
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-S', records: [...step1, midSay] })} />);
+      expect(scroller.scrollTop).toBe(2100);
+
+      scrollHeightRef.value = 3200;
+      const midSayGrown = { ...midSay, payload: { text: '正在输出前半段...\n补充后半段内容' } };
+      rerender(
+        <RecordStream {...baseProps({ sessionId: 'ses-S', records: [...step1, midSayGrown] })} />
+      );
+      expect(scroller.scrollTop).toBe(2400);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('连续切换不同会话时各自独立正确触发判定（stop 顶对齐 <-> 非 stop 贴底）', () => {
+    const scrollHeightRef = { value: 2400 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'a-stop': { top: 700, height: 1660 },
+      'b-u1': { top: 1900, height: 120 },
+      'c-stop': { top: 1050, height: 1310 },
+    });
+    try {
+      const sesA = [
+        record({ id: 'a-u1', session_id: 'ses-1', seq: 0, kind: 'user.say', payload: { text: 'A问' } }),
+        record({ id: 'a-stop', session_id: 'ses-1', seq: 1, kind: 'agent.say', payload: { text: 'A长答' } }),
+      ];
+      const sesB = [
+        record({ id: 'b-u1', session_id: 'ses-2', seq: 0, kind: 'user.say', payload: { text: 'B问（等待回复）' } }),
+      ];
+      const sesC = [
+        record({ id: 'c-u1', session_id: 'ses-3', seq: 0, kind: 'user.say', payload: { text: 'C问' } }),
+        record({ id: 'c-stop', session_id: 'ses-3', seq: 1, kind: 'agent.say', payload: { text: 'C长答' } }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-1', records: sesA })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+      expect(scroller.scrollTop).toBe(684); // 700 - 16
+
+      // 切到 B（非 stop）：先经过空白 loading，再落定记录 -> 贴底（2400 - 800 = 1600）
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-2', records: [], loading: true })} />);
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-2', records: sesB, loading: false })} />);
+      expect(scroller.scrollTop).toBe(1600);
+
+      // 直接切到 C（长 stop，不经过空白帧）-> 独立触发并顶对齐到 c-stop 顶部 (1050 - 16 = 1034)
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-3', records: sesC, loading: false })} />);
+      expect(scroller.scrollTop).toBe(1034);
+
+      // 切回 A（长 stop）-> 再次独立触发并顶对齐到 a-stop 顶部 (700 - 16 = 684)
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-1', records: sesA, loading: false })} />);
+      expect(scroller.scrollTop).toBe(684);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('切换会话落地到 stop 且距底落在 (0, 100px] 区间时，触发 ResizeObserver 与延迟 scroll 事件不被拽回底部', () => {
+    const scrollHeightRef = { value: 1600 };
+    const { cleanup, triggerResize } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'gap-u1': { top: 100, height: 120 },
+      // targetTop = 766 - 16 = 750；maxTop = 1600 - 800 = 800；gap = 50px ∈ (0, 100.5px]
+      'gap-stop': { top: 766, height: 794 },
+    });
+    try {
+      const sesA = [
+        record({ id: 'a-u1', session_id: 'ses-A', seq: 0, kind: 'user.say', payload: { text: 'A' } }),
+      ];
+      const sesGap = [
+        record({ id: 'gap-u1', session_id: 'ses-gap', seq: 0, kind: 'user.say', payload: { text: '问题' } }),
+        record({ id: 'gap-stop', session_id: 'ses-gap', seq: 1, kind: 'agent.say', payload: { text: '略超一屏的回复' } }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-A', records: sesA })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-gap', records: sesGap, loading: false })} />);
+      expect(scroller.scrollTop).toBe(750);
+
+      // 1. 模拟程序化滚到 750 后浏览器延迟触发的 scroll 事件：gap = 50px <= 100px，不得误武装 followArmed
+      fireEvent.scroll(scroller);
+      expect(scroller.scrollTop).toBe(750);
+
+      // 2. 紧接着内部元素微调触发 ResizeObserver：应重守 stop 顶部 750，绝不被拽回底部 800
+      scrollHeightRef.value = 1630;
+      triggerResize();
+      expect(scroller.scrollTop).toBe(750);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('切换会话落地到短 stop（首帧贴底）后，内部图片/Mermaid 异步撑高触发 ResizeObserver 仍保持在 stop 顶部并亮出回底按钮', () => {
+    const scrollHeightRef = { value: 1400 };
+    const positions: Record<string, { top: number; height: number }> = {
+      'async-u1': { top: 100, height: 120 },
+      // 首帧 stop 高度仅 310px：maxTop = 1400 - 800 = 600，targetTop = 1050 - 16 = 1034，因此首帧钳位到 600（gap = 0）
+      'async-stop': { top: 1050, height: 310 },
+    };
+    const { cleanup, triggerResize } = installRealLayoutGeometry(scrollHeightRef, 800, positions);
+    try {
+      const sesA = [
+        record({ id: 'a-u1', session_id: 'ses-A', seq: 0, kind: 'user.say', payload: { text: 'A' } }),
+      ];
+      const sesAsync = [
+        record({ id: 'async-u1', session_id: 'ses-async', seq: 0, kind: 'user.say', payload: { text: '看下图' } }),
+        record({ id: 'async-stop', session_id: 'ses-async', seq: 1, kind: 'agent.say', payload: { text: '见图表' } }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-A', records: sesA })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      rerender(<RecordStream {...baseProps({ sessionId: 'ses-async', records: sesAsync, loading: false })} />);
+      expect(scroller.scrollTop).toBe(600);
+
+      // 异步图片/Mermaid 渲染完成把 async-stop 撑高到 1210px（总高 2300，maxTop 1500）并触发 ResizeObserver
+      positions['async-stop'] = { top: 1050, height: 1210 };
+      scrollHeightRef.value = 2300;
+      triggerResize();
+
+      // 视口必须保持对齐 async-stop 顶部 (1050 - 16 = 1034)，而不是被拽到新底部 1500
+      expect(scroller.scrollTop).toBe(1034);
+      expect(screen.getByTestId('jump-to-latest')).toBeTruthy();
+
+      // 用户稍后主动滚轮到底部热区后，后续新轮流式消息应恢复正常自动跟底
+      fireEvent.wheel(scroller);
+      scroller.scrollTop = 1500;
+      fireEvent.scroll(scroller);
+
+      scrollHeightRef.value = 2480;
+      rerender(
+        <RecordStream
+          {...baseProps({
+            sessionId: 'ses-async',
+            records: [
+              ...sesAsync,
+              record({ id: 'async-u2', session_id: 'ses-async', seq: 2, kind: 'user.say', payload: { text: '继续' } }),
+            ],
+            loading: false,
+          })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(1680);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('在 filesOpen 或 terminalOpen 遮罩打开期间切换会话并收到首批 records，关闭遮罩返回流视图时补执行视觉末条判定', () => {
+    const scrollHeightRef = { value: 2400 };
+    const { cleanup } = installRealLayoutGeometry(scrollHeightRef, 800, {
+      'ov-u1': { top: 100, height: 120 },
+      'ov-stop': { top: 920, height: 1440 },
+      'ov2-u1': { top: 1900, height: 120 },
+    });
+    try {
+      const sesA = [
+        record({ id: 'a-u1', session_id: 'ses-A', seq: 0, kind: 'user.say', payload: { text: 'A' } }),
+      ];
+      const sesOverlayStop = [
+        record({ id: 'ov-u1', session_id: 'ses-ov1', seq: 0, kind: 'user.say', payload: { text: '问题' } }),
+        record({ id: 'ov-stop', session_id: 'ses-ov1', seq: 1, kind: 'agent.say', payload: { text: '长回复' } }),
+      ];
+      const sesOverlayUser = [
+        record({ id: 'ov2-u1', session_id: 'ses-ov2', seq: 0, kind: 'user.say', payload: { text: '待处理提问' } }),
+      ];
+
+      const { rerender } = render(
+        <RecordStream {...baseProps({ sessionId: 'ses-A', records: sesA, filesOpen: true })} />
+      );
+      const scroller = screen.getByTestId('record-stream-scroll');
+
+      // 场景1：filesOpen 遮罩态下切到 ses-ov1，并先经过空白帧再收到首批 records
+      rerender(
+        <RecordStream {...baseProps({ sessionId: 'ses-ov1', records: [], loading: true, filesOpen: true })} />
+      );
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-ov1', records: sesOverlayStop, loading: false, filesOpen: true })}
+        />
+      );
+      // 遮罩打开期间不误滚；关闭遮罩回到对话流时立刻补执行 stop 顶对齐 (920 - 16 = 904)
+      expect(scroller.scrollTop).toBe(0);
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-ov1', records: sesOverlayStop, loading: false, filesOpen: false })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(904);
+
+      // 场景2：terminalOpen 遮罩态下直接切到末条为 user.say 的 ses-ov2，再关闭终端返回流视图 -> 贴底 1600
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-ov2', records: sesOverlayUser, loading: false, terminalOpen: true })}
+        />
+      );
+      rerender(
+        <RecordStream
+          {...baseProps({ sessionId: 'ses-ov2', records: sesOverlayUser, loading: false, terminalOpen: false })}
+        />
+      );
+      expect(scroller.scrollTop).toBe(1600);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 
 

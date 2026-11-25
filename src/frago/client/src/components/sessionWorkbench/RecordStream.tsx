@@ -1094,6 +1094,55 @@ export function groupSegments(segments: StreamSegment[]): SegmentGroup[] {
 }
 
 /**
+ * 判断一条统一记录在本体层面上是否为主会话的终止回复（Stop 消息）。
+ *
+ * 五内核（claude-code / coreagent / codex / opencode / agy）均经 UnifiedRecord 归一为
+ * 16 种 RecordKind；主会话最终回复固定为 `agent.say` 且 `agent_path` 为空，不依赖任何单家私有字段。
+ */
+export function isStopMessageRecord(record: WorkbenchRecord): boolean {
+  return record.kind === 'agent.say' && record.agent_path.length === 0;
+}
+
+/** 判断单个 StreamSegment 在界面上是否真正渲染出可见内容（空思考会返回 null 不占视觉高度）。 */
+function isVisuallyRenderedSegment(seg: StreamSegment): boolean {
+  if (seg.kind !== 'record') return true;
+  if (seg.record.kind === 'agent.think') {
+    const text =
+      typeof seg.record.payload.text === 'string'
+        ? seg.record.payload.text
+        : typeof seg.record.payload.thinking === 'string'
+          ? seg.record.payload.thinking
+          : '';
+    return Boolean(text.trim());
+  }
+  return true;
+}
+
+/**
+ * 严格基于当前镜头过滤、折叠、合并后最终渲染出来的可见列表（`segments`），
+ * 判定「视觉上最后一条显示出来的消息」是否为 stop 消息：
+ * - 若列表末尾挂有兜底的活跃进展指示器（`agentOnIt`），说明当前轮尚在进行中，视觉末条非 stop；
+ * - 否则从 `segments` 末尾倒序寻找最后一条实际渲染出来的段：
+ *   - 仅当该段为单条记录且满足 `isStopMessageRecord` 时返回该记录；
+ *   - 若为 `talk-agg` / `tools` / `system` / `user.say` / `tool.result` / `context.inject` / `error` / `interrupt` 等，均返回 `null`。
+ */
+export function findVisualLastStopRecord(
+  segments: StreamSegment[],
+  hasTrailingProgressIndicator = false
+): WorkbenchRecord | null {
+  if (hasTrailingProgressIndicator) return null;
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const seg = segments[i];
+    if (!isVisuallyRenderedSegment(seg)) continue;
+    if (seg.kind === 'record' && isStopMessageRecord(seg.record)) {
+      return seg.record;
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
  * 「Agent on it — 在做什么」里的「在做什么」：那句话之后最后一条 agent 动静的短描述。
  * 取记录流本身（确定、即时），不取观察者栏那句意译。
  */
@@ -2229,6 +2278,18 @@ export default function RecordStream({
    * 「滚着滚着就不跟了」，而且极难复现。
    */
   const programmaticUntil = useRef(0);
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
+  const trailingProgressRef = useRef(false);
+  trailingProgressRef.current = Boolean(activeTrail && !activeShown);
+  const watcherOpenRef = useRef(watcherOpen);
+  watcherOpenRef.current = watcherOpen;
+  /** 每次切换会话（或初次挂载带 sessionId）置位，待首屏有记录完成渲染时执行一次视觉末条判定。 */
+  const pendingSessionLanding = useRef(Boolean(sessionId));
+  /** 本次切换后用户是否已主动操作滚动；一旦手动滚动过，绝不反向抢回。 */
+  const userInteractedInSession = useRef(false);
+  /** 会话切换首次落地命中 stop 消息后锁定的记录编号，防止 ResizeObserver / 异步撑高把视口拉回底部。 */
+  const stopPinnedRecordId = useRef<string | null>(null);
 
   const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
     const el = scrollRef.current;
@@ -2248,6 +2309,36 @@ export default function RecordStream({
     }
   }, []);
 
+  /**
+   * 将视口定位到指定记录卡片的顶部（紧贴顶部镜头栏下方可见区顶边，保留容器自身 paddingTop 呼吸距）。
+   * 若元素尚未完成布局测量（例如未 mock getBoundingClientRect 的 jsdom），返回 false 以便回退。
+   */
+  const scrollToRecordTop = useCallback((recordId: string): boolean => {
+    const el = scrollRef.current;
+    if (!el) return false;
+    const target = el.querySelector<HTMLElement>(
+      `[data-record-id="${CSS.escape(recordId)}"]`
+    );
+    if (!target) return false;
+    const view = el.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
+    if (view.height <= 0 || rect.height <= 0) return false;
+    const paddingTop =
+      typeof window !== 'undefined' && typeof window.getComputedStyle === 'function'
+        ? parseFloat(window.getComputedStyle(el).paddingTop) || 0
+        : 0;
+    const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const rawTop = el.scrollTop + rect.top - view.top - paddingTop;
+    const targetTop = Math.max(0, Math.min(rawTop, maxTop));
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.auto;
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: targetTop, behavior: 'auto' });
+    } else {
+      el.scrollTop = targetTop;
+    }
+    return true;
+  }, []);
+
   /** 「跳到最新」按钮亮着吗。距底超过 {@link JUMP_SHOW_PX} 才亮——人翻上去看历史了，
    * 一键回去；就在底部附近时它没有可干的事，不占地方。 */
   const [showJump, setShowJump] = useState(false);
@@ -2258,14 +2349,14 @@ export default function RecordStream({
   // 不会误伤跟随状态机），同时把手动滚动的痕迹清干净——上一秒人还在翻历史，这一秒起
   // 视图重新交还给自动跟随，下一条新记录照常跟到底。
   const jumpToLatest = useCallback(() => {
+    stopPinnedRecordId.current = null;
     followArmed.current = true;
     manualIntentUntil.current = 0;
     scrollToBottom('smooth');
     setShowJump(false);
   }, [scrollToBottom]);
 
-  // 换会话：一切归零，默认重新武装——新打开的会话加载最新尾部一页就该落在最新内容上；
-  // 若当前正处于 Progress / Files 等顶部定位视图，同步将滚动条重置回 0。
+  // 换会话：一切归零，重置坐标原点并标记待执行一次视觉末条判定。
   useLayoutEffect(() => {
     followArmed.current = true;
     manualIntentUntil.current = 0;
@@ -2274,13 +2365,18 @@ export default function RecordStream({
     prevEnds.current = { first: null, last: null };
     olderArmed.current = true;
     autoBackfillCount.current = 0;
+    pendingSessionLanding.current = Boolean(sessionId);
+    userInteractedInSession.current = false;
+    stopPinnedRecordId.current = null;
     setShowJump(false);
-    if (overlayViewOpenRef.current && scrollRef.current) {
+    if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
   }, [sessionId]);
 
-  // 记录流变化：前插钉住视口，初装沉底武装，尾部追加与流式单条变长跟底，整流替换按武装状态走。
+  // 记录流变化（以及文件/终端遮罩合上返回流视图）：
+  // 前插钉住视口，初装按当前镜头视觉末条判定（stop 顶对齐 / 非 stop 贴底），
+  // 尾部追加与流式单条变长按武装状态跟底，整流替换按武装状态走。
   useLayoutEffect(() => {
     if (!records.length) {
       prevEnds.current = { first: null, last: null };
@@ -2292,7 +2388,16 @@ export default function RecordStream({
     const el = scrollRef.current;
 
     if (overlayViewOpenRef.current) {
-      prevEnds.current = { first, last };
+      if (watcherOpenRef.current) {
+        pendingSessionLanding.current = false;
+        stopPinnedRecordId.current = null;
+        prevEnds.current = { first, last };
+      } else if (!pendingSessionLanding.current) {
+        // 同会话内开着文件/终端遮罩时：照常更新首尾，避免合上后误判为初次装载；
+        // 若正在等待会话切换后的首次落地（pendingSessionLanding 为真），保留 prev.first === null
+        // 直到遮罩关闭返回记录流时补执行一次完整的视觉末条判定与落位。
+        prevEnds.current = { first, last };
+      }
       anchor.current = null;
       return;
     }
@@ -2303,13 +2408,45 @@ export default function RecordStream({
         el.scrollTop = el.scrollHeight - anchor.current.height + anchor.current.top;
       }
     } else if (prev.first === null) {
-      // 2. 初次装载会话最新页（Tail Window 分页）：落位在最新内容底部并武装自动贴底
-      scrollToBottom();
-      followArmed.current = true;
+      // 2. 初次装载会话最新页（或关闭文件/终端遮罩后补执行首次落地）：
+      //    仅在待执行会话切换落地且用户未手动滚动时，以当前镜头最终渲染出的视觉末条判定：
+      //    - 视觉末条为 stop 消息 -> 顶对齐该条消息头部并上落地锁（stopPinnedRecordId），
+      //      仅当完全无底部溢出（gap <= 0.5px）时才允许武装 followArmed，彻底杜绝 (0, 100.5px]
+      //      区间或异步撑高场景被 ResizeObserver 拽回底部；
+      //    - 视觉末条非 stop 消息 -> 保持默认贴底并武装自动跟随。
+      const shouldCheckStop = pendingSessionLanding.current && !userInteractedInSession.current;
+      pendingSessionLanding.current = false;
+      const visualStop = shouldCheckStop
+        ? findVisualLastStopRecord(segmentsRef.current, trailingProgressRef.current)
+        : null;
+      if (visualStop && scrollToRecordTop(visualStop.id)) {
+        stopPinnedRecordId.current = visualStop.id;
+        const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
+        followArmed.current = gap <= 0.5;
+        if (el) {
+          setShowJump(gap > JUMP_SHOW_PX);
+        }
+      } else {
+        stopPinnedRecordId.current = null;
+        scrollToBottom();
+        followArmed.current = true;
+      }
     } else if (first === prev.first && last !== prev.last) {
-      // 3. 尾部追加不同记录：依据内容增长前的武装状态决定是否自动滚底。
-      //    若内容增长前视口正覆盖底部 100px 热区（followArmed 为真），则自动跟到底；
-      //    若用户已手动上翻离开热区（距底 > 100px），绝对不滚，严禁打扰用户阅读历史！
+      // 3. 尾部追加不同记录：仅当新增尾部含实质非记账事件时才解除 stop 落地锁；
+      //    依据内容增长前的武装状态决定是否自动滚底，停在长 stop 顶部时绝不反向跳动或抢滚。
+      pendingSessionLanding.current = false;
+      const prevLastIdx = records.findIndex((r) => r.id === prev.last);
+      const addedTail = prevLastIdx >= 0 ? records.slice(prevLastIdx + 1) : records;
+      const hasSubstantiveAddition = addedTail.some(
+        (r) =>
+          r.kind !== 'usage.tick' &&
+          r.kind !== 'call.envelope' &&
+          r.kind !== 'session.state' &&
+          !isSilentHook(r)
+      );
+      if (hasSubstantiveAddition) {
+        stopPinnedRecordId.current = null;
+      }
       if (followArmed.current) {
         // 近处滑过去，远处直接落位——见 SMOOTH_MAX_PX。
         const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
@@ -2317,10 +2454,17 @@ export default function RecordStream({
         followArmed.current = true;
       }
     } else if (first === prev.first && last === prev.last) {
-      // 4. 单条流式增量更新（最后一条内容变长）：
-      //    只要内容变长前视口正处于底部 100px 热区（followArmed 为真），持续平滑跟到底；
-      //    若用户正在上方看历史，视口纹丝不动，严禁抢滚！
-      if (followArmed.current) {
+      // 4. 单条流式增量更新（或关闭遮罩返回未变更记录）：
+      //    若当前正锁在某条 stop 消息的顶对齐落地态，保持停在该消息顶部不随 Resize/关闭遮罩滑向底端；
+      //    否则只要内容变长前视口处于底部 100px 热区，持续平滑跟到底。
+      pendingSessionLanding.current = false;
+      if (stopPinnedRecordId.current && !userInteractedInSession.current) {
+        if (scrollToRecordTop(stopPinnedRecordId.current) && el) {
+          const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+          followArmed.current = gap <= 0.5;
+          setShowJump(gap > JUMP_SHOW_PX);
+        }
+      } else if (followArmed.current) {
         const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
         scrollToBottom(gap <= SMOOTH_MAX_PX ? 'smooth' : 'auto');
         followArmed.current = true;
@@ -2328,6 +2472,8 @@ export default function RecordStream({
     } else if (first !== prev.first && last !== prev.last) {
       // 5. 整流替换（重拉）：仅当替换前视口处于底部 100px 热区（或武装着）时才沉底并武装；
       //    若用户正在上方看历史，保持视口位置，绝不强行拉到底部。
+      pendingSessionLanding.current = false;
+      stopPinnedRecordId.current = null;
       if (followArmed.current || isViewportCoveringBottom(el)) {
         scrollToBottom();
         followArmed.current = true;
@@ -2338,10 +2484,10 @@ export default function RecordStream({
 
     prevEnds.current = { first, last };
     anchor.current = null;
-  }, [records, scrollToBottom]);
+  }, [sessionId, records, filesOpen, terminalOpen, scrollToBottom, scrollToRecordTop]);
 
   // 换镜头后：
-  // - 切进 Watcher（或 Files）时按原型契约停在顶部（scrollTop = 0）；
+  // - 切进 Watcher 时按原型契约停在顶部（scrollTop = 0）；
   // - 从 Watcher 切回对话 / 全部等流视图、或在不同流镜头间切换时立即沉底并武装跟随。
   const prevLensRef = useRef({ lens, watcherOpen, filesOpen });
   useLayoutEffect(() => {
@@ -2355,15 +2501,25 @@ export default function RecordStream({
     if (!isFirstRun) {
       const el = scrollRef.current;
       if (watcherOpen) {
+        stopPinnedRecordId.current = null;
         if (el) el.scrollTop = 0;
+        setShowJump(false);
       } else if (prev.watcherOpen || prev.lens !== lens) {
+        stopPinnedRecordId.current = null;
+        pendingSessionLanding.current = false;
         scrollToBottom();
         followArmed.current = true;
-      } else if (!filesOpen && (followArmed.current || isViewportCoveringBottom(el))) {
+        setShowJump(false);
+      } else if (
+        !filesOpen &&
+        !pendingSessionLanding.current &&
+        !stopPinnedRecordId.current &&
+        (followArmed.current || isViewportCoveringBottom(el))
+      ) {
         scrollToBottom();
         followArmed.current = true;
+        setShowJump(false);
       }
-      setShowJump(false);
     }
   }, [lens, watcherOpen, filesOpen, scrollToBottom]);
 
@@ -2399,7 +2555,9 @@ export default function RecordStream({
     };
   }, []);
 
-  // 容器视口与内部内容尺寸变化时，实时驱动贴底跟随并维护武装状态。
+  // 容器视口与内部内容尺寸变化时，实时驱动贴底跟随并维护武装状态；
+  // 若当前仍处于会话切换后的 stop 顶对齐锁定期（stopPinnedRecordId），只保持 stop 顶对齐，
+  // 严禁在 gap ∈ (0, 100.5px] 或图片/Mermaid 异步撑高时调用 scrollToBottom 拽回底部。
   useEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
@@ -2407,6 +2565,14 @@ export default function RecordStream({
 
     const observer = new ResizeObserver(() => {
       if (overlayViewOpenRef.current) return;
+      if (stopPinnedRecordId.current && !userInteractedInSession.current) {
+        if (scrollToRecordTop(stopPinnedRecordId.current)) {
+          const newGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+          followArmed.current = newGap <= 0.5;
+          setShowJump(newGap > JUMP_SHOW_PX);
+        }
+        return;
+      }
       // 内部内容撑高时：若增长前处于贴底武装状态，持续自动向下滚动
       if (followArmed.current) {
         const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -2424,7 +2590,7 @@ export default function RecordStream({
     return () => {
       observer.disconnect();
     };
-  }, [scrollToBottom]);
+  }, [scrollToBottom, scrollToRecordTop]);
 
   // Talk / Watcher 视图下，若当前已取窗口筛完后可见对话不足最小条数（满页却不足 MIN_TALK_RECORDS）
   // 或内容高度不足以撑出滚动条（导致无法通过上滚触发 NEAR_TOP_PX），且服务端还有更早记录，
@@ -2463,7 +2629,12 @@ export default function RecordStream({
   // "在等 agent 开口"那一条也是内容，它一冒出来就要看得见——跟着的人正是为了看它。
   // 人自己滚上去看别的时不打扰。
   useLayoutEffect(() => {
-    if (awaitingAgent && followArmed.current && !overlayViewOpenRef.current) scrollToBottom('smooth');
+    if (awaitingAgent) {
+      stopPinnedRecordId.current = null;
+      if (followArmed.current && !overlayViewOpenRef.current) {
+        scrollToBottom('smooth');
+      }
+    }
   }, [awaitingAgent, scrollToBottom]);
 
   // 输入区「Show」：滚到那句话。它可能在当前镜头里看不见，那就先回到「对话」档。
@@ -2492,6 +2663,8 @@ export default function RecordStream({
       `[data-record-id="${CSS.escape(scrollId)}"]`
     );
     if (!el) return;
+    stopPinnedRecordId.current = null;
+    pendingSessionLanding.current = false;
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     followArmed.current = false;
     el.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() });
@@ -2660,6 +2833,8 @@ export default function RecordStream({
         : el.getBoundingClientRect();
     const view = box.getBoundingClientRect();
     const top = box.scrollTop + rect.top - view.top - (box.clientHeight - rect.height) / 2;
+    stopPinnedRecordId.current = null;
+    pendingSessionLanding.current = false;
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     locateScrollUntil.current = programmaticUntil.current;
     followArmed.current = false;
@@ -2679,6 +2854,9 @@ export default function RecordStream({
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
     manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
+    userInteractedInSession.current = true;
+    pendingSessionLanding.current = false;
+    stopPinnedRecordId.current = null;
     // 人一伸手，程序那次滚动就作废——接下来的每一个事件都是人的，不许再被当成动画余波。
     programmaticUntil.current = 0;
     locateScrollUntil.current = 0;
@@ -2730,13 +2908,16 @@ export default function RecordStream({
 
       // 非程序平滑滚动窗口期间的滚动：更新自动贴底跟随状态
       if (now > programmaticUntil.current) {
+        const isUserManual = now <= manualIntentUntil.current || isDraggingScrollbar.current;
         if (coveringBottom) {
-          // 视口处于或回到「[底部上方 100px ～ 底部]」热区时立即武装
-          followArmed.current = true;
+          // 若当前仍处于 stop 顶对齐锁且用户尚未手动滚动（例如浏览器延迟触发 scroll 且 gap ∈ (0, 100]），
+          // 严禁自动武装 followArmed；仅当解除锁或用户主动滚回底部热区时武装。
+          if (!stopPinnedRecordId.current || userInteractedInSession.current || isUserManual) {
+            followArmed.current = true;
+          }
         } else {
           // 离开底部 100px 热区：必须是明确的用户手动输入（滚轮、触摸、按键、拖拽滚动条）才解除武装！
           // 彻底防止平滑滚动动画耗时超出预期时的中间帧把自动跟随误关掉（防止「滚着滚着自己不跟了」）！
-          const isUserManual = now <= manualIntentUntil.current || isDraggingScrollbar.current;
           if (isUserManual) {
             followArmed.current = false;
           }
