@@ -172,6 +172,20 @@ describe('内容摆出来', () => {
     await waitFor(() => expect(screen.getByText(/读不成文本/)).toBeTruthy());
   });
 
+  it('无权限或不可读：照实渲染不可读提示，不混成二进制提示', async () => {
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/src/a.py',
+      size: 12,
+      text: null,
+      reason: 'unreadable',
+    });
+
+    open();
+
+    await waitFor(() => expect(screen.getByText(/没有读这份文件的权限/)).toBeTruthy());
+    expect(screen.getByTestId('file-viewer').textContent).not.toContain('读不成文本');
+  });
+
   it('图片文件（如 .png）直接内联渲染图片预览，不当文本去读也不报二进制错误', () => {
     const pngPath =
       '/Users/frago/.frago/data/frago-promotion/20261031-upwork-profile-v2/portfolio/portfolio-1-quant-dashboard.png';

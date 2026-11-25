@@ -102,4 +102,16 @@ describe('两列的行结构', () => {
     expect(cells[0].textContent).toBe('7old');
     expect(cells[1].textContent).toBe('7new');
   });
+
+  it('不可读（reason="unreadable"）时显示不可读提示文案', () => {
+    render(
+      <FileDiff
+        diff={diff(null, { reason: 'unreadable' })}
+        loading={false}
+        error={null}
+      />
+    );
+
+    expect(screen.getByText(/没有读这份文件的权限/)).toBeTruthy();
+  });
 });

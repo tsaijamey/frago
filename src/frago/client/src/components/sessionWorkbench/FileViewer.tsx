@@ -1306,7 +1306,9 @@ export default function FileViewer({
         ? t('workbench.files.tooLarge', { size: content ? humanSize(content.size) : '' })
         : reason === 'not-text'
           ? t('workbench.files.notText')
-          : t('workbench.files.noContent');
+          : reason === 'unreadable'
+            ? t('workbench.files.unreadable')
+            : t('workbench.files.noContent');
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-5 py-8 text-center text-[12px] leading-relaxed text-text-muted">
         <FileText size={28} strokeWidth={1.4} className="text-text-dim" />

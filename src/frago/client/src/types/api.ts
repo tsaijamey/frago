@@ -1352,7 +1352,7 @@ export type SessionFileAction = 'created' | 'modified' | 'deleted';
 export interface SessionFileRow {
   /** 记录里写的那个路径，原样（可能是 `~` 开头；codex 补丁里那种相对的已按会话目录拼全）。 */
   path: string;
-  /** 按这场会话**第一次**动它那一下定档：写就是新建，改就是改，补丁头写着删就是删。 */
+  /** 按这场会话**最后**动它那一下定档（详见 `session_files.py`）：最后是删算删，否则从未先删过且首写是写工具算新建，其余算改。 */
   action: SessionFileAction;
   /** 这场会话对它动了几次。 */
   count: number;
@@ -1362,7 +1362,7 @@ export interface SessionFileRow {
 
 /**
  * 取一份文件的内容。读不到内容时 `text` 为 null，原因写在 `reason` 里——
- * 过大、读不成文本各是一种，界面照实写出来，NEVER 给半份当整份。
+ * 过大、读不成文本、无权限不可读各是一种，界面照实写出来，NEVER 给半份当整份。
  *
  * 文件已经不在了不是这一档：那一条服务端直接回 404。
  */
@@ -1373,7 +1373,7 @@ export interface SessionFileContent {
   /** 文件内容。读不到时为 null，看 `reason`。 */
   text: string | null;
   /** 没给内容的原因。给了内容时为 null。 */
-  reason: 'too-large' | 'not-text' | null;
+  reason: 'too-large' | 'not-text' | 'unreadable' | null;
 }
 
 /** 对照里的一格。`null` 表示这一侧这一行没有东西（整行删掉、或整份都是新增）。 */
@@ -1393,7 +1393,7 @@ export interface SessionFileDiff {
   path: string;
   size: number;
   /** 现在这一份读不出来的缘由；正常时 null。 */
-  reason: 'too-large' | 'not-text' | 'too-many-lines' | null;
+  reason: 'too-large' | 'not-text' | 'unreadable' | 'too-many-lines' | null;
   /** 左边那一侧为什么没有，见 {@link FileDiffBefore}。 */
   before: FileDiffBefore | null;
   /** 左边那一侧从哪儿来（例如 `git HEAD`）。没有左边时为 null。 */

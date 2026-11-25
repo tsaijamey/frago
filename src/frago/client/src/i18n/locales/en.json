@@ -2057,6 +2057,7 @@
       "noPreview": "No preview for this one",
       "tooLarge": "It's {{size}} — too large to bring in here. Open it from its folder instead.",
       "notText": "It doesn't read as text (binary, most likely). Open it from its folder instead.",
+      "unreadable": "You don't have permission to read this file. Check its permissions or open it from its folder.",
       "noContent": "Couldn't get the content. Open it from its folder instead.",
       "readFailed": "Couldn't get this one's content",
       "openFolder": "Open its folder",

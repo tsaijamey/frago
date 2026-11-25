@@ -715,9 +715,9 @@ export default function SessionWorkbenchPage() {
   /**
    * 「这一场改过哪些文件」那一档，以及点开某一份文件的那个浮窗。
    *
-   * 清单**打开那一档才去取**：服务端要现读这一场的全部记录才算得出来，不在每次切会话时
-   * 顺手取一份只为显示个数（见 `useSessionFiles`）。浮窗按整份清单的下标翻页，所以
-   * `viewerIndex` 指的那一份与清单永远是同一份，不会对错。
+   * `useSessionFiles` 本身不自动请求，由下方切会话时的 effect 调用 `ensureFiles()` 触发首拉，
+   * 并在缓存命中或完成后保持清单个数即时可见；浮窗按整份清单的下标翻页，所以 `viewerIndex`
+   * 指的那一份与清单永远是同一份，不会对错。
    */
   const [filesOpen, setFilesOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);

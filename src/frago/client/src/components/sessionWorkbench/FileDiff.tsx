@@ -62,7 +62,9 @@ export default function FileDiff({ diff, loading, error }: FileDiffProps) {
       <p className="flex h-full items-center justify-center px-5 text-center text-[12px] text-text-muted">
         {diff?.reason === 'too-many-lines'
           ? t('workbench.files.diffTooManyLines')
-          : t('workbench.files.diffNone')}
+          : diff?.reason === 'unreadable'
+            ? t('workbench.files.unreadable')
+            : t('workbench.files.diffNone')}
       </p>
     );
   }

@@ -1,9 +1,9 @@
 /**
  * 「这场改过哪些文件」那份清单的取法。
  *
- * 盯四件事：**按需取**（没打开过那一档就不去读整场记录）、取过就留着（同一场里来回切档
- * 不重取）、重取走 `reload`、换会话把旧请求的结果扔掉。第三件最要紧：那些文件是上一场的，
- * 摆到这一场上是错的。
+ * 盯四件事：**显式 `ensure` 才发起请求**（hook 本身不擅自拉取，由页面在切会话或打开时按策略调用）、
+ * 取过就留着（同一场里重复 `ensure` 不重取）、重取走 `reload`、换会话把旧请求的结果扔掉。
+ * 第四件最要紧：那些文件是上一场的，摆到这一场上是错的。
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -29,8 +29,8 @@ beforeEach(() => {
   getSessionFiles.mockResolvedValue([row('/w/a.py')]);
 });
 
-describe('按需取', () => {
-  it('挂上不取：没打开过那一档就不去读整场记录', async () => {
+describe('显式触发与缓存复用', () => {
+  it('挂上不自拉：没喊 ensure 就不发起请求', async () => {
     const { result } = renderHook(() => useSessionFiles(A));
 
     // 等一拍，确认确实没有请求发出去。
