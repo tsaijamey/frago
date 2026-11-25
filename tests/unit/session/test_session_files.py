@@ -431,3 +431,127 @@ def test_deleting_a_path_before_ever_writing_it_makes_it_changed_not_new(feed):
     [only] = session_files("sid-1")
 
     assert only.action == "modified"
+
+
+# ---------- 实时指纹有界线程安全 LRU 缓存 ----------
+
+
+def test_cache_hits_and_invalidates_immediately_on_fingerprint_change(monkeypatch):
+    """指纹不变时命中缓存不重复读盘；指纹变化时立即失效刷新，无陈旧脏读。"""
+    from frago.session import session_files as sf_mod
+
+    sf_mod.clear_cache()
+    try:
+        fp = ["v1"]
+        read_calls = 0
+
+        def _read(sid, after=0, limit=200, tail=False):
+            nonlocal read_calls
+            read_calls += 1
+            if fp[0] == "v1":
+                return [_call(0, "Write", {"file_path": "/w/a.py"})]
+            return [
+                _call(0, "Write", {"file_path": "/w/a.py"}),
+                _call(1, "Edit", {"file_path": "/w/b.py"}),
+            ]
+
+        monkeypatch.setattr(record_reader, "transcript_fingerprint", lambda sid: ("claude-code", fp[0]))
+        monkeypatch.setattr(record_reader, "read_records", _read)
+
+        first = session_files("sid-cache")
+        second = session_files("sid-cache")
+        assert [f.path for f in first] == ["/w/a.py"]
+        assert [f.path for f in second] == ["/w/a.py"]
+        assert read_calls == 1
+
+        # 底层转录指纹更新，下一次调用必须立即刷新，不能返回旧结果
+        fp[0] = "v2"
+        third = session_files("sid-cache")
+        assert [f.path for f in third] == ["/w/a.py", "/w/b.py"]
+        assert read_calls == 2
+    finally:
+        sf_mod.clear_cache()
+
+
+def test_cache_is_bounded_and_evicts_lru_entry(monkeypatch):
+    """超过 MAX_CACHE_ENTRIES 时按 LRU 淘汰最久未访问的会话，近期访问的保留。"""
+    from frago.session import session_files as sf_mod
+
+    sf_mod.clear_cache()
+    monkeypatch.setattr(sf_mod, "MAX_CACHE_ENTRIES", 2)
+    try:
+        reads: list[str] = []
+
+        def _read(sid, after=0, limit=200, tail=False):
+            reads.append(sid)
+            return [_call(0, "Write", {"file_path": f"/w/{sid}.py"})]
+
+        monkeypatch.setattr(record_reader, "transcript_fingerprint", lambda sid: ("codex", sid))
+        monkeypatch.setattr(record_reader, "read_records", _read)
+
+        session_files("s1")
+        session_files("s2")
+        # 访问一次 s1，使其成为最近使用（s2 变为最久未使用）
+        session_files("s1")
+        # 插入 s3 触发淘汰：应淘汰 s2，保留 s1 与 s3
+        session_files("s3")
+        assert reads == ["s1", "s2", "s3"]
+
+        # s1 仍命中缓存，不触发重读；s2 被淘汰，重新计算
+        session_files("s1")
+        session_files("s2")
+        assert reads == ["s1", "s2", "s3", "s2"]
+    finally:
+        sf_mod.clear_cache()
+
+
+def test_cache_is_thread_safe_under_concurrent_access(monkeypatch):
+    """多线程并发读取与更新指纹时保持线程安全，不出现异常或数据损坏。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from frago.session import session_files as sf_mod
+
+    sf_mod.clear_cache()
+    try:
+        monkeypatch.setattr(
+            record_reader, "transcript_fingerprint", lambda sid: ("claude-code", sid, 1)
+        )
+        monkeypatch.setattr(
+            record_reader,
+            "read_records",
+            lambda sid, after=0, limit=200, tail=False: [
+                _call(0, "Write", {"file_path": f"/w/{sid}.py"})
+            ],
+        )
+
+        sids = [f"s-{i % 8}" for i in range(64)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(session_files, sids))
+
+        for sid, res in zip(sids, results, strict=True):
+            assert [f.path for f in res] == [f"/w/{sid}.py"]
+    finally:
+        sf_mod.clear_cache()
+
+
+def test_cache_skips_when_fingerprint_is_none(monkeypatch):
+    """无底层落盘指纹（返回 None）时不落缓存，避免未持久化场景产生陈旧结果。"""
+    from frago.session import session_files as sf_mod
+
+    sf_mod.clear_cache()
+    try:
+        reads = 0
+
+        def _read(sid, after=0, limit=200, tail=False):
+            nonlocal reads
+            reads += 1
+            return [_call(0, "Write", {"file_path": "/w/a.py"})]
+
+        monkeypatch.setattr(record_reader, "transcript_fingerprint", lambda _sid: None)
+        monkeypatch.setattr(record_reader, "read_records", _read)
+
+        session_files("sid-none")
+        session_files("sid-none")
+        assert reads == 2
+    finally:
+        sf_mod.clear_cache()

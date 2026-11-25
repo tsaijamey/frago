@@ -308,13 +308,28 @@ def conversation_exists(conversation_id: str) -> bool:
 def session_directory(conversation_id: str) -> str | None:
     """这场会话当初在哪个工作目录跑的。读不到时 None。
 
-    优先读摘要库 ``conversation_summaries.db`` 的 ``workspace_uris``；若摘要库尚未写入
-    或冷启动恢复时被 agy 覆写为空串，再回退查 ``~/.frago/agy-sessions.json`` 认领账本里
+    O(1) 单场查询：优先直查摘要库 ``conversation_summaries.db`` 中指定会话的
+    ``workspace_uris``，不触发全量 ``list_conversations()``；若摘要库尚未写入或
+    冷启动恢复时被 agy 覆写为空串，再回退查 ``~/.frago/agy-sessions.json`` 认领账本里
     记下的 ``directory``。
     """
-    for conv in list_conversations():
-        if conv.conversation_id == conversation_id and conv.workspace:
-            return conv.workspace
+    conn = _open_summaries()
+    if conn is not None:
+        row = None
+        try:
+            row = conn.execute(
+                "SELECT workspace_uris FROM conversation_summaries WHERE conversation_id = ? LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            logger.debug("agy session_directory failed: %s", exc)
+            row = None
+        finally:
+            conn.close()
+        if row:
+            workspace = _workspace_of(row[0])
+            if workspace:
+                return workspace
     return bound_directory(conversation_id)
 
 

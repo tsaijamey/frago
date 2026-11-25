@@ -38,13 +38,27 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from frago.session import record_reader
 from frago.session.record_reader import MAX_LIMIT
 
-__all__ = ["SessionFile", "is_scratch_path", "session_files"]
+__all__ = ["MAX_CACHE_ENTRIES", "SessionFile", "clear_cache", "is_scratch_path", "session_files"]
+
+#: 进程内按单场会话缓存文件清单的最大容量（LRU 淘汰最久未命中条目）。
+MAX_CACHE_ENTRIES = 128
+_CACHE_LOCK = threading.Lock()
+_CACHE: OrderedDict[str, tuple[Any, list[SessionFile]]] = OrderedDict()
+
+
+def clear_cache() -> None:
+    """清空会话文件清单的进程内 LRU 缓存。"""
+    with _CACHE_LOCK:
+        _CACHE.clear()
 
 # 工具名 → 这一下算「新建」「改」还是「删」。键一律小写，比对时也把工具名转小写。
 # 同一个文件先写后改，按第一次动它那一下定档（先 Write 就是新建，先 Edit 就是改）。
@@ -234,12 +248,8 @@ def _settle(entry: dict) -> str:
     return "modified"
 
 
-def session_files(session_id: str) -> list[SessionFile]:
-    """这场会话写到、改过、删掉的文件，按第一次动它的先后排。
-
-    一场没动过任何文件的会话返回空表；认不出这场会话由 :mod:`record_reader` 那侧抛，
-    本模块不吞它的异常——「认不出」与「没动过文件」是两件事，合并了界面就没法区分。
-    """
+def _compute_session_files(session_id: str) -> list[SessionFile]:
+    """实际扫描单场会话记录并归并文件清单（无缓存逻辑）。"""
     seen: dict[str, dict] = {}
     order: list[str] = []
     cwd: str | None = None
@@ -308,3 +318,37 @@ def session_files(session_id: str) -> list[SessionFile]:
         )
         for entry in (seen[path] for path in order)
     ]
+
+
+def session_files(session_id: str) -> list[SessionFile]:
+    """这场会话写到、改过、删掉的文件，按第一次动它的先后排。
+
+    使用基于单场转录/数据库实时变更指纹的有界线程安全 LRU 缓存：
+    - 指纹命中时直接返回缓存副本，避免同一会话在 ``/files``、``/file``、``/file/diff``、
+      ``PUT /file``、``/reveal`` 等请求上重复扫盘。
+    - 转录或数据库有新写入时指纹立即变化，自动失效重算。
+    - 无底层落盘指纹时（如未知会话或单测直接替掉 ``read_records``）不缓存，直接透传计算。
+
+    一场没动过任何文件的会话返回空表；认不出这场会话由 :mod:`record_reader` 那侧抛，
+    本模块不吞它的异常——「认不出」与「没动过文件」是两件事，合并了界面就没法区分。
+    """
+    fp = record_reader.transcript_fingerprint(session_id)
+    if fp is not None:
+        with _CACHE_LOCK:
+            hit = _CACHE.get(session_id)
+            if hit is not None and hit[0] == fp:
+                _CACHE.move_to_end(session_id)
+                return list(hit[1])
+
+    result = _compute_session_files(session_id)
+
+    if fp is not None:
+        fp_after = record_reader.transcript_fingerprint(session_id)
+        if fp_after == fp:
+            with _CACHE_LOCK:
+                _CACHE[session_id] = (fp, list(result))
+                _CACHE.move_to_end(session_id)
+                while len(_CACHE) > MAX_CACHE_ENTRIES:
+                    _CACHE.popitem(last=False)
+
+    return list(result)

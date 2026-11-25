@@ -135,8 +135,11 @@ async def test_probe_session_path_returns_is_dir_flag(tmp_path, monkeypatch):
     doc = sub / "note.md"
     doc.write_text("# hi\n", encoding="utf-8")
 
-    card = SimpleNamespace(session_id="sid-probe", directory=str(tmp_path))
-    monkeypatch.setattr(workbench_routes.record_reader, "list_sessions", lambda: [card])
+    monkeypatch.setattr(
+        workbench_routes.record_reader,
+        "get_session_directory",
+        lambda sid: str(tmp_path) if sid == "sid-probe" else None,
+    )
 
     dir_res = await workbench_routes.probe_session_path("sid-probe", "00_下载原件-20261120")
     assert dir_res["exists"] is True

@@ -9,8 +9,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi import HTTPException
 
@@ -30,16 +28,22 @@ def reset_edit_baselines():
 @pytest.fixture
 def session_dir(tmp_path, monkeypatch):
     """一场会话，工作目录就是 tmp_path。"""
-    card = SimpleNamespace(session_id="sid-1", directory=str(tmp_path))
-    monkeypatch.setattr(workbench_routes.record_reader, "list_sessions", lambda: [card])
+    monkeypatch.setattr(
+        workbench_routes.record_reader,
+        "get_session_directory",
+        lambda sid: str(tmp_path) if sid == "sid-1" else None,
+    )
     return tmp_path
 
 
 @pytest.fixture
 def session_dirless(monkeypatch):
     """一场没留下工作目录的会话（记录里那一格是空的）。"""
-    card = SimpleNamespace(session_id="sid-1", directory="")
-    monkeypatch.setattr(workbench_routes.record_reader, "list_sessions", lambda: [card])
+    monkeypatch.setattr(
+        workbench_routes.record_reader,
+        "get_session_directory",
+        lambda _sid: None,
+    )
 
 
 @pytest.fixture
@@ -678,8 +682,13 @@ def test_the_whole_chain_keeps_a_relative_entry_on_the_session(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         record_reader,
+        "get_session_directory",
+        lambda s: str(session_dir) if s == sid else None,
+    )
+    monkeypatch.setattr(
+        record_reader,
         "list_sessions",
-        lambda: [SimpleNamespace(session_id=sid, directory=str(session_dir))],
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("list_sessions should not be called")),
     )
     monkeypatch.chdir(server_cwd)
 
@@ -699,3 +708,169 @@ def test_the_whole_chain_keeps_a_relative_entry_on_the_session(tmp_path, monkeyp
     # 爬出工作目录的那一条：解释不了，拒掉。
     refused = client.get(f"/api/workbench/sessions/{sid}/file", params={"path": escape})
     assert refused.status_code == 403
+
+
+# ---------- 语义精准拆分与跨平台路径边界（Top-5 · 方案 5A） ----------
+
+
+@pytest.mark.asyncio
+async def test_unreadable_file_reports_unreadable_not_not_text(session_dir, touched, monkeypatch):
+    """PermissionError / OSError 必须返回 reason='unreadable'，不混成 not-text 或 404。"""
+    target = session_dir / "locked.py"
+    target.write_text("secret = 1\n", encoding="utf-8")
+    touched([_file(str(target))])
+
+    orig_read_text = workbench_routes.Path.read_text
+
+    def _boom_read_text(self, *args, **kwargs):
+        if self == target.resolve():
+            raise PermissionError("Operation not permitted")
+        return orig_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(workbench_routes.Path, "read_text", _boom_read_text)
+
+    body = await workbench_routes.read_session_file("sid-1", str(target))
+    assert body["text"] is None
+    assert body["reason"] == "unreadable"
+
+    diff_body = await workbench_routes.read_session_file_diff("sid-1", str(target))
+    assert diff_body["reason"] == "unreadable"
+    assert diff_body["rows"] is None
+
+
+@pytest.mark.asyncio
+async def test_stat_oserror_reports_unreadable(session_dir, touched, monkeypatch):
+    """非 FileNotFoundError 的 stat OSError（如 EACCES）返回 reason='unreadable'。"""
+    target = session_dir / "blocked.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    touched([_file(str(target))])
+
+    orig_stat = workbench_routes.Path.stat
+
+    def _boom_stat(self, *args, **kwargs):
+        if self == target.resolve():
+            raise PermissionError("stat permission denied")
+        return orig_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(workbench_routes.Path, "stat", _boom_stat)
+
+    body = await workbench_routes.read_session_file("sid-1", str(target))
+    assert body == {"path": str(target), "size": 0, "text": None, "reason": "unreadable"}
+
+
+@pytest.mark.asyncio
+async def test_missing_cwd_vs_path_escaped_403_semantics(tmp_path, monkeypatch, touched, opened):
+    """403 明确区分 missing-cwd 与 path-escaped 语义。"""
+    # 1. missing-cwd
+    monkeypatch.setattr(workbench_routes.record_reader, "get_session_directory", lambda _sid: None)
+    touched([_file("note.md")])
+
+    with pytest.raises(HTTPException) as err_missing:
+        await workbench_routes.read_session_file("sid-1", "note.md")
+    assert err_missing.value.status_code == 403
+    assert "missing-cwd" in err_missing.value.detail
+
+    with pytest.raises(HTTPException) as err_reveal_missing:
+        await workbench_routes.reveal_session_path(
+            "sid-1", workbench_routes.RevealPathRequest(path="note.md")
+        )
+    assert err_reveal_missing.value.status_code == 403
+    assert "missing-cwd" in err_reveal_missing.value.detail
+
+    # 2. path-escaped
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(
+        workbench_routes.record_reader,
+        "get_session_directory",
+        lambda sid: str(proj) if sid == "sid-1" else None,
+    )
+    touched([_file("../outside.txt")])
+
+    with pytest.raises(HTTPException) as err_escaped:
+        await workbench_routes.read_session_file("sid-1", "../outside.txt")
+    assert err_escaped.value.status_code == 403
+    assert "path-escaped" in err_escaped.value.detail
+
+    with pytest.raises(HTTPException) as err_reveal_escaped:
+        await workbench_routes.reveal_session_path(
+            "sid-1", workbench_routes.RevealPathRequest(path="../outside.txt")
+        )
+    assert err_reveal_escaped.value.status_code == 403
+    assert "path-escaped" in err_reveal_escaped.value.detail
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_symlink_session_dir_and_escaping_symlink(tmp_path, monkeypatch, touched, opened):
+    """工作目录自身经过 symlink（如 macOS /var <-> /private/var）应两侧对称放行；工作目录内指向外部的 symlink 必须判 path-escaped 拒掉。"""
+    real_dir = tmp_path / "private_var" / "proj"
+    real_dir.mkdir(parents=True)
+    alias_dir = tmp_path / "var_proj"
+    alias_dir.symlink_to(real_dir)
+
+    inside = real_dir / "ok.py"
+    inside.write_text("ok = True\n", encoding="utf-8")
+
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    escape_link = real_dir / "escape.txt"
+    escape_link.symlink_to(outside)
+
+    # 会话工作目录记的是未解链的 alias_dir，清单里记的是真实路径 real_dir/ok.py
+    monkeypatch.setattr(
+        workbench_routes.record_reader,
+        "get_session_directory",
+        lambda sid: str(alias_dir) if sid == "sid-1" else None,
+    )
+    touched([_file(str(inside)), _file("escape.txt")])
+
+    # 用 alias 绝对路径与相对路径读 ok.py 都能对称匹配到 real_dir/ok.py
+    body_alias = await workbench_routes.read_session_file("sid-1", str(alias_dir / "ok.py"))
+    assert body_alias["text"] == "ok = True\n"
+    body_rel = await workbench_routes.read_session_file("sid-1", "ok.py")
+    assert body_rel["text"] == "ok = True\n"
+
+    # 指向工作目录外的 symlink 必须以 path-escaped 403 拦截
+    with pytest.raises(HTTPException) as err_sym:
+        await workbench_routes.read_session_file("sid-1", "escape.txt")
+    assert err_sym.value.status_code == 403
+    assert "path-escaped" in err_sym.value.detail
+
+    with pytest.raises(HTTPException) as err_reveal_sym:
+        await workbench_routes.reveal_session_path(
+            "sid-1", workbench_routes.RevealPathRequest(path="escape.txt")
+        )
+    assert err_reveal_sym.value.status_code == 403
+    assert "path-escaped" in err_reveal_sym.value.detail
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_endpoints_never_call_list_sessions(session_dir, touched, opened, head, monkeypatch):
+    """/file、/file/diff、/path、PUT /file、/reveal 全流程均不得触发 list_sessions() 全量扫盘。"""
+    target = session_dir / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    touched([_file("a.py")])
+    head(_with_before("x = 0\n"))
+
+    def _forbid_scan(*_a, **_kw):
+        raise AssertionError("record_reader.list_sessions() must never be called")
+
+    monkeypatch.setattr(workbench_routes.record_reader, "list_sessions", _forbid_scan)
+
+    assert (await workbench_routes.probe_session_path("sid-1", "a.py"))["is_file"] is True
+    assert (await workbench_routes.read_session_file("sid-1", "a.py"))["text"] == "x = 1\n"
+    assert (await workbench_routes.read_session_file_diff("sid-1", "a.py"))["reason"] is None
+    assert (
+        await workbench_routes.write_session_file(
+            "sid-1", workbench_routes.WriteSessionFileRequest(path="a.py", text="x = 2\n")
+        )
+    )["text"] == "x = 2\n"
+    assert (
+        await workbench_routes.reveal_session_path(
+            "sid-1", workbench_routes.RevealPathRequest(path="a.py")
+        )
+    )["status"] == "ok"

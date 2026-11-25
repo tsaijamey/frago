@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import inspect
 import os
+import stat
 import subprocess
 import time
 import uuid
@@ -26,7 +27,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -1221,11 +1222,10 @@ class RevealPathRequest(BaseModel):
 
 def _session_directory(sid: str) -> str | None:
     """这场会话自己的工作目录。认不出这场、或它没留下工作目录，都返回 None——
-    NEVER 退回当前进程的目录顶替，那等于给任意路径开了口子。"""
-    for card in record_reader.list_sessions():
-        if card.session_id == sid:
-            return card.directory or None
-    return None
+    NEVER 退回当前进程的目录顶替，那等于给任意路径开了口子。
+
+    走 O(1) 单场定位接口（优先读取本体唯一真源 cwd），不触发 ``list_sessions()`` 全量扫描。"""
+    return record_reader.get_session_directory(sid)
 
 
 def _session_root(sid: str) -> str | None:
@@ -1236,30 +1236,61 @@ def _session_root(sid: str) -> str | None:
     directory = _session_directory(sid)
     if not directory:
         return None
-    return str(Path(os.path.expanduser(directory)).resolve())
+    try:
+        return str(Path(os.path.expanduser(directory)).resolve())
+    except OSError:
+        return None
 
 
-def _norm(path: str, base: str | None) -> str | None:
-    """把路径对齐成可比的样子：``~`` 展开、软链与 ``..`` 消掉。对不上返回 None。
+def _resolve_path(
+    path: str, base: str | None
+) -> tuple[str | None, Literal["missing-cwd", "path-escaped"] | None]:
+    """把路径对齐成可比的样子，并显式区分「缺少会话工作目录」与「越界逃逸」。
 
-    **相对路径的基准只有一个：这场会话自己的工作目录**（``base``，见 :func:`_session_root`）。
-    记录里写成相对路径的那一下，是站在那个目录里写的，所以只有按它拼才是同一份文件；缺了
-    这条工作目录，这个相对路径就没有解释，返回 None 由调用方拒掉，NEVER 退回当前进程的
-    目录——那会让请求与清单两边一起偏到另一个文件上，人点开看到的是别处的东西。
-
-    拼出来跑到工作目录外面的相对路径同样返回 None：相对路径说的是「工作目录底下的东西」，
-    爬出去的那种，记录里这一条已经没有可信的解释。**记录里写的绝对路径不受这条约束**，
-    照原样解析——产物本来就常写在会话工作目录之外（``~/.frago/data`` 下那种）。
+    - 绝对路径：展开 ``~`` 后对称 ``resolve()``（兼顾 macOS ``/var`` <-> ``/private/var`` 等软链）。
+    - 相对路径：缺失 ``base`` 时返回 ``(None, "missing-cwd")``；拼出并解析软链后不在
+      ``base`` 底下时返回 ``(None, "path-escaped")``。
     """
     expanded = os.path.expanduser(path)
     if os.path.isabs(expanded):
-        return str(Path(expanded).resolve())
+        try:
+            return str(Path(expanded).resolve()), None
+        except OSError:
+            return None, "path-escaped"
     if not base:
-        return None
-    inside = (Path(base) / expanded).resolve()
-    if not inside.is_relative_to(base):
-        return None
-    return str(inside)
+        return None, "missing-cwd"
+    try:
+        base_path = Path(base).resolve()
+        inside = (base_path / expanded).resolve()
+    except OSError:
+        return None, "path-escaped"
+    if not inside.is_relative_to(base_path):
+        return None, "path-escaped"
+    return str(inside), None
+
+
+def _norm(path: str, base: str | None) -> str | None:
+    """把路径对齐成可比的样子：``~`` 展开、软链与 ``..`` 消掉。对不上返回 None。"""
+    resolved, _ = _resolve_path(path, base)
+    return resolved
+
+
+def _path_rejection_error(path: str, reason: Literal["missing-cwd", "path-escaped"] | None) -> HTTPException:
+    if reason == "missing-cwd":
+        return HTTPException(
+            status_code=403,
+            detail=(
+                f"Refused: {path} is relative and this session has no working "
+                "directory (missing-cwd)"
+            ),
+        )
+    return HTTPException(
+        status_code=403,
+        detail=(
+            f"Refused: {path} resolves outside this session's working "
+            "directory (path-escaped)"
+        ),
+    )
 
 
 async def _touched(sid: str) -> list[session_files.SessionFile]:
@@ -1346,16 +1377,10 @@ async def _listed_target(sid: str, path: str) -> Path:
     解释不了」拒掉，NEVER 退回当前进程的目录。
     """
     base = await asyncio.to_thread(_session_root, sid)
-    allowed = {n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None}
-    resolved = _norm(path, base)
+    allowed = {n for f in await _touched(sid) if (n := _resolve_path(f.path, base)[0]) is not None}
+    resolved, err_reason = _resolve_path(path, base)
     if resolved is None:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Refused: {path} is relative and this session's own working directory "
-                "does not settle which file it means"
-            ),
-        )
+        raise _path_rejection_error(path, err_reason)
     if resolved not in allowed:
         raise HTTPException(
             status_code=403,
@@ -1367,18 +1392,28 @@ async def _listed_target(sid: str, path: str) -> Path:
 def _read_body(target: Path, path: str) -> dict[str, Any]:
     """把这一份读成给界面的那几格。
 
-    过大的、读不成文本的都不返回内容，而是返回一个原因，界面照实写出来，NEVER 悄悄给半份。
+    过大的（``too-large``）、编码不是文本的（``not-text``）、无权限/不可读的（``unreadable``）
+    都不返回内容，而是返回一个准确原因，界面照实写出来，NEVER 悄悄给半份或混为一谈。
     """
-    if not target.is_file():
+    try:
+        st = target.stat()
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=404, detail=f"File is gone: {target}") from exc
+    except OSError:
+        return {"path": path, "size": 0, "text": None, "reason": "unreadable"}
+
+    if not stat.S_ISREG(st.st_mode):
         raise HTTPException(status_code=404, detail=f"File is gone: {target}")
 
-    size = target.stat().st_size
+    size = st.st_size
     if size > _PREVIEW_MAX_BYTES:
         return {"path": path, "size": size, "text": None, "reason": "too-large"}
     try:
         text = target.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
+    except UnicodeDecodeError:
         return {"path": path, "size": size, "text": None, "reason": "not-text"}
+    except OSError:
+        return {"path": path, "size": size, "text": None, "reason": "unreadable"}
     return {"path": path, "size": size, "text": text, "reason": None}
 
 
@@ -1538,21 +1573,15 @@ async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str,
     里，本模块不重复一遍平台判断。
     """
     base = await asyncio.to_thread(_session_root, sid)
-    target = _norm(request.path, base)
+    target, err_reason = _resolve_path(request.path, base)
     if target is None:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Refused: {request.path} is relative and this session's own working "
-                "directory does not settle which file it means"
-            ),
-        )
+        raise _path_rejection_error(request.path, err_reason)
     inside_root = base is not None and (target == base or Path(target).is_relative_to(base))
     inside_data = _inside_frago_data(target)
     if (
         not inside_root
         and not inside_data
-        and target not in {n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None}
+        and target not in {n for f in await _touched(sid) if (n := _resolve_path(f.path, base)[0]) is not None}
     ):
         raise HTTPException(
             status_code=403,

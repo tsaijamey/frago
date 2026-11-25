@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import re
 import time
@@ -48,11 +49,13 @@ __all__ = [
     "UnknownSessionFamily",
     "delete_session",
     "detect_family",
+    "get_session_directory",
     "list_sessions",
     "locate_session_file",
     "read_raw",
     "read_records",
     "sort_key",
+    "transcript_fingerprint",
 ]
 
 # 分页是硬要求，不是礼貌。单条工具结果见过 7.2 万字符、单条用户消息见过 22 万字符，
@@ -189,6 +192,125 @@ def locate_session_file(session_id: str) -> Path | None:
     try:
         adapter = adapters.get_kernel_session_adapter(family)
         return adapter.locate_transcript(session_id)
+    except Exception:
+        return None
+
+
+_JSONL_CWD_HEAD_LINES = 128
+
+
+def _jsonl_head_cwd(path: Path) -> str | None:
+    """从 JSONL 会话文件头部提取 ``cwd``，最多只扫前若干行以维持 O(1) 上界。"""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for idx, line in enumerate(fh):
+                if idx >= _JSONL_CWD_HEAD_LINES:
+                    break
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(record, dict):
+                    cwd = record.get("cwd")
+                    if isinstance(cwd, str) and cwd.strip():
+                        return cwd.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _path_fingerprint(path: Path | None) -> tuple[str, int, int, int | None] | None:
+    """单个落盘文件的实时变更指纹 ``(path, st_mtime_ns, st_size, st_ino)``。"""
+    if path is None:
+        return None
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (str(path), st.st_mtime_ns, st.st_size, getattr(st, "st_ino", None))
+
+
+def get_session_directory(session_id: str) -> str | None:
+    """O(1) 单场工作目录定位：优先读取本体唯一真源 ``cwd``，缺省再按家族单场直查。
+
+    彻底取代通过 :func:`list_sessions` 全量扫盘寻找单场目录的做法：
+    1. 优先查 :func:`frago.session.service.get_default_session_service`（本体单场 O(1) 字典查找）。
+    2. 本体未登记或 ``cwd`` 为空时，按家族直读单场数据源（opencode SQLite 单行 / codex rollout 首行 /
+       agy 摘要库单行 / Claude Code 或 CoreAgent JSONL 头部 ``cwd``），不调用 ``list_sessions()``。
+    """
+    sid = session_id.strip()
+    if not sid:
+        return None
+
+    with contextlib.suppress(Exception):
+        from frago.session.service import get_default_session_service
+
+        rec = get_default_session_service().get_session(sid)
+        if rec is not None and isinstance(rec.cwd, str) and rec.cwd.strip():
+            return rec.cwd.strip()
+
+    try:
+        family = detect_family(sid)
+    except UnknownSessionFamily:
+        return None
+
+    try:
+        if family == "opencode":
+            return opencode_store.session_directory(sid)
+        if family == "codex":
+            meta = codex_store.session_meta(sid)
+            if meta is not None and meta.cwd.strip():
+                return meta.cwd.strip()
+            return codex_store.bound_directory(sid)
+        if family == "agy":
+            return agy_store.session_directory(sid)
+        if family == "coreagent":
+            path = coreagent_store.find_session_file(sid)
+            return _jsonl_head_cwd(path) if path is not None else None
+        path = claude_code_records.find_session_file(sid)
+        return _jsonl_head_cwd(path) if path is not None else None
+    except Exception:
+        return None
+
+
+def transcript_fingerprint(session_id: str) -> Any | None:
+    """返回单场会话转录/数据库的实时变更指纹；无真实落盘载体或未知家族时返回 None。
+
+    各家覆盖：
+    - ``opencode``: 单场会话与消息/片段的 SQLite 实时指纹（兼容 WAL 模式）。
+    - ``agy``: ``transcript.jsonl`` 与 ``transcript_full.jsonl`` 两份文件的 stat 指纹。
+    - ``codex``: 对应 rollout JSONL 的 stat 指纹。
+    - ``coreagent`` / ``claude-code``: 对应 JSONL 文件的 stat 指纹。
+    """
+    sid = session_id.strip()
+    if not sid:
+        return None
+    try:
+        family = detect_family(sid)
+    except UnknownSessionFamily:
+        return None
+
+    try:
+        if family == "opencode":
+            fp = opencode_store.session_fingerprint(sid)
+            return ("opencode", fp) if fp is not None else None
+        if family == "agy":
+            sig_main = _path_fingerprint(agy_store.transcript_path(sid))
+            sig_full = _path_fingerprint(agy_store.full_transcript_path(sid))
+            if sig_main is None and sig_full is None:
+                return None
+            return ("agy", sig_main, sig_full)
+        if family == "codex":
+            sig = _path_fingerprint(codex_store.find_rollout(sid))
+            return ("codex", sig) if sig is not None else None
+        if family == "coreagent":
+            sig = _path_fingerprint(coreagent_store.find_session_file(sid))
+            return ("coreagent", sig) if sig is not None else None
+        sig = _path_fingerprint(claude_code_records.find_session_file(sid))
+        return ("claude-code", sig) if sig is not None else None
     except Exception:
         return None
 

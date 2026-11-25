@@ -661,6 +661,58 @@ def session_directory(opencode_session_id: str) -> str | None:
     return bound_directory(opencode_session_id)
 
 
+def session_fingerprint(opencode_session_id: str) -> tuple[str, int, int, str, int] | None:
+    """单场 opencode 会话的实时变更指纹：``(表系, session.time_updated, 末条更新时刻, 末条 id, 行数)``。
+
+    用于 ``session_files`` 缓存失效判定：只查单场会话的轻量只读 SQLite 行与聚合游标，
+    不扫描全库，WAL 模式下也能立即感知新工具调用或消息更新；读不到该会话时返回 None。
+    """
+    conn = _connect()
+    if conn is None:
+        return None
+    try:
+        kind = _session_kind(conn, opencode_session_id)
+        if kind is None:
+            return None
+        sess_table = _V2_SESSION_TABLE if kind == KIND_V2 else _LEGACY_SESSION_TABLE
+        sess_row = conn.execute(
+            f"SELECT time_updated FROM {sess_table} WHERE id = ? LIMIT 1",  # noqa: S608
+            (opencode_session_id,),
+        ).fetchone()
+        if not sess_row:
+            return None
+        session_updated = sess_row[0] if isinstance(sess_row[0], int) else 0
+        if kind == KIND_V2:
+            cur_row = conn.execute(
+                "SELECT time_updated, id FROM session_message WHERE session_id = ? "
+                "ORDER BY time_updated DESC, id DESC LIMIT 1",
+                (opencode_session_id,),
+            ).fetchone()
+            cnt_row = conn.execute(
+                "SELECT COUNT(*) FROM session_message WHERE session_id = ?",
+                (opencode_session_id,),
+            ).fetchone()
+        else:
+            cur_row = conn.execute(
+                "SELECT time_updated, id FROM part WHERE session_id = ? "
+                "ORDER BY time_updated DESC, id DESC LIMIT 1",
+                (opencode_session_id,),
+            ).fetchone()
+            cnt_row = conn.execute(
+                "SELECT COUNT(*) FROM part WHERE session_id = ?",
+                (opencode_session_id,),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        logger.debug("opencode session_fingerprint failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+    cursor_updated = cur_row[0] if cur_row and isinstance(cur_row[0], int) else 0
+    cursor_id = str(cur_row[1]) if cur_row else ""
+    row_count = cnt_row[0] if cnt_row and isinstance(cnt_row[0], int) else 0
+    return (kind, session_updated, cursor_updated, cursor_id, row_count)
+
+
 # ── 本轮完成判定 ────────────────────────────────────────────────────
 def _v2_turn_text(turn: list[tuple[str, dict[str, Any]]]) -> str:
     """聚合这批 v2 助手消息里嵌的 text 片段，按消息次序拼接。

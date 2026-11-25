@@ -128,7 +128,15 @@ class CoreAgentRecordAdapter(ClaudeCodeRecordAdapter):
     family = "coreagent"
 
     def __init__(self, root: Path | None = None) -> None:
-        super().__init__(root if root is not None else sessions_root())
+        self._explicit_root = root
+
+    @property
+    def _root(self) -> Path:  # type: ignore[override]
+        return self._explicit_root if self._explicit_root is not None else sessions_root()
+
+    @_root.setter
+    def _root(self, value: Path | None) -> None:
+        self._explicit_root = value
 
 
 @dataclass(frozen=True)
