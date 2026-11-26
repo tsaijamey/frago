@@ -25,6 +25,7 @@ import click
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from .ask_commands import ask_group
 from .image_commands import image_cmd
+from .propose_commands import propose_group
 from .xlsx_commands import xlsx_group
 
 # 渲染专属 tab group。独立于任何用户 group，用完即关。
@@ -229,6 +230,13 @@ _UI_APPS: list[App] = [
         render=lambda _x: "",
     ),
     App(
+        name="propose",
+        description="非阻塞上浮待拍板提案至统一决策收件箱（无人值守/定时任务/worker 放行：frago app propose <single-choice|multi-choice|binary|text-answer>）",
+        input_kind="待决问题、风险等级、去重键与推荐选项",
+        output_kind="JSON (DecisionInboxItem)",
+        render=lambda _x: "",
+    ),
+    App(
         name="image",
         description="将本机图片路径或互联网图片 URL 渲染为会话内自适应网格卡片，支持点击放大浮窗查看（frago app image <路径或URL>...）",
         input_kind="本机图片路径 / http(s) 图片 URL",
@@ -271,7 +279,7 @@ def _run_text_app(name: str, input_text: str, output_path: str | None) -> None:
 
 @click.group(name="app", cls=AgentFriendlyGroup)
 def apps_group() -> None:
-    """Built-in session UI components and delivery capabilities (ask, image, mermaid, xlsx)."""
+    """Built-in session UI components and delivery capabilities (ask, propose, image, mermaid, xlsx)."""
 
 
 app_group = apps_group
@@ -344,5 +352,6 @@ def apps_use(name: str, input_text: str, output_path: str | None) -> None:
 
 
 apps_group.add_command(ask_group, name="ask")
+apps_group.add_command(propose_group, name="propose")
 apps_group.add_command(image_cmd, name="image")
 apps_group.add_command(xlsx_group, name="xlsx")

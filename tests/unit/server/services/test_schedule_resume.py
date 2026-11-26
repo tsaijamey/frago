@@ -26,11 +26,9 @@ MARK = sr.MARKER
 
 @pytest.fixture(autouse=True)
 def sandbox(tmp_path, monkeypatch):
-    """续跑包、挂着的卡片与「会话记录」都落在临时目录里。"""
-    from frago.server.services import schedule_pending as sp
-
+    """续跑包、决策收件箱与「会话记录」都落在临时目录里。"""
     monkeypatch.setattr(sr, "ROOT", tmp_path / "resume")
-    monkeypatch.setattr(sp, "ROOT", tmp_path / "pending")
+    monkeypatch.setenv("FRAGO_DECISION_INBOX_DIR", str(tmp_path / "decision-inbox"))
     return tmp_path
 
 
@@ -177,14 +175,20 @@ class TestWiring:
         monkeypatch.setattr(sr, "load", lambda sid, now=None: "## 上一趟跑到这里")
         seen: list[dict] = []
         monkeypatch.setattr(sr, "record", lambda s, o: seen.append({"id": s["id"], "ok": o.ok}))
-        from frago.server.services import schedule_pending as sp
-
-        monkeypatch.setattr(sp, "note", lambda sid, now=None: None)
 
         captured: list[dict] = []
 
-        def fake_execute(prompt, timeout, instructions=None, allowed=None, disallowed=None, cwd=None, title=None, resume=None, pending=None):
-            captured.append({"prompt": prompt, "resume": resume, "pending": pending})
+        def fake_execute(
+            prompt, timeout, instructions=None, allowed=None, disallowed=None, cwd=None, title=None,
+            resume=None, pending=None, schedule_id=None, schedule_name=None,
+        ):
+            captured.append({
+                "prompt": prompt,
+                "resume": resume,
+                "pending": pending,
+                "schedule_id": schedule_id,
+                "schedule_name": schedule_name,
+            })
             return outcome(ok=False)
 
         monkeypatch.setattr(ex, "execute_prompt", fake_execute)

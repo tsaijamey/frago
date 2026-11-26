@@ -29,7 +29,7 @@ try:
 except ImportError:  # pragma: no cover - Windows fallback
     fcntl = None  # type: ignore[assignment]
 
-from frago.server.services.schedule_pending import _extract_ui_component_dict, card_in
+from frago.decision_inbox.card_parser import _extract_ui_component_dict, card_in
 from frago.session.unified_record import UnifiedRecord
 
 logger = logging.getLogger(__name__)

@@ -625,3 +625,235 @@ class TestEmployeeScheduleExecution:
         assert isolated_emp["store"].get("core_emp_timeout_01").lifecycle_state == "error"
 
 
+class TestScheduleDecisionInboxLoop:
+    """定时任务环境变量注入 + employee/prompt 统一决策收件箱闭环回归测试。"""
+
+    def test_prompt_schedule_injects_schedule_env_and_consumes_resolution(
+        self, tmp_path, monkeypatch
+    ):
+        import asyncio
+        import json
+        import subprocess
+
+        from click.testing import CliRunner
+
+        from frago.cli.propose_commands import propose_group
+        from frago.decision_inbox import get_decision_inbox_service
+        from frago.server.services import schedule_resume as sr
+        from frago.session import service as session_service_mod
+        from frago.session import store as session_store_mod
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        monkeypatch.setattr(sr, "ROOT", tmp_path / "resume")
+        inbox_dir = tmp_path / "decision-inbox"
+        monkeypatch.setenv("FRAGO_DECISION_INBOX_DIR", str(inbox_dir))
+
+        binary = tmp_path / "frago-core"
+        binary.write_text("")
+        monkeypatch.setattr("frago.init.hook_binary.get_hook_deploy_dir", lambda: tmp_path)
+        monkeypatch.setattr("frago.init.hook_binary.get_binary_name", lambda: "frago-core")
+
+        store = SessionOntologyStore(
+            tmp_path / "session-ontology-store.json",
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store)
+        monkeypatch.setattr(session_store_mod, "_DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr(session_service_mod, "_DEFAULT_SESSION_SERVICE", svc)
+        monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+        seen_prompts: list[str] = []
+        seen_envs: list[dict[str, str]] = []
+
+        def fake_run(cmd, **kw):
+            seen_prompts.append(cmd[cmd.index("--prompt") + 1])
+            seen_envs.append(dict(kw.get("env") or {}))
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"type":"final","ok":true,"text":"done"}\n', stderr=""
+            )
+
+        monkeypatch.setattr(ex.subprocess, "run", fake_run)
+
+        broadcasts: list[str] = []
+
+        async def fake_broadcast(*_args, action="refresh", **_kwargs):
+            broadcasts.append(action)
+
+        monkeypatch.setattr(
+            "frago.server.websocket.broadcast_decision_inbox_update", fake_broadcast
+        )
+
+        schedule_obj = {
+            "id": "sch_prompt_loop",
+            "name": "夜间磁盘巡检",
+            "kind": "prompt",
+            "prompt": "检查并清理过期构建缓存",
+            "cwd": str(tmp_path),
+        }
+
+        # 第 1 轮触发：子进程拿到 FRAGO_SCHEDULE_ID / FRAGO_SCHEDULE_NAME
+        out1 = asyncio.run(ex.run_scheduled(schedule_obj))
+        assert out1.ok is True
+        env1 = seen_envs[0]
+        assert env1["FRAGO_SCHEDULE_ID"] == "sch_prompt_loop"
+        assert env1["FRAGO_SCHEDULE_NAME"] == "夜间磁盘巡检"
+
+        # 模拟定时任务子进程内调用 `frago app propose`（未显式传 --schedule-id）
+        for k in ("FRAGO_SCHEDULE_ID", "FRAGO_SCHEDULE_NAME", "FRAGO_SESSION_ORIGIN", "FRAGO_UNATTENDED"):
+            monkeypatch.setenv(k, env1[k])
+        cli_res = CliRunner().invoke(
+            propose_group,
+            ["binary", "-q", "是否删除 12GB 过期缓存？", "--dedup-key", "cache:gc:12gb"],
+        )
+        assert cli_res.exit_code == 0, cli_res.output
+        proposal_id = json.loads(cli_res.output)["proposal_id"]
+
+        inbox_svc = get_decision_inbox_service()
+        saved = inbox_svc.get(proposal_id)
+        assert saved["schedule_id"] == "sch_prompt_loop"
+        assert saved["schedule_name"] == "夜间磁盘巡检"
+
+        # 人类在收件箱批复同意
+        inbox_svc.resolve(proposal_id, choice="approve", note="已确认可清理")
+
+        # 第 2 轮触发：note_for_schedule 注入人类回执到任务正文前，并消费标记
+        out2 = asyncio.run(ex.run_scheduled(schedule_obj))
+        assert out2.ok is True
+        prompt2 = seen_prompts[1]
+        assert "【统一决策收件箱最新回执】" in prompt2
+        assert "是否删除 12GB 过期缓存？" in prompt2
+        assert "已确认可清理" in prompt2
+        assert prompt2.index("【统一决策收件箱最新回执】") < prompt2.index("检查并清理过期构建缓存")
+        assert inbox_svc.note_for_schedule("sch_prompt_loop") is None
+        assert broadcasts == ["schedule_run_finished", "schedule_run_finished"]
+
+    def test_employee_schedule_injects_env_pending_receipt_and_broadcasts_ws(
+        self, tmp_path, monkeypatch
+    ):
+        import asyncio
+        import json
+        from types import SimpleNamespace
+
+        from click.testing import CliRunner
+
+        from frago.agent_driver import driver as driver_mod
+        from frago.agent_driver import kernel_backend as kb_mod
+        from frago.cli.propose_commands import propose_group
+        from frago.decision_inbox import get_decision_inbox_service
+        from frago.employee.store import EmployeePostRecord, save_post
+        from frago.session import service as session_service_mod
+        from frago.session import store as session_store_mod
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        monkeypatch.setenv("FRAGO_DECISION_INBOX_DIR", str(tmp_path / "decision-inbox"))
+        emp_cwd = tmp_path / "emp-workspace"
+        emp_cwd.mkdir(parents=True, exist_ok=True)
+        save_post(
+            EmployeePostRecord(
+                member_post_id="ops-emp",
+                title="值班专员",
+                description="负责定时运维巡检",
+                agent_kernel="coreagent",
+                cwd=str(emp_cwd),
+            )
+        )
+
+        store = SessionOntologyStore(
+            tmp_path / "session-ontology-store.json",
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store)
+        monkeypatch.setattr(session_store_mod, "_DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr(session_service_mod, "_DEFAULT_SESSION_SERVICE", svc)
+        monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+        dispatch_root = tmp_path / "dispatches"
+        dispatch_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr("frago.session.async_dispatch.dispatch_store_dir", lambda: dispatch_root)
+
+        monkeypatch.setattr(driver_mod, "runs_on_kernel", lambda k: k == "coreagent")
+        monkeypatch.setattr(kb_mod, "new_session_id", lambda: "core_emp_inbox_loop_01")
+
+        captured_runs: list[dict[str, object]] = []
+
+        def fake_run_turn(prompt, **kwargs):
+            captured_runs.append({"prompt": prompt, "env": dict(kwargs.get("env") or {})})
+            return SimpleNamespace(status="completed", text="巡检完毕")
+
+        monkeypatch.setattr(kb_mod, "run_turn", fake_run_turn)
+
+        broadcasts: list[str] = []
+
+        async def fake_broadcast(*_args, action="refresh", **_kwargs):
+            broadcasts.append(action)
+
+        monkeypatch.setattr(
+            "frago.server.websocket.broadcast_decision_inbox_update", fake_broadcast
+        )
+
+        schedule_obj = {
+            "id": "sch_emp_loop",
+            "name": "员工每日发布巡检",
+            "kind": "employee",
+            "employee_id": "ops-emp",
+            "prompt": "核对待发布队列并执行",
+        }
+
+        # 第 1 轮：员工子进程拿到 FRAGO_SCHEDULE_ID / FRAGO_SCHEDULE_NAME
+        out1 = asyncio.run(ex.run_scheduled(schedule_obj))
+        assert out1.ok is True
+        env1 = captured_runs[0]["env"]
+        assert isinstance(env1, dict)
+        assert env1["FRAGO_SCHEDULE_ID"] == "sch_emp_loop"
+        assert env1["FRAGO_SCHEDULE_NAME"] == "员工每日发布巡检"
+        assert env1["FRAGO_EMPLOYEE_ID"] == "ops-emp"
+
+        # 模拟员工子进程内通过 frago app propose 提交提案（自动继承 schedule env）
+        for k in (
+            "FRAGO_SCHEDULE_ID",
+            "FRAGO_SCHEDULE_NAME",
+            "FRAGO_SESSION_ORIGIN",
+            "FRAGO_UNATTENDED",
+            "FRAGO_AGENT_ROLE",
+            "FRAGO_EMPLOYEE_ID",
+        ):
+            monkeypatch.setenv(k, str(env1[k]))
+        cli_res = CliRunner().invoke(
+            propose_group,
+            [
+                "single-choice",
+                "-q",
+                "选择哪批镜像进行灰度？",
+                "-o",
+                "A|发布 v1.2|灰度 10%",
+                "--dedup-key",
+                "emp:canary:v1.2",
+            ],
+        )
+        assert cli_res.exit_code == 0, cli_res.output
+        proposal_id = json.loads(cli_res.output)["proposal_id"]
+
+        inbox_svc = get_decision_inbox_service()
+        saved = inbox_svc.get(proposal_id)
+        assert saved["schedule_id"] == "sch_emp_loop"
+        assert saved["schedule_name"] == "员工每日发布巡检"
+
+        # 人类批复
+        inbox_svc.resolve(proposal_id, choice="A", note="先灰度 10% 观测")
+
+        # 第 2 轮：run_scheduled 自动将回执置于任务正文之前，消费标记，并广播 WS
+        out2 = asyncio.run(ex.run_scheduled(schedule_obj))
+        assert out2.ok is True
+        prompt2 = str(captured_runs[1]["prompt"])
+        assert "【统一决策收件箱最新回执】" in prompt2
+        assert "选择哪批镜像进行灰度？" in prompt2
+        assert "先灰度 10% 观测" in prompt2
+        assert prompt2.index("【统一决策收件箱最新回执】") < prompt2.index("核对待发布队列并执行")
+        assert "<frago-employee" in prompt2
+        assert inbox_svc.note_for_schedule("sch_emp_loop") is None
+        assert broadcasts == ["schedule_run_finished", "schedule_run_finished"]
+
+

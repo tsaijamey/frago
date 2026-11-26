@@ -691,6 +691,9 @@ def create_app(
     from frago.server.routes.workbench import router as workbench_router
     app.include_router(workbench_router, prefix="/api", tags=["workbench"])
 
+    from frago.server.routes.decisions import router as decisions_router
+    app.include_router(decisions_router, prefix="/api", tags=["workbench"])
+
     # vibe teaming: the right-hand column of the paired view. The left column is
     # this machine's own session and already has a route; only the peer's side
     # has to come from the relay.

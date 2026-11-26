@@ -25,6 +25,7 @@ from frago.server.routes.browser_dashboard import router as browser_dashboard_ro
 from frago.server.routes.claude_sessions import router as claude_sessions_router
 from frago.server.routes.config import router as config_router
 from frago.server.routes.data_repo import router as data_repo_router
+from frago.server.routes.decisions import router as decisions_router
 from frago.server.routes.employees import router as employees_router
 from frago.server.routes.files import router as files_router
 from frago.server.routes.github_star import router as github_star_router
@@ -59,4 +60,5 @@ __all__ = [
     "browser_dashboard_router",
     "claude_sessions_router",
     "workbench_router",
+    "decisions_router",
 ]

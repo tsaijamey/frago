@@ -4,7 +4,7 @@
 1. 4 类交互组件（single-choice、multi-choice、text-answer、choice-and-text）的正常输出结构；
 2. 选项的 JSON 格式与管道分隔简写格式（KEY|LABEL|EFFECT[|FLAGS]）解析；
 3. 参数错误（缺必填项、选项格式写错、把 effect 写成 description、跨组件混用参数、传未知参数、传未知子命令）时立即报错退出（exit_code != 0），且仅返回对应组件类型的正确示例；
-4. schedule_pending.card_in 对 frago ask 输出 JSON 的识别。
+4. frago.decision_inbox.card_parser.card_in 对 frago ask 输出 JSON 的识别。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from click.testing import CliRunner
 
 from frago.cli.agent_friendly import BusinessError
 from frago.cli.ask_commands import ask_group, validate_and_build_component
-from frago.server.services import schedule_pending as sp
+from frago.decision_inbox import card_parser as sp
 
 
 @pytest.fixture(autouse=True)
@@ -416,7 +416,7 @@ class TestAskKeyShape:
         assert "1–8 个字符" in res.output
 
 
-class TestSchedulePendingIntegration:
+class TestCardParserIntegration:
     def test_card_in_recognizes_frago_ask_json_output(self):
         runner = CliRunner()
         res = runner.invoke(
@@ -470,6 +470,7 @@ class TestUnattendedAskGuard:
         assert "严禁调用 `frago app ask` 生成阻塞交互卡片" in res.output
         assert f"{env_name}={env_value}" in res.output
         assert "待主理人确认摘要" in res.output
+        assert "frago app propose" in res.output
         assert "严禁手写 answer-needed-by-human" in res.output
 
     def test_unattended_mode_blocks_group_and_unknown_subcommand_and_direct_call(

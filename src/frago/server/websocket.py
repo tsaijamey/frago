@@ -112,6 +112,8 @@ class MessageType:
     SESSION_TURN_DONE = "session_turn_done"
     # 会话页右栏：旁路 AI 改完了一场会话的槽位
     SESSION_OBSERVER_UPDATE = "session_observer_update"
+    # 统一决策收件箱变更推送
+    DECISION_INBOX_UPDATE = "decision_inbox_update"
     # 结对页右栏：中继那侧说对面动了，这一栏该重取一次（data.code 是哪个 team）
     TEAM_PEER_ACTIVITY = "team_peer_activity"
 
@@ -214,4 +216,20 @@ async def broadcast_session_sync(sessions: list[dict[str, Any]]) -> None:
         sessions: List of session data
     """
     message = create_message(MessageType.SESSION_SYNC, {"sessions": sessions})
+    await manager.broadcast(message)
+
+
+async def broadcast_decision_inbox_update(
+    counts: dict[str, int] | None = None,
+    *,
+    action: str = "refresh",
+    proposal_id: str | None = None,
+) -> None:
+    """广播统一决策收件箱状态变更事件。"""
+    payload: dict[str, Any] = {"action": action}
+    if counts is not None:
+        payload["counts"] = counts
+    if proposal_id:
+        payload["proposal_id"] = proposal_id
+    message = create_message(MessageType.DECISION_INBOX_UPDATE, payload)
     await manager.broadcast(message)

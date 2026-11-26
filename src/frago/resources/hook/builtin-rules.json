@@ -886,12 +886,12 @@
       },
       "action": {
         "type": "inject_literal",
-        "text": "【定时/无人值守运行守则】当前处于定时排程（schedule）或无人值守（unattended）模式，没有真人在线等待点选。严禁调用 `frago app ask`，严禁输出 `answer-needed-by-human` 交互区块或停下等待拍板。决策按三档收敛：1) 可逆、低风险、有本机先例或明确口径的小事（如归类、打标签、状态同步、补充幂等日志）直接自主执行并留痕；2) 缺失前置条件或依据不足的事项，保持原状不猜不改并记录缺口；3) 真正不可逆、高风险或超出授权边界的事项（如真删数据、大额/外发不可撤销变更）安全跳过，在回复中写入非阻塞的「待主理人确认摘要」后正常结束本轮。"
+        "text": "【定时/无人值守运行守则】当前处于定时排程（schedule）或无人值守（unattended）模式，没有真人在线等待点选。严禁调用 `frago app ask`，严禁输出 `answer-needed-by-human` 交互区块或停下等待拍板。决策按三档收敛：1) 可逆、低风险、有本机先例或明确口径的小事（如归类、打标签、状态同步、补充幂等日志）直接自主执行并留痕；2) 缺失前置条件或依据不足的事项，保持原状不猜不改并记录缺口；3) 真正不可逆、高风险或超出授权边界的事项（如真删数据、大额/外发不可撤销变更）安全跳过，先调用 `frago app propose` 将非阻塞提案上浮至统一待拍板收件箱（附 `--dedup-key`、`--risk`、`--recommended`、`--irreversible` 等参数），再在回复中写入非阻塞的「待主理人确认摘要」后正常结束本轮。"
       },
       "dedup_scope": "always",
       "priority": 195,
       "created_at": "2026-11-21T00:00:00",
-      "description": "Enforces unattended schedule autonomy rules (20261008-agent-auto-decide-threshold + 20261121 cron hard guardrail): prohibits `frago app ask` and `answer-needed-by-human` blocks during schedule/unattended execution and directs three-tier convergence into non-blocking summary."
+      "description": "Enforces unattended schedule autonomy rules (20261008-agent-auto-decide-threshold + 20261121 cron hard guardrail + 20261124 Top-2 propose upgrade): prohibits `frago app ask` and `answer-needed-by-human` blocks during schedule/unattended execution and directs tier-3 irreversible/boundary items to `frago app propose`."
     },
     {
       "id": "builtin-prompt-file-links",

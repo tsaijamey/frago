@@ -247,8 +247,8 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
 def previous_block(sections: list[str]) -> str:
     """把「上一趟留下的东西」套成一个壳，摆在这次的任务原文前面。
 
-    两种情形共用这一层壳：没跑完留下的续跑包（:mod:`schedule_resume`），和一张没人答的
-    拍板卡片（:mod:`schedule_pending`）。两处各套一层的话，两段「上一趟」会各自带着一个
+    两种情形共用这一层壳：没跑完留下的续跑包（:mod:`schedule_resume`），和统一决策
+    收件箱（:mod:`frago.decision_inbox`）下发的拍板回执。两处各套一层的话，两段「上一趟」会各自带着一个
     结尾，读起来像两次收尾。
     """
     head = (
@@ -292,6 +292,8 @@ def execute_prompt(
     *,
     resume: str | None = None,
     pending: str | None = None,
+    schedule_id: str | None = None,
+    schedule_name: str | None = None,
 ) -> RunOutcome:
     """把一句自然语言任务交给 CoreAgent（frago-core 自己的 agent 循环）去办。
 
@@ -316,7 +318,7 @@ def execute_prompt(
     哪天的哪条。这一场同时归到「本机管理」那一组：它不是人开的会话，不该堆在未分组区。
 
     ``resume`` 是上一趟留下的续跑包（见 :mod:`frago.server.services.schedule_resume`），
-    ``pending`` 是一张没人答的拍板卡片（见 :mod:`frago.server.services.schedule_pending`）：
+    ``pending`` 是统一决策收件箱（见 :mod:`frago.decision_inbox`）的人类批示或超期策略提示：
     有一个就摆在任务原文前面，让它接着上次断的地方做、或者照着人的答复办。
     """
     started = time.monotonic()
@@ -373,8 +375,13 @@ def execute_prompt(
         proc_env = get_utf8_env()
         proc_env["FRAGO_SESSION_ORIGIN"] = "schedule"
         proc_env["FRAGO_UNATTENDED"] = "1"
+        proc_env["FRAGO_SESSION_ID"] = session_id
         proc_env["FRAGO_STOP_CHECK"] = "off"
         proc_env["FRAGO_REVIEW"] = "off"
+        if schedule_id and str(schedule_id).strip():
+            proc_env["FRAGO_SCHEDULE_ID"] = str(schedule_id).strip()
+        if schedule_name and str(schedule_name).strip():
+            proc_env["FRAGO_SCHEDULE_NAME"] = str(schedule_name).strip()
 
         # CoreAgent 自己按 --timeout 收场并交出那一行结论；这里多等一分钟只是兜底，
         # 防的是它连收场都做不到。
@@ -767,6 +774,7 @@ def _build_employee_schedule_prompt(
     task_prompt: str,
     *,
     schedule_id: str = "",
+    pending: str | None = None,
 ) -> str:
     from frago.employee.service import EmployeeOntologyService
     from frago.skills.skill_prompt import embed_skills, load_skills
@@ -774,10 +782,11 @@ def _build_employee_schedule_prompt(
     svc = EmployeeOntologyService()
     context_block = svc.build_business_context_block(record.member_post_id)
     body = (task_prompt or "").strip() or "请按你的岗位职责执行例行巡检并汇报关键结果。"
+    task_section = f"{previous_block([pending])}{body}" if pending else body
     prompt = (
         f"{context_block}\n\n"
         f"【定时任务无人值守触发（来源: schedule:{schedule_id or 'native'}）】\n"
-        f"{body}\n\n"
+        f"{task_section}\n\n"
         "执行要求：\n"
         "1. 基于你管辖的业务数据底账、知识域、配方工具链与近期会话脉络完成本次任务。\n"
         "2. 当前处于无人值守定时触发模式（FRAGO_UNATTENDED=1），若遇必须人类授权的高危动作或缺失依据，"
@@ -943,6 +952,7 @@ def execute_employee(
     timeout: int = 7200,
     triggered_at: datetime | str | None = None,
     seq: int | None = None,
+    pending: str | None = None,
 ) -> RunOutcome:
     """以原生绑定方式调度一位数字员工完成本轮任务。
 
@@ -996,10 +1006,13 @@ def execute_employee(
     )
     agent_kernel = str(getattr(record, "agent_kernel", "") or "claude").strip().lower()
     workdir = _resolve_employee_workdir(record, schedule.get("cwd"))
+    schedule_id = str(schedule.get("id") or "").strip()
+    schedule_name = str(schedule.get("name") or "").strip()
     prompt = _build_employee_schedule_prompt(
         record,
         str(schedule.get("prompt") or ""),
-        schedule_id=str(schedule.get("id") or ""),
+        schedule_id=schedule_id,
+        pending=pending,
     )
 
     effective_timeout = max(1, int(timeout or 7200))
@@ -1021,6 +1034,10 @@ def execute_employee(
         "FRAGO_AGENT_ROLE": "employee",
         "FRAGO_EMPLOYEE_ID": record.member_post_id,
     }
+    if schedule_id:
+        base_env["FRAGO_SCHEDULE_ID"] = schedule_id
+    if schedule_name:
+        base_env["FRAGO_SCHEDULE_NAME"] = schedule_name
 
     try:
         if runs_on_kernel(agent_kernel):
@@ -1195,23 +1212,35 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
             execute_recipe, schedule.get("recipe") or "", schedule.get("params") or {}, timeout,
         )
     if kind == "employee":
-        return await asyncio.to_thread(
+        from frago.decision_inbox import get_decision_inbox_service
+
+        sid = str(schedule.get("id") or "")
+        pending_note = get_decision_inbox_service().note_for_schedule(sid)
+        outcome = await asyncio.to_thread(
             execute_employee,
             schedule,
             timeout=timeout,
             triggered_at=triggered_at,
             seq=seq,
+            pending=pending_note,
         )
+        try:
+            from frago.server.websocket import broadcast_decision_inbox_update
+
+            await broadcast_decision_inbox_update(action="schedule_run_finished")
+        except Exception:  # noqa: BLE001 — WS 广播失败不影响定时任务结果返回
+            pass
+        return outcome
     if kind == "prompt":
-        from frago.server.services import schedule_pending as sp
+        from frago.decision_inbox import get_decision_inbox_service
         from frago.server.services import schedule_resume as sr
 
         sid = str(schedule.get("id") or "")
         title = render_session_title(schedule, triggered_at=triggered_at, seq=seq)
         # 上一趟没跑完就留下了一份续跑包：这一次摆到任务原文前面，别从零重来。
-        # 上一趟挂着的拍板卡片同样摆到前面：人答了就照答复办，一直没人答就按推荐项降级，
-        # 不再问第二遍（见 schedule_pending）。
+        # 统一决策收件箱中已获人类拍板或超期策略收口的回执同样摆到前面，按回执执行不再重问。
         resume_text = sr.load(sid)
+        pending_note = get_decision_inbox_service().note_for_schedule(sid)
         outcome = await asyncio.to_thread(
             execute_prompt, schedule.get("prompt") or "", timeout,
             schedule.get("instructions"),
@@ -1219,11 +1248,18 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
             schedule.get("cwd"),
             title,
             resume=sr.section(resume_text) if resume_text else None,
-            pending=sp.note(sid),
+            pending=pending_note,
+            schedule_id=sid,
+            schedule_name=schedule.get("name"),
         )
         outcome.session_title = title
         sr.record(schedule, outcome)
-        sp.collect(schedule, outcome)
+        try:
+            from frago.server.websocket import broadcast_decision_inbox_update
+
+            await broadcast_decision_inbox_update(action="schedule_run_finished")
+        except Exception:  # noqa: BLE001 — WS 广播失败不影响定时任务结果返回
+            pass
         return outcome
     raise ValueError(f"run_scheduled 不认识 kind={kind}")
 

@@ -183,7 +183,7 @@ def section(package: str) -> str:
     """续跑包本身那一段，摆在这次的任务原文前面。
 
     「上一趟」的外壳（开头那句提示与结尾那句分割）由 :func:`schedule_executor.previous_block`
-    统一套——一张没人答的拍板卡片（:mod:`schedule_pending`）也要摆进同一个壳里，两处各写
+    统一套——统一决策收件箱（:mod:`frago.decision_inbox`）的人类拍板回执也要摆进同一个壳里，两处各写
     一层的话，两段「上一趟」会各自带着一个结尾，读起来像两次收尾。
     """
     return f"【上一趟没跑完，留下的交接】\n\n{package}"

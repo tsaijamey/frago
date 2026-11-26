@@ -124,12 +124,11 @@ class TestRunNow:
         self, client, service, monkeypatch, tmp_path
     ):
         """PA 没起来（这里压根没接）也照跑：执行者已经换成 CoreAgent 子进程。"""
-        from frago.server.services import schedule_pending as sp
         from frago.server.services import schedule_resume as sr
 
-        # 续跑包与挂着的那张卡片都不该读到这一台机器自己的 ~/.frago 去。
+        # 续跑包与统一决策收件箱都不该读到这一台机器自己的 ~/.frago 去。
         monkeypatch.setattr(sr, "ROOT", tmp_path / "resume")
-        monkeypatch.setattr(sp, "ROOT", tmp_path / "pending")
+        monkeypatch.setenv("FRAGO_DECISION_INBOX_DIR", str(tmp_path / "decision-inbox"))
         s = service.add_schedule(
             prompt="给事务分类", interval_seconds=60,
             instructions="todo-triage.md", allowed_tools=["Bash(frago todo:*)"],
@@ -139,10 +138,11 @@ class TestRunNow:
 
         def fake_prompt(
             prompt, timeout, instructions, allowed, disallowed, cwd, title=None,
-            *, resume=None, pending=None,
+            *, resume=None, pending=None, schedule_id=None, schedule_name=None,
         ):
             seen.update(
-                prompt=prompt, instructions=instructions, allowed=allowed, cwd=cwd, title=title
+                prompt=prompt, instructions=instructions, allowed=allowed, cwd=cwd, title=title,
+                schedule_id=schedule_id, schedule_name=schedule_name,
             )
             assert resume is None, "这一趟没有上一趟留下的续跑包"
             assert pending is None, "这一趟也没有挂着没人答的卡片"
@@ -160,6 +160,7 @@ class TestRunNow:
         assert seen == {
             "prompt": "给事务分类", "instructions": "todo-triage.md",
             "allowed": ["Bash(frago todo:*)"], "cwd": "/tmp", "title": "定时任务：事务分类",
+            "schedule_id": s["id"], "schedule_name": "事务分类",
         }
         row = client.get("/api/schedules").json()["schedules"][0]
         assert row["history"][-1]["status"] == "success"

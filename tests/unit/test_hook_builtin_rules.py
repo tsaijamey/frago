@@ -721,6 +721,7 @@ def test_builtin_rules_schedule_unattended_prompt_rules_via_frago_core(tmp_path:
     sched_ctx = sched_out.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "【定时/无人值守运行守则】" in sched_ctx
     assert "严禁调用 `frago app ask`" in sched_ctx
+    assert "frago app propose" in sched_ctx
     assert "【要人拍板就出卡片】" not in sched_ctx
     assert "【展示图片就出网格卡】" not in sched_ctx
 
