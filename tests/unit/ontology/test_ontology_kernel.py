@@ -507,7 +507,7 @@ class TestOntologyIntrospector:
         # Missing user dir does not fail and returns the builtin domain classes
         absent_dir = tmp_path / "nonexistent_ontology_dir"
         base_reg = DomainClassRegistry(user_ontology_dir=absent_dir)
-        assert len(base_reg.classes) == 71
+        assert len(base_reg.classes) == 74
         assert getattr(base_reg.get_class("AgentKernel"), "source", None) == "builtin"
 
         # User overlay in ~/.frago/ontology/user-ontology.json + domains/*.json
@@ -720,7 +720,10 @@ class TestDomainClassRegistryAndThreeMainlinesRuntime:
 
     def test_all_63_domain_classes_compile_and_enforce_bearer_types(self) -> None:
         reg = DomainClassRegistry()
-        assert len(reg.classes) == 71
+        assert len(reg.classes) == 74
+        assert "DecisionInboxItem" in reg.classes
+        assert "PendingDecisionProcess" in reg.classes
+        assert "DecisionInboxState" in reg.classes
         assert "EmployeePostResource" in reg.classes
         assert "DomainEmployeeRole" in reg.classes
         assert "SessionLifecycleState" in reg.classes
@@ -4818,6 +4821,113 @@ class TestCallbackDeliveryOntologyGate3:
             prior_delivery_state="failed",
         )
         assert status_fail == "failed"
+
+
+class TestDecisionInboxOntologyGate:
+    """Gates 1-4 verification for DecisionInboxItem / PendingDecisionProcess / DecisionInboxState."""
+
+    def test_gate_1_2_3_decision_inbox_schema_projection_and_contracts(self) -> None:
+        from frago.ontology import (
+            DECISION_INBOX_STATES,
+            ActionContractError,
+            CliActionRegistry,
+            FivePillarShadowProjector,
+            InvariantViolationError,
+            OntologyIntrospector,
+            PreconditionViolationError,
+            build_propose_decision_contract,
+            build_transition_decision_inbox_item_contract,
+            is_legal_decision_inbox_transition,
+        )
+
+        introspector = OntologyIntrospector()
+        assert introspector.validate_schema_integrity() == []
+
+        item_spec = introspector.get_domain_class("DecisionInboxItem")
+        proc_spec = introspector.get_domain_class("PendingDecisionProcess")
+        state_spec = introspector.get_domain_class("DecisionInboxState")
+        assert item_spec is not None and item_spec["rigidity"] == "+R"
+        assert proc_spec is not None and proc_spec["rigidity"] == "+R"
+        assert state_spec is not None and state_spec["rigidity"] == "~R"
+        assert set(state_spec["allowed_values"]) == set(DECISION_INBOX_STATES)
+
+        # CLI contract registered
+        cli_reg = CliActionRegistry()
+        spec = cli_reg.get_command_spec("frago.app.propose")
+        assert spec.underlying_action_id == "propose_decision"
+        assert spec.target_range == "DecisionInboxItem"
+        assert spec.initiates_process_class == "PendingDecisionProcess"
+
+        # Legal transitions vs terminal states
+        assert is_legal_decision_inbox_transition("pending", "snoozed")
+        assert is_legal_decision_inbox_transition("snoozed", "pending")
+        assert is_legal_decision_inbox_transition("pending", "resolved")
+        assert not is_legal_decision_inbox_transition("resolved", "pending")
+        assert not is_legal_decision_inbox_transition("rejected", "pending")
+
+        # Gate 2: shadow projection
+        projector = FivePillarShadowProjector()
+        proj = projector.project_decision_inbox_item(
+            {
+                "proposal_id": "dec_test123",
+                "dedup_key": "daily-check:q1",
+                "title": "是否清理超过 30 天未访问的缓存？",
+                "status": "resolved",
+                "resolution": {"choice": "A", "note": "确认清理", "receipt_id": "rcpt_1"},
+            }
+        )
+        assert proj.item.ontological_id() == "decision_item:dec_test123"
+        assert proj.receipt is not None
+
+        # Gate 3: propose & transition contracts reject invalid arguments
+        propose_contract = build_propose_decision_contract(introspector)
+        with pytest.raises(PreconditionViolationError):
+            propose_contract.check_preconditions(
+                {
+                    "dedup_key": "",
+                    "title": "bad",
+                    "action_type": "single-choice",
+                    "risk": "low",
+                    "ttl_hours": 72.0,
+                }
+            )
+
+        trans_contract = build_transition_decision_inbox_item_contract(introspector)
+        with pytest.raises((InvariantViolationError, ActionContractError)):
+            trans_contract.check_preconditions(
+                {
+                    "proposal_id": "dec_test123",
+                    "from_state": "resolved",
+                    "to_state": "pending",
+                    "prior_inbox_state": "resolved",
+                }
+            )
+
+    def test_gate_4_decision_inbox_layer_isolation(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        pkg = repo_root / "src" / "frago" / "decision_inbox"
+        for expected in (
+            pkg / "__init__.py",
+            pkg / "card_parser.py",
+            pkg / "store.py",
+            pkg / "service.py",
+        ):
+            assert expected.is_file()
+
+        forbidden: list[str] = []
+        for py_file in sorted(pkg.glob("*.py")):
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith(("frago.server", "frago.cli")):
+                            forbidden.append(f"{py_file.name}: import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    mod = node.module or ""
+                    if node.level == 0 and mod.startswith(("frago.server", "frago.cli")):
+                        forbidden.append(f"{py_file.name}: from {mod} import ...")
+        assert forbidden == []
+
 
 
 

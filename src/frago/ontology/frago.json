@@ -397,6 +397,19 @@
           "src/frago/cli/employee_commands.py"
         ],
         "description": "主动型固定员工的持久岗位编制与领地资源（#teams 工牌）：跨会话恒定保存员工画像、专属管理的 KnowledgeDomain 列表、专属管理的 RecipeModule 与 DataSlot 底账路径及允许调用的命令范围。"
+      },
+      {
+        "class_id": "DecisionInboxItem",
+        "pillar": "1. 会话伴侣 / 5. 边界",
+        "rigidity": "+R",
+        "identity": "proposal_id",
+        "current_code_locations": [
+          "src/frago/decision_inbox/store.py",
+          "src/frago/decision_inbox/service.py",
+          "src/frago/cli/propose_commands.py",
+          "src/frago/server/routes/decisions.py"
+        ],
+        "description": "统一决策收件箱中的异步提案资源实体（由 frago app propose 创建或在线等待聚合）：以 proposal_id 为全局稳定唯一身份，承载 dedup_key、风险等级、不可逆标记、影响范围、证据摘要、推荐项与 TTL 过期契约；运行态由 DecisionInboxState 承载。"
       }
     ],
     "Continuant.DependentContinuant.Role": [
@@ -611,6 +624,18 @@
           "src/frago/ontology/projectors.py#derive_delivery_surface_state"
         ],
         "description": "会话实例的交互载体面状态（webui_workbench 受管网页工作台、native_terminal 纯终端原生、headless_worker 后台子任务工作者、desktop_stage 虚拟桌面舞台），通过 exhibits_state 函数性边挂载，驱动治理轨道与网页专属组件分流。"
+      },
+      {
+        "class_id": "DecisionInboxState",
+        "pillar": "1. 会话伴侣 / 5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "PendingDecisionProcess | DecisionInboxItem",
+        "allowed_values": ["pending", "snoozed", "resolved", "rejected", "expired", "superseded"],
+        "current_code_locations": [
+          "src/frago/decision_inbox/service.py",
+          "src/frago/ontology/runtime.py#DecisionInboxStateEnum"
+        ],
+        "description": "统一决策收件箱条目与待拍板过程的状态（pending 待决、snoozed 已搁置、resolved 已拍板通过、rejected 已驳回、expired 超期保守收口、superseded 被取代）。合法可逆撤销边仅限 pending ↔ snoozed；其余终态不可伪撤销。"
       }
     ],
     "Occurrent.Process": [
@@ -752,6 +777,19 @@
           "src/frago/watcher/"
         ],
         "description": "本地会话目录与配置文件变更监听过程。"
+      },
+      {
+        "class_id": "PendingDecisionProcess",
+        "pillar": "1. 会话伴侣 / 5. 边界",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["pending", "snoozed", "resolved", "rejected", "expired", "superseded"],
+        "current_code_locations": [
+          "src/frago/decision_inbox/service.py",
+          "src/frago/server/routes/decisions.py",
+          "src/frago/ontology/projectors.py#project_decision_inbox_item_dict"
+        ],
+        "description": "待人类拍板的异步提案或在线等待过程：由定时任务、子任务或受限代理通过 frago app propose 发起，经由统一决策收件箱展示上下文、风险与建议项，由人类或 TTL 超期策略推进至终态并产出 HumanDecisionReceipt。"
       }
     ],
     "Occurrent.Event": [
@@ -944,6 +982,7 @@
           "frago.browser.open",
           "frago.view.open",
           "frago.apps.use",
+          "frago.app.propose",
           "frago.daemon.manage",
           "frago.market.install",
           "frago.schedule.trigger",
@@ -1085,9 +1124,10 @@
         "rigidity": "+R",
         "identity": "decision_message_uuid",
         "current_code_locations": [
-          "src/frago/client/"
+          "src/frago/client/",
+          "src/frago/decision_inbox/service.py"
         ],
-        "description": "由 answer-needed-by-human 区块渲染并由人类点击产生的【answer】授权回执，其 effect 原文即本轮合法改变状态的唯一授权范围。"
+        "description": "由 answer-needed-by-human 区块渲染或统一决策收件箱批准/驳回产生的【answer】授权回执，其 effect 原文即本轮合法改变状态的唯一授权范围。"
       }
     ]
   },
@@ -1649,6 +1689,83 @@
         ],
         "side_effects": {
           "mutates": ["AgentHarness"]
+        }
+      }
+    },
+    {
+      "action_id": "propose_decision",
+      "parameters": ["proposal_id", "dedup_key", "action_type", "risk", "irreversible", "ttl_hours", "title", "recommended", "source"],
+      "signature": {
+        "initiator_domain": "AgentKernel | PrimarySchedulerRole | SubtaskWorkerRole | DomainEmployeeRole | HumanPrincipal",
+        "target_range": "DecisionInboxItem",
+        "input_types": {
+          "proposal_id": "str",
+          "dedup_key": "str",
+          "action_type": "str",
+          "risk": "str",
+          "irreversible": "bool",
+          "ttl_hours": "float",
+          "title": "str",
+          "recommended": "str | None",
+          "source": "str"
+        },
+        "return_type": "dict",
+        "error_types": ["ActionContractError"]
+      },
+      "contract": {
+        "preconditions": [
+          "dedup_key and title MUST be non-empty strings.",
+          "action_type MUST be one of {'single-choice', 'multi-choice', 'binary', 'text-answer'}.",
+          "risk MUST be one of {'low', 'medium', 'high'}.",
+          "ttl_hours MUST be > 0."
+        ],
+        "postconditions": [
+          "Returns a DecisionInboxItem dictionary with status in {'pending', 'snoozed'} and valid expires_at > created_at."
+        ],
+        "invariants": [
+          "Deduplicating against an active DecisionInboxItem (pending or snoozed) MUST preserve original created_at and expires_at and NEVER silently reset snoozed back to pending."
+        ],
+        "side_effects": {
+          "mutates": ["DecisionInboxItem"],
+          "initiates": ["PendingDecisionProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "transition_decision_inbox_item",
+      "parameters": ["proposal_id", "from_state", "to_state", "action_verb", "actor_principal", "irreversible", "prior_inbox_state"],
+      "signature": {
+        "initiator_domain": "HumanPrincipal | PrimarySchedulerRole",
+        "target_range": "PendingDecisionProcess",
+        "input_types": {
+          "proposal_id": "str",
+          "from_state": "str",
+          "to_state": "str",
+          "action_verb": "str",
+          "actor_principal": "str",
+          "irreversible": "bool",
+          "prior_inbox_state": "str | None"
+        },
+        "return_type": "str",
+        "error_types": ["ActionContractError"]
+      },
+      "contract": {
+        "preconditions": [
+          "proposal_id MUST be a non-empty string.",
+          "from_state and to_state MUST both be DecisionInboxState allowed values.",
+          "(from_state, to_state) MUST be a legal edge in DECISION_INBOX_TRANSITIONS.",
+          "Caller MUST inject prior_inbox_state read from persisted store; it MUST match from_state and not be terminal."
+        ],
+        "postconditions": [
+          "PendingDecisionProcess exhibits DecisionInboxState == to_state."
+        ],
+        "invariants": [
+          "Terminal states (resolved, rejected, expired, superseded) NEVER transition to another state.",
+          "Undo is ONLY permitted on reversible pending <-> snoozed transitions, NEVER on committed terminal states."
+        ],
+        "side_effects": {
+          "mutates": ["PendingDecisionProcess", "DecisionInboxItem"],
+          "produces": ["HumanDecisionReceipt"]
         }
       }
     }

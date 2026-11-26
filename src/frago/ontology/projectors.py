@@ -34,6 +34,7 @@ Layer: pure ontology shadow projector (imports only `frago.ontology.*` and Pytho
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -1801,5 +1802,129 @@ class FivePillarShadowProjector:
             graph=self._graph,
         )
 
+    def project_decision_inbox_item(
+        self,
+        raw_item: Mapping[str, Any],
+    ) -> DecisionInboxProjection:
+        return project_decision_inbox_item_dict(
+            raw_item,
+            registry=self._registry,
+            graph=self._graph,
+        )
+
     def validate_recipe_handshakes(self) -> list[str]:
         return verify_recipe_shares_handshake(self._recipe_projections)
+
+
+# ============================================================================
+# Unified Decision Inbox Projection (DecisionInboxItem / PendingDecisionProcess / DecisionInboxState)
+# ============================================================================
+
+DECISION_INBOX_STATES: frozenset[str] = frozenset(
+    {"pending", "snoozed", "resolved", "rejected", "expired", "superseded"}
+)
+DECISION_INBOX_ACTIVE_STATES: frozenset[str] = frozenset({"pending", "snoozed"})
+DECISION_INBOX_TERMINAL_STATES: frozenset[str] = frozenset(
+    {"resolved", "rejected", "expired", "superseded"}
+)
+DECISION_INBOX_TRANSITIONS: Mapping[tuple[str, str], str] = {
+    ("pending", "snoozed"): "snooze",
+    ("snoozed", "pending"): "unsnooze",
+    ("pending", "resolved"): "resolve",
+    ("snoozed", "resolved"): "resolve",
+    ("pending", "rejected"): "reject",
+    ("snoozed", "rejected"): "reject",
+    ("pending", "expired"): "expire",
+    ("snoozed", "expired"): "expire",
+    ("pending", "superseded"): "supersede",
+    ("snoozed", "superseded"): "supersede",
+}
+
+
+def is_legal_decision_inbox_transition(from_state: str, to_state: str) -> bool:
+    """Return True iff `(from_state, to_state)` is a legal edge of `DecisionInboxState`."""
+    return (from_state, to_state) in DECISION_INBOX_TRANSITIONS
+
+
+@dataclass(frozen=True, kw_only=True)
+class DecisionInboxProjection:
+    """Projected ontological graph entities for a decision inbox proposal."""
+
+    item: Resource
+    process: Process
+    state: QualityState
+    receipt: InformationEntity | None
+    graph: OntologyGraph
+
+
+def project_decision_inbox_item_dict(
+    raw_item: Mapping[str, Any],
+    *,
+    registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+    graph: OntologyGraph | None = None,
+) -> DecisionInboxProjection:
+    """Project a decision inbox proposal dictionary into `DecisionInboxItem`, `PendingDecisionProcess`, and `DecisionInboxState`."""
+    g = graph if graph is not None else OntologyGraph()
+    proposal_id = str(raw_item.get("proposal_id", "")).strip()
+    dedup_key = str(raw_item.get("dedup_key", "")).strip()
+    title = str(raw_item.get("title") or raw_item.get("question") or "").strip()
+    status = str(raw_item.get("status", "pending")).strip() or "pending"
+    if not proposal_id or not dedup_key or not title:
+        raise ProjectionValidationError(
+            "DecisionInboxItem JSON requires non-empty 'proposal_id', 'dedup_key', and 'title'."
+        )
+    if status not in DECISION_INBOX_STATES:
+        raise ProjectionValidationError(
+            f"DecisionInboxState '{status}' is invalid; expected one of {sorted(DECISION_INBOX_STATES)}."
+        )
+
+    item = registry.create("DecisionInboxItem", uid=f"decision_item:{proposal_id}")
+    assert isinstance(item, Resource)
+    proc = registry.create(
+        "PendingDecisionProcess",
+        process_uid=f"decision_proc:{proposal_id}",
+        state=status,
+    )
+    assert isinstance(proc, Process)
+    state_obj = registry.create(
+        "DecisionInboxState",
+        bearer_id=proc.ontological_id(),
+        context_id=proc.ontological_id(),
+        value=status,
+    )
+    assert isinstance(state_obj, QualityState)
+
+    g.link(proc, "mutates", item)
+    g.link(proc, "exhibits_state", state_obj)
+
+    receipt: InformationEntity | None = None
+    resolution = raw_item.get("resolution")
+    if status in {"resolved", "rejected"} and isinstance(resolution, Mapping):
+        receipt_id = str(
+            resolution.get("receipt_id") or f"decision_receipt:{proposal_id}"
+        ).strip()
+        receipt_payload = json.dumps(
+            {
+                "proposal_id": proposal_id,
+                "status": status,
+                "choice": resolution.get("choice"),
+                "note": resolution.get("note"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        receipt = registry.create(
+            "HumanDecisionReceipt",
+            artifact_uri=f"answer://{receipt_id}",
+            content=receipt_payload,
+        )
+        assert isinstance(receipt, InformationEntity)
+        g.link(proc, "produces", receipt)
+
+    return DecisionInboxProjection(
+        item=item,
+        process=proc,
+        state=state_obj,
+        receipt=receipt,
+        graph=g,
+    )

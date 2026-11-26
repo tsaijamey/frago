@@ -992,6 +992,15 @@ STANDARD_CLI_COMMANDS: dict[str, CliCommandSpec] = {
         initiates_process_class="RecipeExecutionProcess",
         description="调用内置交付应用直接产出成品工件。",
     ),
+    "frago.app.propose": CliCommandSpec(
+        command_path="frago.app.propose",
+        mutates_state=True,
+        underlying_action_id="propose_decision",
+        initiator_domain="AgentKernel | PrimarySchedulerRole | SubtaskWorkerRole | DomainEmployeeRole | HumanPrincipal",
+        target_range="DecisionInboxItem",
+        initiates_process_class="PendingDecisionProcess",
+        description="向统一决策收件箱写入异步决策提案（支持定时无人值守与子任务非阻塞提交，系统调用契约 propose_decision）。",
+    ),
     "frago.daemon.manage": CliCommandSpec(
         command_path="frago.daemon.manage",
         mutates_state=True,
@@ -1955,6 +1964,153 @@ def build_finalize_dispatch_job_contract(
             ),
         ),
     )
+
+
+# ============================================================================
+# Unified Decision Inbox Action Contracts (Gate 3)
+# ============================================================================
+
+
+class DecisionInboxStateEnum(StrEnum):
+    """Allowed values of `DecisionInboxState`."""
+
+    PENDING = "pending"
+    SNOOZED = "snoozed"
+    RESOLVED = "resolved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    SUPERSEDED = "superseded"
+
+
+DECISION_INBOX_ALLOWED_ACTION_TYPES: frozenset[str] = frozenset(
+    {"single-choice", "multi-choice", "binary", "text-answer"}
+)
+DECISION_INBOX_ALLOWED_RISKS: frozenset[str] = frozenset({"low", "medium", "high"})
+
+
+def _persisted_inbox_state(args: Mapping[str, Any]) -> str | None:
+    raw = args.get("prior_inbox_state")
+    if raw is None:
+        return None
+    state = str(raw).strip()
+    return state or None
+
+
+def build_propose_decision_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `propose_decision` contract enforcing Gate 3 invariants on `DecisionInboxItem`."""
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        "propose_decision",
+        preconditions=(
+            ConditionCheck(
+                description="dedup_key and title MUST be non-empty strings.",
+                predicate=lambda args: (
+                    bool(str(args.get("dedup_key", "")).strip())
+                    and bool(str(args.get("title", "")).strip())
+                ),
+            ),
+            ConditionCheck(
+                description="action_type MUST be one of {'single-choice', 'multi-choice', 'binary', 'text-answer'}.",
+                predicate=lambda args: (
+                    str(args.get("action_type", "")) in DECISION_INBOX_ALLOWED_ACTION_TYPES
+                ),
+            ),
+            ConditionCheck(
+                description="risk MUST be one of {'low', 'medium', 'high'}.",
+                predicate=lambda args: (
+                    str(args.get("risk", "")) in DECISION_INBOX_ALLOWED_RISKS
+                ),
+            ),
+            ConditionCheck(
+                description="ttl_hours MUST be > 0.",
+                predicate=lambda args: (
+                    isinstance(args.get("ttl_hours"), (int, float))
+                    and float(args["ttl_hours"]) > 0.0
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="Proposal title and dedup_key MUST never inline secret tokens.",
+                predicate=lambda args: not (
+                    _SECRET_LEAK_PATTERN.search(str(args.get("title", "")))
+                    or _SECRET_LEAK_PATTERN.search(str(args.get("dedup_key", "")))
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Returns a DecisionInboxItem dictionary with status in {'pending', 'snoozed'} and expires_at > created_at.",
+                predicate=lambda ctx: (
+                    isinstance(ctx.get("result"), Mapping)
+                    and ctx["result"].get("status") in {"pending", "snoozed"}
+                    and float(ctx["result"].get("expires_at", 0.0))
+                    > float(ctx["result"].get("created_at", 0.0))
+                ),
+            ),
+        ),
+    )
+
+
+def build_transition_decision_inbox_item_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `transition_decision_inbox_item` contract enforcing `DecisionInboxState` edges."""
+    from frago.ontology.projectors import (
+        DECISION_INBOX_STATES,
+        DECISION_INBOX_TERMINAL_STATES,
+        is_legal_decision_inbox_transition,
+    )
+
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        "transition_decision_inbox_item",
+        preconditions=(
+            ConditionCheck(
+                description="proposal_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("proposal_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="from_state and to_state MUST both be DecisionInboxState allowed values.",
+                predicate=lambda args: (
+                    args.get("from_state") in DECISION_INBOX_STATES
+                    and args.get("to_state") in DECISION_INBOX_STATES
+                ),
+            ),
+            ConditionCheck(
+                description="(from_state, to_state) MUST be a legal edge in DECISION_INBOX_TRANSITIONS.",
+                predicate=lambda args: is_legal_decision_inbox_transition(
+                    str(args.get("from_state", "")),
+                    str(args.get("to_state", "")),
+                ),
+            ),
+            ConditionCheck(
+                description="Caller MUST inject prior_inbox_state read from persisted store; it MUST match from_state and not be terminal.",
+                predicate=lambda args: (
+                    (state := _persisted_inbox_state(args)) is not None
+                    and state not in DECISION_INBOX_TERMINAL_STATES
+                    and state == args.get("from_state")
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="Terminal states (resolved, rejected, expired, superseded) NEVER transition out.",
+                predicate=lambda args: (
+                    str(args.get("from_state", "")) not in DECISION_INBOX_TERMINAL_STATES
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="PendingDecisionProcess exhibits DecisionInboxState == to_state.",
+                predicate=lambda ctx: ctx.get("result") == ctx.get("to_state"),
+            ),
+        ),
+    )
+
 
 
 
