@@ -367,3 +367,261 @@ class TestCommandSessionCapture:
         assert out.ok
         assert out.session_id == "ses_dummy_recipe_9876"
 
+
+class TestSessionTitleTemplate:
+    def test_员工默认模板包含日期星期员工名与任务名(self):
+        s = {
+            "id": "sch_emp_1",
+            "name": "盘中简报",
+            "kind": "employee",
+            "employee_id": "analyst",
+        }
+        # 2026-11-04 是周三
+        title = ex.render_session_title(
+            s,
+            triggered_at=datetime(2026, 11, 4, 9, 30, 0),
+            seq=3,
+            employee_title="投研助手",
+        )
+        assert title == "[11-04 周三] 投研助手 · 盘中简报"
+
+    def test_自定义模板支持全部占位符含序号(self):
+        s = {
+            "id": "sch_emp_2",
+            "name": "盘后复盘",
+            "kind": "employee",
+            "employee_id": "analyst",
+            "session_title_template": "[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+        }
+        title = ex.render_session_title(
+            s,
+            triggered_at=datetime(2026, 11, 6, 15, 5, 0),
+            seq=31,
+            employee_title="金融专家",
+        )
+        assert title == "[11-06 周五] 金融专家 · 盘后复盘 #31"
+
+    def test_非员工默认保持历史定时任务前缀(self):
+        s = {"id": "sch_p", "name": "事务分类", "kind": "prompt"}
+        assert ex.render_session_title(s, triggered_at=datetime(2026, 11, 6, 9, 0, 0)) == "定时任务：事务分类"
+
+
+class TestEmployeeScheduleExecution:
+    @pytest.fixture
+    def isolated_emp(self, tmp_path, monkeypatch):
+        from frago.employee.store import EmployeePostRecord, save_post
+        from frago.session import service as session_service_mod
+        from frago.session import store as session_store_mod
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        emp_cwd = tmp_path / "emp-workspace"
+        emp_cwd.mkdir(parents=True, exist_ok=True)
+        rec = EmployeePostRecord(
+            member_post_id="demo-emp",
+            title="示例巡检专员",
+            description="负责例行检查与汇总",
+            agent_kernel="coreagent",
+            cwd=str(emp_cwd),
+            skills=["how-to-add-skill"],
+        )
+        save_post(rec)
+
+        store = SessionOntologyStore(
+            tmp_path / "session-ontology-store.json",
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store)
+        monkeypatch.setattr(session_store_mod, "_DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr(session_service_mod, "_DEFAULT_SESSION_SERVICE", svc)
+        monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+        dispatch_root = tmp_path / "dispatches"
+        dispatch_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr("frago.session.async_dispatch.dispatch_store_dir", lambda: dispatch_root)
+
+        return {"record": rec, "store": store, "svc": svc, "cwd": emp_cwd, "tmp_path": tmp_path}
+
+    def test_缺失或已删除员工返回结构化失败提示且不崩溃(self, isolated_emp):
+        s = {
+            "id": "sch_missing",
+            "name": "失踪员工任务",
+            "kind": "employee",
+            "employee_id": "deleted-ghost",
+            "prompt": "跑一次",
+        }
+        out = ex.execute_employee(s, timeout=30, triggered_at=datetime(2026, 11, 4, 9, 0, 0))
+        assert out.ok is False
+        assert out.kind == "employee"
+        assert out.payload["error_code"] == "EMPLOYEE_NOT_FOUND"
+        assert out.payload["employee_id"] == "deleted-ghost"
+        assert "deleted-ghost" in out.error
+
+    def test_原生员工调度注入无人值守环境并渲染动态标题(self, isolated_emp, monkeypatch):
+        from types import SimpleNamespace
+
+        from frago.agent_driver import driver as driver_mod
+        from frago.agent_driver import kernel_backend as kb_mod
+
+        monkeypatch.setattr(driver_mod, "runs_on_kernel", lambda k: k == "coreagent")
+        monkeypatch.setattr(kb_mod, "new_session_id", lambda: "core_emp_sched_native_01")
+        captured: dict[str, object] = {}
+
+        def fake_run_turn(prompt, **kwargs):
+            captured["prompt"] = prompt
+            captured["cwd"] = kwargs.get("cwd")
+            captured["env"] = dict(kwargs.get("env") or {})
+            return SimpleNamespace(status="completed", text="巡检完毕：一切正常")
+
+        monkeypatch.setattr(kb_mod, "run_turn", fake_run_turn)
+
+        s = {
+            "id": "sch_emp_ok",
+            "name": "每日巡检",
+            "kind": "employee",
+            "employee_id": "demo-emp",
+            "prompt": "检查业务底账",
+            "session_title_template": "[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+        }
+        out = ex.execute_employee(
+            s,
+            timeout=60,
+            triggered_at=datetime(2026, 11, 4, 9, 0, 0),
+            seq=5,
+        )
+        assert out.ok is True
+        assert out.kind == "employee"
+        assert out.session_id == "core_emp_sched_native_01"
+        assert out.session_title == "[11-04 周三] 示例巡检专员 · 每日巡检 #5"
+        assert "巡检完毕" in out.stdout
+        assert captured["cwd"] == str(isolated_emp["cwd"])
+        env = captured["env"]
+        assert env["FRAGO_SESSION_ORIGIN"] == "schedule"
+        assert env["FRAGO_UNATTENDED"] == "1"
+        assert env["FRAGO_STOP_CHECK"] == "off"
+        assert env["FRAGO_REVIEW"] == "off"
+        assert env["FRAGO_AGENT_ROLE"] == "employee"
+        assert env["FRAGO_EMPLOYEE_ID"] == "demo-emp"
+        assert "<frago-employee" in str(captured["prompt"])
+
+        rec = isolated_emp["store"].get("core_emp_sched_native_01")
+        assert rec is not None
+        assert rec.origin == "schedule"
+        assert rec.employee_id == "demo-emp"
+        assert rec.lifecycle_state == "completed"
+
+    def test_多跳等待屏障等待未结子派发收口后才结束(self, isolated_emp, monkeypatch):
+        import threading
+        import time as time_mod
+        from types import SimpleNamespace
+
+        from frago.agent_driver import driver as driver_mod
+        from frago.agent_driver import kernel_backend as kb_mod
+        from frago.session import async_dispatch
+
+        monkeypatch.setattr(driver_mod, "runs_on_kernel", lambda k: k == "coreagent")
+        monkeypatch.setattr(kb_mod, "new_session_id", lambda: "core_emp_barrier_01")
+        monkeypatch.setattr(async_dispatch, "_extract_latest_assistant_output", lambda _sid: "")
+
+        def fake_run_turn(_prompt, **_kwargs):
+            job = async_dispatch.AsyncDispatchJob(
+                job_id="job_child_barrier_01",
+                kind="worker",
+                mode="new",
+                caller_session_id="core_emp_barrier_01",
+                caller_employee_id="demo-emp",
+                caller_cwd=str(isolated_emp["cwd"]),
+                target_session_id="core_child_worker_01",
+                target_name="子任务",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(isolated_emp["cwd"]),
+                prompt="子任务",
+                task_summary="子任务",
+                status="running",
+            )
+            async_dispatch.save_dispatch_job(job)
+
+            def settle_later():
+                time_mod.sleep(0.25)
+                job.status = "completed"
+                job.delivery_state = "delivered"
+                job.output = "子 Worker 已完成数据汇总"
+                async_dispatch.save_dispatch_job(job)
+
+            threading.Thread(target=settle_later, daemon=True).start()
+            return SimpleNamespace(status="completed", text="已派发子 worker 处理")
+
+        monkeypatch.setattr(kb_mod, "run_turn", fake_run_turn)
+
+        s = {
+            "id": "sch_emp_barrier",
+            "name": "带子派发的任务",
+            "kind": "employee",
+            "employee_id": "demo-emp",
+            "prompt": "派发子任务并汇报",
+        }
+        out = ex.execute_employee(s, timeout=5, triggered_at=datetime(2026, 11, 4, 10, 0, 0))
+        assert out.ok is True
+        assert "子 Worker 已完成数据汇总" in out.stdout
+
+    def test_超时强杀连带作废未结子派发并终止子会话(self, isolated_emp, monkeypatch):
+        from types import SimpleNamespace
+
+        from frago.agent_driver import driver as driver_mod
+        from frago.agent_driver import kernel_backend as kb_mod
+        from frago.server.services import coreagent_runner, tmux_sessions_service
+        from frago.session import async_dispatch
+
+        monkeypatch.setattr(driver_mod, "runs_on_kernel", lambda k: k == "coreagent")
+        monkeypatch.setattr(kb_mod, "new_session_id", lambda: "core_emp_timeout_01")
+
+        stopped_sids: list[str] = []
+        closed_tmux: list[str] = []
+        monkeypatch.setattr(coreagent_runner, "stop", lambda sid, by="": stopped_sids.append(sid))
+        monkeypatch.setattr(tmux_sessions_service, "close_sessions", lambda names: closed_tmux.extend(names))
+
+        def fake_run_turn(_prompt, **_kwargs):
+            job = async_dispatch.AsyncDispatchJob(
+                job_id="job_child_hang_01",
+                kind="worker",
+                mode="new",
+                caller_session_id="core_emp_timeout_01",
+                caller_employee_id="demo-emp",
+                caller_cwd=str(isolated_emp["cwd"]),
+                target_session_id="core_child_hang_01",
+                target_name="卡住子任务",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(isolated_emp["cwd"]),
+                prompt="永不结束的子任务",
+                task_summary="永不结束的子任务",
+                status="running",
+            )
+            async_dispatch.save_dispatch_job(job)
+            return SimpleNamespace(status="completed", text="首轮派发完成")
+
+        monkeypatch.setattr(kb_mod, "run_turn", fake_run_turn)
+
+        s = {
+            "id": "sch_emp_timeout",
+            "name": "超时任务",
+            "kind": "employee",
+            "employee_id": "demo-emp",
+            "prompt": "跑一个会卡住的子派发",
+        }
+        out = ex.execute_employee(s, timeout=1, triggered_at=datetime(2026, 11, 4, 11, 0, 0))
+        assert out.ok is False
+        assert out.payload.get("error_code") == "SCHEDULE_TIMEOUT"
+        assert "core_emp_timeout_01" in stopped_sids
+        assert "core_child_hang_01" in stopped_sids
+        assert "frago-agent-core_emp_timeout_01" in closed_tmux
+        assert "frago-agent-core_child_hang_01" in closed_tmux
+
+        jobs = async_dispatch.list_dispatch_jobs(caller_session_id="core_emp_timeout_01", active_only=False)
+        assert len(jobs) == 1
+        assert jobs[0].status == "superseded"
+        assert isolated_emp["store"].get("core_emp_timeout_01").lifecycle_state == "error"
+
+

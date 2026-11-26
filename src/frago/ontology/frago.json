@@ -970,11 +970,14 @@
         "pillar": "5. 边界",
         "rigidity": "+R",
         "mutability": "versioned_immutable",
+        "allowed_target_kinds": ["command", "recipe", "agent_prompt", "employee"],
         "current_code_locations": [
           "src/frago/recipes/schedule.py",
-          "src/frago/cli/schedule_commands.py"
+          "src/frago/cli/schedule_commands.py",
+          "src/frago/server/services/scheduler_service.py",
+          "src/frago/server/services/schedule_executor.py"
         ],
-        "description": "定时任务规格定义（frago schedule）：规定 cron 表达式、执行形态（命令直跑 / 配方直跑 / 自然语言交主控）及通知收敛条件（--notify-on change）。"
+        "description": "定时任务规格定义（frago schedule）：规定 cron/interval 触发规则、执行形态闭集（command / recipe / agent_prompt / employee）、绑定数字员工岗位资源（EmployeePostResource）及动态会话标题模板（session_title_template）与通知收敛条件（--notify-on change）。"
       },
       {
         "class_id": "RunDomainDictSpec",
@@ -1129,7 +1132,7 @@
           "target_kind in {'command', 'recipe'}"
         ]
       },
-      "description": "公理驱动分类：目标为确定性命令或配方的定时规格，由 frago 调度器零 Token 直接执行，不经过 PrimarySchedulerRole（PA）。"
+      "description": "公理驱动分类：目标为确定性命令或配方的定时规格，由 frago 调度器零 Token 直接执行；agent_prompt 路由至 PrimarySchedulerRole（PA），employee 原生绑定 EmployeePostResource 并路由至 DomainEmployeeRole 发起 AgentSessionProcess。"
     }
   ],
   "kinetic_action_contracts": [

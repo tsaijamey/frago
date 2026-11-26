@@ -1014,10 +1014,10 @@ STANDARD_CLI_COMMANDS: dict[str, CliCommandSpec] = {
         command_path="frago.schedule.trigger",
         mutates_state=True,
         underlying_action_id="execute_state_mutating_operation",
-        initiator_domain="PrimarySchedulerRole | HumanPrincipal",
+        initiator_domain="PrimarySchedulerRole | DomainEmployeeRole | HumanPrincipal",
         target_range="ScheduleRuleSpec",
         initiates_process_class="RecipeExecutionProcess",
-        description="按定时规格触发命令直跑、配方直跑或主控自然语言调度。",
+        description="按定时规格触发命令直跑、配方直跑、主控自然语言调度或原生绑定数字员工执行（支持动态会话标题渲染）。",
     ),
     "frago.remote.dispatch": CliCommandSpec(
         command_path="frago.remote.dispatch",
@@ -1313,10 +1313,11 @@ class ScheduleDispatchDecision:
     zero_token_direct: bool
     route: str
     trigger_event: Event
+    employee_post_id: str | None = None
 
 
 class ScheduleDispatchRuntime:
-    """Evaluates `ScheduleRuleSpec` via `DirectExecutableSchedule` to route zero-token vs. PA turns."""
+    """Evaluates `ScheduleRuleSpec` via `DirectExecutableSchedule` to route zero-token, PA, or domain employee turns."""
 
     def __init__(
         self,
@@ -1341,15 +1342,33 @@ class ScheduleDispatchRuntime:
         """Classify `schedule_spec` and emit an immutable `ScheduledTriggerEvent`."""
         self._graph.register_entity(schedule_spec)
         is_direct = self._direct_cls.matches(schedule_spec, self._graph)
-        route = "direct_executor" if is_direct else "primary_scheduler"
+        employee_post_id: str | None = None
+        if is_direct:
+            route = "direct_executor"
+        elif schedule_spec.norm_id.startswith("employee:"):
+            route = "domain_employee"
+            for dep in self._graph.query_targets(
+                schedule_spec.ontological_id(), "depends_on_module"
+            ):
+                if getattr(dep, "domain_class_id", "") == "EmployeePostResource":
+                    oid = dep.ontological_id()
+                    employee_post_id = oid.removeprefix("post:")
+                    break
+        else:
+            route = "primary_scheduler"
+
+        payload: dict[str, Any] = {
+            "route": route,
+            "zero_token_direct": is_direct,
+        }
+        if employee_post_id:
+            payload["employee_post_id"] = employee_post_id
+
         evt = self._registry.create(
             "ScheduledTriggerEvent",
             event_type=trigger_type,
             causal_source_id=schedule_spec.ontological_id(),
-            payload={
-                "route": route,
-                "zero_token_direct": is_direct,
-            },
+            payload=payload,
         )
         assert isinstance(evt, Event)
         self._graph.register_entity(evt)
@@ -1358,6 +1377,7 @@ class ScheduleDispatchRuntime:
             zero_token_direct=is_direct,
             route=route,
             trigger_event=evt,
+            employee_post_id=employee_post_id,
         )
 
 

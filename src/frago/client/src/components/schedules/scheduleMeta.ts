@@ -149,3 +149,134 @@ export function notifyText(s: ScheduleItem, t: TFunction): string {
     to: s.notify.to ?? '—',
   });
 }
+
+export const DEFAULT_EMPLOYEE_TITLE_TEMPLATE =
+  '[{date} {weekday}] {employee} · {schedule_name}';
+
+export const TEMPLATE_VARIABLES = [
+  '{date}',
+  '{weekday}',
+  '{employee}',
+  '{schedule_name}',
+  '#{seq}',
+] as const;
+
+const EMP_PALETTE = ['ocean', 'violet', 'amber', 'coral', 'cyan', 'rose', 'plum', 'slate'] as const;
+
+export function empColorToken(empId?: string | null, explicitColor?: string | null): string {
+  if (explicitColor && (EMP_PALETTE as readonly string[]).includes(explicitColor)) {
+    return explicitColor;
+  }
+  const key = (empId ?? '').trim();
+  if (!key) return 'ocean';
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  return EMP_PALETTE[hash % EMP_PALETTE.length];
+}
+
+export function employeeInitials(empId?: string | null, title?: string | null): string {
+  const id = (empId ?? '').trim();
+  if (id) {
+    const clean = id.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '');
+    if (clean.length >= 2) return clean.slice(0, 2).toUpperCase();
+    return id.slice(0, 2).toUpperCase();
+  }
+  const t = (title ?? '').trim();
+  return t ? t.slice(0, 2).toUpperCase() : 'EM';
+}
+
+const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const WEEKDAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function estimateNextDates(opts: {
+  cron?: string | null;
+  intervalSeconds?: number | null;
+  count: number;
+  now: Date;
+}): Date[] {
+  const { cron, intervalSeconds, count, now } = opts;
+  const out: Date[] = [];
+
+  if (intervalSeconds && intervalSeconds > 0) {
+    for (let i = 1; i <= count; i += 1) {
+      out.push(new Date(now.getTime() + intervalSeconds * 1000 * i));
+    }
+    return out;
+  }
+
+  const parts = (cron ?? '').trim().split(/\s+/);
+  const mi = parts.length === 5 && /^\d{1,2}$/.test(parts[0]) ? Number(parts[0]) : 0;
+  const hrRaw = parts.length === 5 ? parts[1].split(',')[0] : '9';
+  const hr = /^\d{1,2}$/.test(hrRaw) ? Number(hrRaw) : 9;
+  const dow = parts.length === 5 ? parts[4] : '*';
+  const weekdaysOnly = dow === '1-5';
+  const specificDow = /^[0-7]$/.test(dow) ? Number(dow) % 7 : null;
+
+  const cursor = new Date(now.getTime());
+  cursor.setSeconds(0, 0);
+  cursor.setHours(Math.min(23, Math.max(0, hr)), Math.min(59, Math.max(0, mi)), 0, 0);
+  if (cursor.getTime() <= now.getTime()) {
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let guard = 0;
+  while (out.length < count && guard < 60) {
+    guard += 1;
+    const d = cursor.getDay();
+    const ok =
+      (weekdaysOnly && d >= 1 && d <= 5) ||
+      (specificDow !== null && d === specificDow) ||
+      (!weekdaysOnly && specificDow === null);
+    if (ok) {
+      out.push(new Date(cursor.getTime()));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+export function renderTitleTemplatePreview(opts: {
+  template: string;
+  scheduleName: string;
+  employeeLabel: string;
+  cron?: string | null;
+  intervalSeconds?: number | null;
+  runCount?: number;
+  count?: number;
+  now?: Date;
+  isZh?: boolean;
+}): { seq: number; triggered_at: string; session_title: string }[] {
+  const count = opts.count ?? 3;
+  const baseSeq = (opts.runCount ?? 0) + 1;
+  const tpl = opts.template.trim() || DEFAULT_EMPLOYEE_TITLE_TEMPLATE;
+  const dates = estimateNextDates({
+    cron: opts.cron,
+    intervalSeconds: opts.intervalSeconds,
+    count,
+    now: opts.now ?? new Date(),
+  });
+
+  return dates.map((d, idx) => {
+    const yyyy = d.getFullYear();
+    const mm = pad2(d.getMonth() + 1);
+    const dd = pad2(d.getDate());
+    const hh = pad2(d.getHours());
+    const mi = pad2(d.getMinutes());
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    const weekday = (opts.isZh ?? true) ? WEEKDAYS_ZH[d.getDay()] : WEEKDAYS_EN[d.getDay()];
+    const seq = baseSeq + idx;
+    const session_title = tpl
+      .replace(/\{date\}/g, dateStr)
+      .replace(/\{weekday\}/g, weekday)
+      .replace(/\{employee\}/g, opts.employeeLabel || 'employee')
+      .replace(/\{schedule_name\}/g, opts.scheduleName || 'schedule')
+      .replace(/\{seq\}/g, String(seq));
+    return {
+      seq,
+      triggered_at: `${dateStr} ${hh}:${mi}`,
+      session_title,
+    };
+  });
+}

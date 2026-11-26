@@ -59,17 +59,10 @@ from frago.ontology.metamodel import (
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
 from frago.ontology.relations import OntologyGraph
 from frago.ontology.runtime import (
-    GOVERNANCE_PROFILE_MINIMAL_GUARDRAIL,
-    GOVERNANCE_PROFILE_WORKBENCH_ORCHESTRATED,
-    SESSION_VALID_DELIVERY_SURFACES,
     SESSION_VALID_KERNELS,
     AgentFivePartDecomposition,
-    DeliverySurfaceState,
-    GovernanceProfile,
     compute_desktop_content_id,
     decompose_agent_session,
-    derive_delivery_surface_state,
-    derive_governance_profile_id,
     normalize_session_lifecycle_state,
     normalize_session_origin,
 )
@@ -1285,13 +1278,15 @@ def project_schedule_rule_dict(
     registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
     graph: OntologyGraph | None = None,
 ) -> Specification:
-    """Project a `frago schedule` entry into `ScheduleRuleSpec` with `target_kind` metadata."""
+    """Project a `frago schedule` entry into `ScheduleRuleSpec` with `target_kind` and optional `employee_id` binding."""
     g = graph if graph is not None else OntologyGraph()
     rule_id = str(raw_schedule.get("id", "")).strip()
     target_kind = str(raw_schedule.get("target_kind", "")).strip()
-    if not rule_id or target_kind not in {"command", "recipe", "agent_prompt"}:
+    allowed_kinds = {"command", "recipe", "agent_prompt", "employee"}
+    if not rule_id or target_kind not in allowed_kinds:
         raise ProjectionValidationError(
-            "ScheduleRuleSpec requires non-empty 'id' and 'target_kind' in {'command', 'recipe', 'agent_prompt'}."
+            "ScheduleRuleSpec requires non-empty 'id' and 'target_kind' in "
+            "{'command', 'recipe', 'agent_prompt', 'employee'}."
         )
 
     spec = registry.create(
@@ -1300,6 +1295,30 @@ def project_schedule_rule_dict(
     )
     assert isinstance(spec, Specification)
     g.register_entity(spec)
+
+    if target_kind == "employee":
+        employee_id = str(raw_schedule.get("employee_id", "")).strip()
+        if not employee_id:
+            raise ProjectionValidationError(
+                "ScheduleRuleSpec with target_kind='employee' requires a non-empty 'employee_id'."
+            )
+        post_uid = employee_id if employee_id.startswith("post:") else f"post:{employee_id}"
+        existing_post = g.get_entity(post_uid)
+        if isinstance(existing_post, Resource):
+            post_res = existing_post
+        else:
+            created_post = registry.create("EmployeePostResource", uid=post_uid)
+            assert isinstance(created_post, Resource)
+            post_res = created_post
+        g.link(spec, "depends_on_module", post_res)
+        for ent in g.entities():
+            if (
+                isinstance(ent, Role)
+                and getattr(ent, "domain_class_id", "") == "DomainEmployeeRole"
+                and getattr(ent, "context_id", "") == post_uid
+            ):
+                g.link(ent, "governed_by", spec)
+
     return spec
 
 

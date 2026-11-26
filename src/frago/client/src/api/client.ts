@@ -759,10 +759,12 @@ export interface ScheduleHistoryEntry {
   notify_reason?: string | null;
   task_id?: string | null;
   /**
-   * 自然语言任务这一趟 CoreAgent 开的那场会话。会话页据此摆出整场过程——中途执行了
+   * 自然语言或数字员工任务这一趟开的那场会话。会话页据此摆出整场过程——中途执行了
    * 哪些命令、哪些被拦下。命令与配方不起 agent，恒为空。
    */
   session_id?: string | null;
+  /** 动态生成的会话标题（例如 `[2026-11-25 周三] stock · 每日盘前巡检`）。 */
+  session_title?: string | null;
   /** CoreAgent 最后答的那句话。过长会在服务端截断。 */
   answer?: string | null;
 }
@@ -771,8 +773,14 @@ export interface ScheduleHistoryEntry {
 export interface ScheduleItem {
   id: string;
   name: string;
-  /** command / recipe 由 frago 自己执行；prompt 交给 PA。 */
-  kind: 'command' | 'recipe' | 'prompt' | string;
+  /** employee 为原生数字员工托管；command / recipe / prompt 为无状态执行原语。 */
+  kind: 'employee' | 'command' | 'recipe' | 'prompt' | string;
+  employee_id?: string | null;
+  employee_title?: string | null;
+  employee_kernel?: string | null;
+  employee_cwd?: string | null;
+  employee_missing?: boolean;
+  session_title_template?: string | null;
   prompt: string | null;
   recipe: string | null;
   command: string | null;
@@ -796,7 +804,8 @@ export interface ScheduleItem {
   last_status: string | null;
   last_success_at: string | null;
   last_session_id?: string | null;
-  last_run?: { session_id?: string | null; [key: string]: unknown } | null;
+  last_session_title?: string | null;
+  last_run?: { session_id?: string | null; session_title?: string | null; [key: string]: unknown } | null;
   consecutive_failures: number;
   run_count: number;
   notify: { on: string; to: string | null; context: Record<string, unknown> };
@@ -806,6 +815,50 @@ export interface ScheduleItem {
   next_run_at: string | null;
   /** 上一次触发还没结束。 */
   running: boolean;
+}
+
+export interface ScheduleWritePayload {
+  name: string;
+  kind: 'employee' | 'recipe' | 'command' | 'prompt' | string;
+  employee_id?: string | null;
+  session_title_template?: string | null;
+  prompt?: string | null;
+  recipe?: string | null;
+  command?: string | null;
+  cwd?: string | null;
+  instructions?: string | null;
+  allowed_tools?: string[];
+  disallowed_tools?: string[];
+  params?: Record<string, unknown>;
+  interval_seconds?: number | null;
+  cron?: string | null;
+  overlap?: string;
+  timeout?: number;
+  start_at?: string | null;
+  end_at?: string | null;
+  notify?: { on: string; to: string | null; context?: Record<string, unknown> };
+  enabled?: boolean;
+}
+
+export interface SchedulePreviewPayload {
+  name: string;
+  kind: string;
+  employee_id?: string | null;
+  session_title_template?: string | null;
+  cron?: string | null;
+  interval_seconds?: number | null;
+  run_count?: number;
+  count?: number;
+}
+
+export interface SchedulePreviewRun {
+  seq: number;
+  triggered_at: string;
+  session_title: string;
+}
+
+export interface SchedulePreviewResponse {
+  runs: SchedulePreviewRun[];
 }
 
 export interface ScheduleListResponse {
@@ -831,6 +884,36 @@ export interface ScheduleComposeResponse {
 
 export async function getSchedules(): Promise<ScheduleListResponse> {
   return fetchApi<ScheduleListResponse>('/schedules');
+}
+
+export async function getSchedule(id: string): Promise<ScheduleItem> {
+  return fetchApi<ScheduleItem>(`/schedules/${encodeURIComponent(id)}`);
+}
+
+export async function createSchedule(payload: ScheduleWritePayload): Promise<ScheduleItem> {
+  return fetchApi<ScheduleItem>('/schedules/create', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSchedule(
+  id: string,
+  payload: ScheduleWritePayload
+): Promise<ScheduleItem> {
+  return fetchApi<ScheduleItem>(`/schedules/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function previewScheduleRuns(
+  payload: SchedulePreviewPayload
+): Promise<SchedulePreviewResponse> {
+  return fetchApi<SchedulePreviewResponse>('/schedules/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function toggleSchedule(id: string): Promise<ScheduleItem> {

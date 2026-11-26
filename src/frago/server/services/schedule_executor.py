@@ -37,6 +37,7 @@ notify recipe，飞书回推走的就是这条路）。
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -46,6 +47,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -66,7 +68,9 @@ FAILURE_ESCALATION_POINTS = (1, 2, 5, 10, 20, 50, 100)
 STALENESS_PERIODS = 3
 
 VALID_NOTIFY_ON = ("change", "always", "failure", "never")
-VALID_KINDS = ("recipe", "command", "prompt")
+VALID_KINDS = ("recipe", "command", "prompt", "employee")
+DEFAULT_EMPLOYEE_TITLE_TEMPLATE = "[{date} {weekday}] {employee} · {schedule_name}"
+_WEEKDAYS_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 _SESSION_ID_PATTERNS = (
     re.compile(r"(?:\[session_id=|\(session=|session_id:\s*|Session ID:\s*)([a-zA-Z0-9_\-]+)"),
@@ -102,9 +106,11 @@ class RunOutcome:
     # 用来判断「跟上次比有没有变」的指纹
     digest: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
-    # CoreAgent 这一趟的会话编号。执行记录存下它，人从那条记录就能点进这一场，看它中途
-    # 执行了哪些命令、哪些被拦下。只有自然语言任务有；命令与配方不起 agent，恒为空。
+    # CoreAgent / 数字员工这一趟的会话编号。执行记录存下它，人从那条记录就能点进这一场，
+    # 看它中途执行了哪些命令、哪些被拦下。
     session_id: str = ""
+    # 本轮运行实际渲染出的动态会话标题（与左栏会话清单及执行历史同步展示）。
+    session_title: str = ""
 
 
 # --- 执行 ------------------------------------------------------------------
@@ -656,10 +662,529 @@ def _deliver_desktop(schedule: dict[str, Any], text: str) -> dict[str, Any]:
     return {"status": "error", "target": "desktop", "error": "本机没有可用的系统通知命令"}
 
 
+def _coerce_dt(value: datetime | str | None) -> datetime:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.strip()).replace(tzinfo=None)
+        except ValueError:
+            pass
+    return datetime.now()
+
+
+def _resolve_employee_label(employee_id: str, employee_title: str | None = None) -> str:
+    if employee_title and employee_title.strip():
+        return employee_title.strip()
+    clean_id = employee_id.strip()
+    if not clean_id:
+        return ""
+    try:
+        from frago.employee.store import get_post
+
+        rec = get_post(clean_id)
+        if rec is not None and getattr(rec, "title", ""):
+            return str(rec.title).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return f"@{clean_id}"
+
+
+def render_session_title(
+    schedule: dict[str, Any],
+    *,
+    triggered_at: datetime | str | None = None,
+    seq: int | None = None,
+    employee_title: str | None = None,
+) -> str:
+    """按模板渲染本次定时触发对应的会话标题。
+
+    支持变量：{date}（MM-DD）、{weekday}（周几）、{employee}（员工岗位名）、
+    {schedule_name}（定时任务名）、{seq}（累计序号，如配合 #{seq} 使用）。
+    """
+    dt = _coerce_dt(triggered_at)
+    emp_id = str(schedule.get("employee_id") or "").strip()
+    kind = str(
+        schedule.get("kind")
+        or (
+            "employee"
+            if emp_id
+            else "recipe"
+            if (schedule.get("recipe") or schedule.get("recipe_name"))
+            else "command"
+            if schedule.get("command")
+            else "prompt"
+        )
+    )
+    name = str(schedule.get("name") or schedule.get("id") or "").strip()
+    tpl = str(schedule.get("session_title_template") or "").strip()
+    if not tpl:
+        if kind == "employee":
+            tpl = DEFAULT_EMPLOYEE_TITLE_TEMPLATE
+        else:
+            return f"定时任务：{name}" if name else "定时任务"
+
+    if seq is None:
+        seq_val = max(
+            int(schedule.get("run_count") or 0),
+            len(schedule.get("history") or []) + 1,
+        )
+    else:
+        seq_val = max(1, int(seq))
+
+    emp_label = _resolve_employee_label(emp_id, employee_title) if emp_id else (name or kind)
+    tokens = {
+        "{date}": dt.strftime("%m-%d"),
+        "{weekday}": _WEEKDAYS_ZH[dt.weekday()],
+        "{employee}": emp_label,
+        "{schedule_name}": name or str(schedule.get("id") or ""),
+        "{seq}": str(seq_val),
+    }
+    rendered = tpl
+    for k, v in tokens.items():
+        rendered = rendered.replace(k, v)
+    return " ".join(rendered.split())[:120]
+
+
+def _resolve_employee_workdir(record: Any, override_cwd: str | None) -> str:
+    raw = str(override_cwd or getattr(record, "cwd", "") or "").strip()
+    if not raw:
+        fallback = Path.home() / ".frago"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+    expanded = str(Path(raw).expanduser())
+    cwd_path = Path(expanded)
+    frago_root = (Path.home() / ".frago").resolve()
+    with contextlib.suppress(OSError):
+        resolved = cwd_path.resolve()
+        if resolved == frago_root or frago_root in resolved.parents:
+            cwd_path.mkdir(parents=True, exist_ok=True)
+    return expanded
+
+
+def _build_employee_schedule_prompt(
+    record: Any,
+    task_prompt: str,
+    *,
+    schedule_id: str = "",
+) -> str:
+    from frago.employee.service import EmployeeOntologyService
+    from frago.skills.skill_prompt import embed_skills, load_skills
+
+    svc = EmployeeOntologyService()
+    context_block = svc.build_business_context_block(record.member_post_id)
+    body = (task_prompt or "").strip() or "请按你的岗位职责执行例行巡检并汇报关键结果。"
+    prompt = (
+        f"{context_block}\n\n"
+        f"【定时任务无人值守触发（来源: schedule:{schedule_id or 'native'}）】\n"
+        f"{body}\n\n"
+        "执行要求：\n"
+        "1. 基于你管辖的业务数据底账、知识域、配方工具链与近期会话脉络完成本次任务。\n"
+        "2. 当前处于无人值守定时触发模式（FRAGO_UNATTENDED=1），若遇必须人类授权的高危动作或缺失依据，"
+        "不得阻塞等待，请明确记录待拍板事项后汇总交付。\n"
+        "3. 若需调配你名下的配方或普通 worker，可先行执行并等待其完结后再汇总最终结论。"
+    )
+    effective_skills = list(getattr(record, "skills", None) or [])
+    if effective_skills:
+        with contextlib.suppress(Exception):
+            loaded = load_skills(effective_skills)
+            prompt = embed_skills(prompt, loaded, user_text=body)
+    return prompt
+
+
+def _safe_session_service() -> Any | None:
+    """返回安全的 SessionOntologyService：单测未替换默认路径时不污染本机真实台账。"""
+    try:
+        from frago.session.service import get_default_session_service
+        from frago.session.store import DEFAULT_SESSION_STORE_PATH
+
+        onto_svc = get_default_session_service()
+        if os.environ.get("PYTEST_CURRENT_TEST") and onto_svc.store.store_path == DEFAULT_SESSION_STORE_PATH:
+            return None
+        return onto_svc
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _set_session_title_safe(session_id: str, title: str, agent_kernel: str) -> None:
+    if not session_id or not title:
+        return
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("FRAGO_SCHEDULE_WRITE_TITLES") != "1":
+        return
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.driver import runs_on_kernel
+        from frago.server.services import workbench_titles
+
+        family = "coreagent" if runs_on_kernel(agent_kernel) else agent_kernel
+        workbench_titles.set_title(session_id, title, family=family)
+
+
+def _wait_for_employee_children(
+    session_id: str,
+    *,
+    deadline: float,
+    poll_interval_s: float = 0.1,
+) -> tuple[bool, str | None]:
+    """多跳等待屏障：若员工在首轮里异步派发了子 worker，等到所有未结子派发收口。
+
+    Returns:
+        ``(settled, cascaded_text)``。若到达 ``deadline`` 时仍有未结子派发或队列忙碌，
+        返回 ``(False, None)``，交由超时强杀收尾链路处理。
+    """
+    from frago.session import async_dispatch
+
+    bound_sid = async_dispatch._resolve_bound_session_id(session_id)[0]
+    target_sid = bound_sid or session_id
+
+    has_pending = async_dispatch.has_pending_async_work(target_sid)
+    all_jobs = async_dispatch.list_dispatch_jobs(caller_session_id=target_sid, active_only=False)
+    if not has_pending and not all_jobs:
+        return True, None
+
+    from frago.server.services import workbench_queue
+
+    def _is_unsettled() -> bool:
+        if async_dispatch.has_pending_async_work(target_sid):
+            return True
+        queued = False
+        with contextlib.suppress(Exception):
+            queued = len(workbench_queue.list_queue(target_sid)) > 0
+        busy = False
+        with contextlib.suppress(Exception):
+            busy = workbench_queue.is_session_busy(target_sid)
+        return queued or busy
+
+    idle_streak = 0
+    while time.monotonic() < deadline:
+        if not _is_unsettled():
+            idle_streak += 1
+            if idle_streak >= 2:
+                break
+        else:
+            idle_streak = 0
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_interval_s, remaining))
+
+    if _is_unsettled():
+        return False, None
+
+    latest_text = async_dispatch._extract_latest_assistant_output(target_sid)
+    if latest_text:
+        return True, latest_text
+
+    child_jobs = async_dispatch.list_dispatch_jobs(caller_session_id=target_sid, active_only=False)
+    child_outputs = [j.output.strip() for j in child_jobs if j.output and j.output.strip()]
+    if child_outputs:
+        return True, "\n\n".join(child_outputs)
+    return True, None
+
+
+def _cleanup_employee_timeout(
+    session_id: str,
+    agent_kernel: str,
+    timeout: int,
+    onto_svc: Any,
+    *,
+    summary: str,
+) -> None:
+    """超时强杀连带收尾：清理员工会话进程、并作废/强杀所有未结子派发，防止假绿灯与僵尸子会话。"""
+    from frago.agent_driver.driver import runs_on_kernel
+    from frago.session import async_dispatch
+
+    with contextlib.suppress(Exception):
+        if runs_on_kernel(agent_kernel):
+            from frago.server.services import coreagent_runner
+
+            coreagent_runner.stop(session_id, by="schedule_timeout")
+    with contextlib.suppress(Exception):
+        from frago.server.services import tmux_sessions_service
+
+        tmux_sessions_service.close_sessions([f"frago-agent-{session_id}"])
+
+    caller_ids = [session_id]
+    with contextlib.suppress(Exception):
+        bound_sid = async_dispatch._resolve_bound_session_id(session_id)[0]
+        if bound_sid and bound_sid not in caller_ids:
+            caller_ids.append(bound_sid)
+
+    seen_job_ids: set[str] = set()
+    for caller_sid in caller_ids:
+        with contextlib.suppress(Exception):
+            active_jobs = async_dispatch.list_dispatch_jobs(caller_session_id=caller_sid, active_only=True)
+            for job in active_jobs:
+                if job.job_id in seen_job_ids:
+                    continue
+                seen_job_ids.add(job.job_id)
+                target_sid = str(getattr(job, "target_session_id", "") or "").strip()
+                if target_sid:
+                    with contextlib.suppress(Exception):
+                        from frago.server.services import coreagent_runner
+
+                        coreagent_runner.stop(target_sid, by="schedule_timeout")
+                    with contextlib.suppress(Exception):
+                        from frago.server.services import tmux_sessions_service
+
+                        tmux_sessions_service.close_sessions([f"frago-agent-{target_sid}"])
+                    _terminate_schedule_session(onto_svc, target_sid, ok=False, summary=summary)
+                with contextlib.suppress(Exception):
+                    async_dispatch._mark_job_superseded(
+                        job,
+                        superseded_by=f"schedule_timeout:{timeout}s",
+                    )
+
+    _terminate_schedule_session(onto_svc, session_id, ok=False, summary=summary)
+
+
+def execute_employee(
+    schedule: dict[str, Any],
+    *,
+    timeout: int = 7200,
+    triggered_at: datetime | str | None = None,
+    seq: int | None = None,
+) -> RunOutcome:
+    """以原生绑定方式调度一位数字员工完成本轮任务。
+
+    - 解析 `EmployeePostResource`（`employee_id`），缺失时返回结构化失败提示（不崩溃）；
+    - 自动带入员工 `cwd`、`<frago-employee>` 业务语境与 `skills`；
+    - 注入 `FRAGO_SESSION_ORIGIN=schedule`、`FRAGO_UNATTENDED=1`、`FRAGO_STOP_CHECK=off`、`FRAGO_REVIEW=off`
+      及 `FRAGO_AGENT_ROLE=employee`、`FRAGO_EMPLOYEE_ID`；
+    - 渲染动态会话标题并写入会话标题台账；
+    - 经过多跳等待屏障，确保首轮异步派发的所有子 worker 全部收口；
+    - 任一阶段超时均强杀员工与未结子派发，返回 `SCHEDULE_TIMEOUT` 失败结果。
+    """
+    started = time.monotonic()
+    employee_id = str(schedule.get("employee_id") or "").strip()
+    if not employee_id:
+        fallback_title = render_session_title(schedule, triggered_at=triggered_at, seq=seq)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error="定时任务未配置绑定的数字员工 ID（employee_id 为空）",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "EMPLOYEE_NOT_FOUND", "employee_id": ""},
+            session_title=fallback_title,
+        )
+
+    from frago.employee.store import get_post
+
+    record = get_post(employee_id)
+    if record is None:
+        fallback_title = render_session_title(
+            schedule,
+            triggered_at=triggered_at,
+            seq=seq,
+            employee_title=f"@{employee_id}",
+        )
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=f"绑定的数字员工 @{employee_id} 不存在或已被删除，请在任务详情中重新指派员工",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "EMPLOYEE_NOT_FOUND", "employee_id": employee_id},
+            session_title=fallback_title,
+        )
+
+    session_title = render_session_title(
+        schedule,
+        triggered_at=triggered_at,
+        seq=seq,
+        employee_title=record.title or f"@{record.member_post_id}",
+    )
+    agent_kernel = str(getattr(record, "agent_kernel", "") or "claude").strip().lower()
+    workdir = _resolve_employee_workdir(record, schedule.get("cwd"))
+    prompt = _build_employee_schedule_prompt(
+        record,
+        str(schedule.get("prompt") or ""),
+        schedule_id=str(schedule.get("id") or ""),
+    )
+
+    effective_timeout = max(1, int(timeout or 7200))
+    deadline = started + float(effective_timeout)
+    onto_svc = _safe_session_service()
+
+    from frago.agent_driver import SessionLauncher
+    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+
+    real_sid = ""
+    turn_status = "error"
+    answer_text = ""
+
+    base_env = {
+        "FRAGO_SESSION_ORIGIN": "schedule",
+        "FRAGO_UNATTENDED": "1",
+        "FRAGO_STOP_CHECK": "off",
+        "FRAGO_REVIEW": "off",
+        "FRAGO_AGENT_ROLE": "employee",
+        "FRAGO_EMPLOYEE_ID": record.member_post_id,
+    }
+
+    try:
+        if runs_on_kernel(agent_kernel):
+            from frago.agent_driver import kernel_backend
+
+            real_sid = kernel_backend.new_session_id()
+            base_env["FRAGO_SESSION_ID"] = real_sid
+            if onto_svc is not None:
+                with contextlib.suppress(Exception):
+                    onto_svc.launch_agent_session(
+                        session_id=real_sid,
+                        agent_kernel_id=agent_kernel,
+                        origin="schedule",
+                        initial_prompt=prompt[:240],
+                        is_worker=False,
+                        cwd=workdir,
+                        employee_id=record.member_post_id,
+                    )
+            _set_session_title_safe(real_sid, session_title, agent_kernel)
+            rem = max(0.1, deadline - time.monotonic())
+            turn = kernel_backend.run_turn(
+                prompt,
+                session_id=real_sid,
+                cwd=workdir,
+                timeout_s=rem,
+                env=base_env,
+            )
+            turn_status = str(turn.status or "ok")
+            answer_text = str(turn.text or "").strip()
+        else:
+            sid = str(uuid.uuid4())
+            real_sid = sid
+            rem = max(0.1, deadline - time.monotonic())
+            res = SessionLauncher().run(
+                prompt,
+                agent_type=agent_kernel,
+                session_id=sid,
+                native_session_id=False,
+                cwd=workdir,
+                env=base_env,
+                timeout_s=rem,
+            )
+            with contextlib.suppress(Exception):
+                from frago.agent_driver.transcript import write_turn
+
+                write_turn(sid, agent_kernel, workdir, prompt, res, source="schedule-employee")
+            with contextlib.suppress(Exception):
+                resolved = listed_session_id(agent_kernel, sid, native_session_id=False)
+                if resolved:
+                    real_sid = resolved
+            if onto_svc is not None:
+                with contextlib.suppress(Exception):
+                    onto_svc.launch_agent_session(
+                        session_id=real_sid,
+                        agent_kernel_id=agent_kernel,
+                        origin="schedule",
+                        initial_prompt=prompt[:240],
+                        is_worker=False,
+                        cwd=workdir,
+                        employee_id=record.member_post_id,
+                    )
+            _set_session_title_safe(real_sid, session_title, agent_kernel)
+            turn_status = str(res.status or "ok")
+            answer_text = str(res.text or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        err_msg = f"数字员工 @{employee_id} 执行异常：{exc}"[:NOTIFY_EXCERPT_LIMIT]
+        if real_sid:
+            _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=err_msg,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "EMPLOYEE_EXECUTION_ERROR", "employee_id": employee_id},
+            session_id=real_sid,
+            session_title=session_title,
+        )
+
+    if turn_status == "timeout":
+        err_msg = f"员工定时任务超时（{effective_timeout}s 未完成）"
+        _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=err_msg,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "SCHEDULE_TIMEOUT", "employee_id": employee_id, "session_id": real_sid},
+            session_id=real_sid,
+            session_title=session_title,
+        )
+
+    if turn_status in ("error", "failed"):
+        err_msg = (answer_text or f"数字员工 @{employee_id} 返回异常状态 {turn_status}")[:NOTIFY_EXCERPT_LIMIT]
+        _terminate_schedule_session(onto_svc, real_sid, ok=False, summary=err_msg)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=err_msg,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "EMPLOYEE_TURN_FAILED", "employee_id": employee_id, "status": turn_status},
+            session_id=real_sid,
+            session_title=session_title,
+        )
+
+    # 多跳等待屏障：若员工在首轮里异步派发了子 worker，必须等到所有未结子派发收口
+    settled, cascaded_text = _wait_for_employee_children(real_sid, deadline=deadline)
+    if not settled:
+        err_msg = f"员工定时任务超时（{effective_timeout}s 内未完成子派发收口）"
+        _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=err_msg,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "SCHEDULE_TIMEOUT", "employee_id": employee_id, "session_id": real_sid},
+            session_id=real_sid,
+            session_title=session_title,
+        )
+
+    final_text = (cascaded_text or answer_text).strip()
+    if not final_text:
+        err_msg = f"数字员工 @{employee_id} 本轮未返回有效答复"
+        _terminate_schedule_session(onto_svc, real_sid, ok=False, summary=err_msg)
+        return RunOutcome(
+            ok=False,
+            kind="employee",
+            exit_code=1,
+            error=err_msg,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            payload={"error_code": "EMPTY_OUTPUT", "employee_id": employee_id},
+            session_id=real_sid,
+            session_title=session_title,
+        )
+
+    _terminate_schedule_session(onto_svc, real_sid, ok=True, summary=final_text[:240])
+    return RunOutcome(
+        ok=True,
+        kind="employee",
+        exit_code=0,
+        stdout=final_text,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        digest=_digest(final_text),
+        payload={"employee_id": employee_id, "agent_kernel": agent_kernel},
+        session_id=real_sid,
+        session_title=session_title,
+    )
+
+
 async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
     """按 kind 执行。阻塞动作丢进线程，别把调度循环卡住。"""
-    kind = schedule.get("kind") or ("recipe" if schedule.get("recipe") else "prompt")
+    kind = schedule.get("kind") or (
+        "employee"
+        if schedule.get("employee_id")
+        else "recipe"
+        if schedule.get("recipe")
+        else "prompt"
+    )
     timeout = int(schedule.get("timeout") or 7200)
+    triggered_at = schedule.get("_triggered_at")
+    seq = schedule.get("_seq")
 
     if kind == "command":
         return await asyncio.to_thread(
@@ -669,12 +1194,20 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
         return await asyncio.to_thread(
             execute_recipe, schedule.get("recipe") or "", schedule.get("params") or {}, timeout,
         )
+    if kind == "employee":
+        return await asyncio.to_thread(
+            execute_employee,
+            schedule,
+            timeout=timeout,
+            triggered_at=triggered_at,
+            seq=seq,
+        )
     if kind == "prompt":
         from frago.server.services import schedule_pending as sp
         from frago.server.services import schedule_resume as sr
 
-        name = str(schedule.get("name") or "").strip()
         sid = str(schedule.get("id") or "")
+        title = render_session_title(schedule, triggered_at=triggered_at, seq=seq)
         # 上一趟没跑完就留下了一份续跑包：这一次摆到任务原文前面，别从零重来。
         # 上一趟挂着的拍板卡片同样摆到前面：人答了就照答复办，一直没人答就按推荐项降级，
         # 不再问第二遍（见 schedule_pending）。
@@ -684,10 +1217,11 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
             schedule.get("instructions"),
             schedule.get("allowed_tools") or [], schedule.get("disallowed_tools") or [],
             schedule.get("cwd"),
-            f"定时任务：{name}" if name else "定时任务",
+            title,
             resume=sr.section(resume_text) if resume_text else None,
             pending=sp.note(sid),
         )
+        outcome.session_title = title
         sr.record(schedule, outcome)
         sp.collect(schedule, outcome)
         return outcome

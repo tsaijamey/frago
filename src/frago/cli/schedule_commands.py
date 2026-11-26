@@ -49,6 +49,17 @@ def schedule_group():
     help="--prompt 用：禁止这些工具调用，命中即拒，优先于允许（可重复，如 'Bash(rm:*)'）",
 )
 @click.option("--command", default=None, help="一条 shell 命令，frago 直接执行（不经 PA）")
+@click.option(
+    "--employee",
+    default=None,
+    help="原生绑定数字员工岗位 ID（如 stock、qa），自动带入员工工作目录、业务语境与会话追踪",
+)
+@click.option(
+    "--title-template",
+    "title_template",
+    default=None,
+    help="动态会话标题模板，支持 {date} / {weekday} / {employee} / {schedule_name} / #{seq}",
+)
 @click.option("--cwd", default=None, help="工作目录，默认家目录：--command 在这里执行，--prompt 的 CoreAgent 在这里干活")
 @click.option("--params", default=None, help="JSON params for the recipe")
 @click.option(
@@ -86,6 +97,8 @@ def schedule_add(
     allowed_tools: tuple[str, ...],
     disallowed_tools: tuple[str, ...],
     command: str | None,
+    employee: str | None,
+    title_template: str | None,
     cwd: str | None,
     params: str | None,
     notify_on: str,
@@ -98,12 +111,14 @@ def schedule_add(
 ):
     """Add a scheduled task.
 
-    三种任务形态，选一种：
+    四种任务形态，选一种：
 
+      数字员工  frago schedule add --employee stock --prompt "盘点 DMA 买点信号" --cron "30 8 * * 1-5"
       配方      frago schedule add my-recipe --every 10m
       命令      frago schedule add --command "df -h /" --cron "0 9 * * *"
       自然语言  frago schedule add --prompt "汇总昨天飞书消息" --cron "0 8 * * *"
 
+    数字员工绑定会直接继承员工岗位的工作目录、知识域底账与技能上下文，无需走 shell 命令绕路；
     配方和命令由 frago 自己执行；自然语言任务交给 CoreAgent（设置页里绑定的连接），
     可以用 --cwd 指定它在哪个目录干活、--instructions 给它说明书、
     --allowed-tools / --disallowed-tools 限定它能做什么：
@@ -130,23 +145,39 @@ def schedule_add(
         click.echo("Error: either --every or --cron is required.")
         raise SystemExit(1)
 
-    # 三选一：形态必须明确，否则「到底谁来执行」是猜出来的
-    given = [x for x in (recipe_name, command, prompt) if x]
-    if not given:
-        click.echo("Error: 三种任务形态选一种——RECIPE_NAME、--command、或 --prompt。")
-        raise SystemExit(1)
-    if len(given) > 1:
+    clean_emp = employee.strip().lstrip("@") if employee else None
+
+    # 四选一：--employee 可搭配 --prompt 作为任务指令，但不可与 RECIPE_NAME / --command 混用
+    primary_executors = [x for x in (recipe_name, command, clean_emp) if x]
+    if len(primary_executors) > 1:
         click.echo(
-            "Error: RECIPE_NAME / --command / --prompt 只能给一个。\n"
-            "  配方和命令由 frago 直接执行，自然语言任务交给 CoreAgent，三者执行者不同，混着给无法判定。"
+            "Error: RECIPE_NAME / --command / --employee 只能给一个。\n"
+            "  配方和命令由 frago 直接执行，数字员工原生绑定交给对应员工岗位，三者不可混用。"
+        )
+        raise SystemExit(1)
+    if not primary_executors and not prompt:
+        click.echo("Error: 四种任务形态选一种——--employee、RECIPE_NAME、--command、或 --prompt。")
+        raise SystemExit(1)
+    if prompt and (recipe_name or command):
+        click.echo(
+            "Error: RECIPE_NAME / --command 不能与 --prompt 同时给出（只有 --employee 可搭配 --prompt 传递员工任务指令）。"
         )
         raise SystemExit(1)
 
-    if (instructions or allowed_tools or disallowed_tools) and not prompt:
+    if (instructions or allowed_tools or disallowed_tools) and (not prompt or clean_emp):
         click.echo(
-            "Error: --instructions / --allowed-tools / --disallowed-tools 只对 --prompt 型任务有意义。"
+            "Error: --instructions / --allowed-tools / --disallowed-tools 只对独立 --prompt 型任务有意义。"
         )
         raise SystemExit(1)
+
+    if clean_emp:
+        from frago.employee.store import get_post
+
+        if get_post(clean_emp) is None:
+            click.echo(
+                f"Error: 数字员工 @{clean_emp} 不存在。请先运行 frago employee list 查看可用岗位。"
+            )
+            raise SystemExit(1)
 
     if cwd:
         # 到点才发现目录不存在，任务就只会在执行记录里失败一次又一次。建的时候就拦。
@@ -239,17 +270,24 @@ def schedule_add(
         instructions=instructions,
         allowed_tools=list(allowed_tools),
         disallowed_tools=list(disallowed_tools),
+        employee_id=clean_emp,
+        session_title_template=title_template,
     )
 
     executor = {
         "recipe": "frago 直接执行",
         "command": "frago 直接执行",
         "prompt": "交给 CoreAgent",
+        "employee": f"原生绑定数字员工 @{clean_emp}",
     }[schedule["kind"]]
 
     click.echo(f"Schedule created: {schedule['id']}")
     click.echo(f"  Name: {schedule['name']}")
     click.echo(f"  Kind: {schedule['kind']}（{executor}）")
+    if clean_emp:
+        click.echo(f"  Employee: @{clean_emp}")
+    if title_template:
+        click.echo(f"  Title template: {title_template}")
     if recipe_name:
         click.echo(f"  Recipe: {recipe_name}")
     if command:
@@ -324,12 +362,15 @@ def schedule_list():
         if not s.get("enabled", True):
             next_run = "(disabled)"
 
-        kind = s.get("kind") or ("recipe" if s.get("recipe") else "prompt")
+        kind = s.get("kind") or (
+            "employee" if s.get("employee_id") else ("recipe" if s.get("recipe") else "prompt")
+        )
+        kind_display = f"emp:@{s['employee_id']}" if kind == "employee" and s.get("employee_id") else kind
         nf = s.get("notify") or {}
         notify_str = "—" if nf.get("on") in (None, "never") else f"{nf.get('on')}→{nf.get('to')}"
 
         click.echo(
-            f"{s['id']:<16} {enabled:<8} {kind:<9} {schedule_name:<22} {schedule_str:<15} "
+            f"{s['id']:<16} {enabled:<8} {kind_display:<12} {schedule_name:<22} {schedule_str:<15} "
             f"{run_count:<6} {last_status:<12} {notify_str:<16} {next_run}"
         )
 

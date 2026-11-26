@@ -301,6 +301,10 @@ export type {
   ScheduleListResponse,
   ScheduleRunResponse,
   ScheduleComposeResponse,
+  ScheduleWritePayload,
+  SchedulePreviewPayload,
+  SchedulePreviewRun,
+  SchedulePreviewResponse,
 } from './client';
 
 // 定时任务由服务端进程里的调度器执行，桌面壳那一路没有对应的桥。
@@ -309,6 +313,32 @@ const SCHEDULES_UNAVAILABLE = 'Schedules API not available in pywebview mode';
 export const getSchedules = withMode(
   (): Promise<httpApi.ScheduleListResponse> => httpApi.getSchedules(),
   (): Promise<httpApi.ScheduleListResponse> => Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const getSchedule = withMode(
+  (id: string): Promise<httpApi.ScheduleItem> => httpApi.getSchedule(id),
+  (_id: string): Promise<httpApi.ScheduleItem> => Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const createSchedule = withMode(
+  (payload: httpApi.ScheduleWritePayload): Promise<httpApi.ScheduleItem> =>
+    httpApi.createSchedule(payload),
+  (_payload: httpApi.ScheduleWritePayload): Promise<httpApi.ScheduleItem> =>
+    Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const updateSchedule = withMode(
+  (id: string, payload: httpApi.ScheduleWritePayload): Promise<httpApi.ScheduleItem> =>
+    httpApi.updateSchedule(id, payload),
+  (_id: string, _payload: httpApi.ScheduleWritePayload): Promise<httpApi.ScheduleItem> =>
+    Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const previewScheduleRuns = withMode(
+  (payload: httpApi.SchedulePreviewPayload): Promise<httpApi.SchedulePreviewResponse> =>
+    httpApi.previewScheduleRuns(payload),
+  (_payload: httpApi.SchedulePreviewPayload): Promise<httpApi.SchedulePreviewResponse> =>
+    Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
 );
 
 export const toggleSchedule = withMode(

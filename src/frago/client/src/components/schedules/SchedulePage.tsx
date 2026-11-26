@@ -1,31 +1,41 @@
 /**
- * 定时任务——`frago schedule` 里那些任务，界面上第一次看得见、管得了。
+ * 定时任务工作台——对齐主原型 `#schedules` / `#schedules/new` / `#schedules/edit/:id` / `#schedules/detail/:id`。
  *
- * 任务存在 `~/.frago/schedules.json`，由服务端进程里的调度器每 5 秒读一遍、到点执行。
- * 顺序照搬服务端（按创建先后），跟 `frago schedule list` 一致。
- *
- * 调度器没在跑、或者一条都没启用时，页头下面明说：这时一条都不会自动跑，
- * 不说出来，人会以为任务在跑。
- *
- * 新建走 agent：人写一句话，agent 去敲 `frago schedule add`。那条命令的校验（配方
- * 存不存在、cron 合不合法、通知落点配没配）只有走命令行才生效。
+ * 三态共用同一条页面壳：
+ * - 列表总览（`#schedules`）：全局表头 + 禁用/停跑/异常恢复横幅 + 筛选搜索 + 任务清单（含数字员工彩标与末次会话链接）。
+ * - 新建 / 编辑态（`#schedules/new`、`#schedules/edit/:id`）：左侧 280px 任务列表 + 右侧 3 张分组卡（基础节奏、两层执行形态、动态会话标题模板与 3 次预览），外加可选「一句话让 agent 创建」入口。
+ * - 详情归属态（`#schedules/detail/:id`）：左侧 280px 任务列表 + 右侧归属标识卡、参数属性表、定时指令与继承上下文、执行记录与一键跳回工作台会话。
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/layout/PageHeader';
-import { Check, CirclePause, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import {
+  Check,
+  CirclePause,
+  Clock,
+  ExternalLink,
+  Plus,
+  RefreshCw,
+  Search,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
 import * as api from '@/api';
 import type { ScheduleItem, ScheduleListResponse } from '@/api';
+import type { EmployeeItem } from '@/types/api';
+import type { RecipeItem } from '@/types/pywebview';
 import { restartServer } from '@/api/client';
 import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import ScheduleDetail from './ScheduleDetail';
+import ScheduleEditPane from './ScheduleEditPane';
 import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   FILTERS,
   cronRawText,
+  empColorToken,
   formatTime,
   frequencyText,
   lastRunText,
@@ -41,8 +51,31 @@ const REFRESH_MS = 10_000;
 /** 点完「立即跑」隔多久补取一次。命令型大多一两秒就跑完，赶在自动刷新之前让结果露面。 */
 const RUN_FOLLOWUP_MS = 2_500;
 
+type ScheduleViewMode = 'list' | 'new' | 'edit' | 'detail';
+
+interface ScheduleView {
+  mode: ScheduleViewMode;
+  id: string | null;
+}
+
+function parseScheduleRoute(rawId: string | null): ScheduleView {
+  if (!rawId) return { mode: 'list', id: null };
+  if (rawId === 'new') return { mode: 'new', id: null };
+  if (rawId.startsWith('edit/')) {
+    const id = rawId.slice(5).trim();
+    return id ? { mode: 'edit', id } : { mode: 'new', id: null };
+  }
+  if (rawId.startsWith('detail/')) {
+    const id = rawId.slice(7).trim();
+    return id ? { mode: 'detail', id } : { mode: 'list', id: null };
+  }
+  return { mode: 'detail', id: rawId };
+}
+
 function ScheduleRow({
   schedule,
+  employee,
+  employeesLoaded,
   selected,
   now,
   onClick,
@@ -50,6 +83,8 @@ function ScheduleRow({
   busy,
 }: {
   schedule: ScheduleItem;
+  employee?: EmployeeItem;
+  employeesLoaded: boolean;
   selected: boolean;
   now: Date;
   onClick: () => void;
@@ -70,6 +105,13 @@ function ScheduleRow({
     schedule.last_session_id ||
     schedule.last_run?.session_id ||
     (schedule.history.length > 0 ? schedule.history[schedule.history.length - 1].session_id : null);
+
+  const isEmployee = schedule.kind === 'employee';
+  const empMissing =
+    isEmployee &&
+    (Boolean(schedule.employee_missing) ||
+      (Boolean(schedule.employee_id) && employeesLoaded && !employee));
+  const empColor = empColorToken(schedule.employee_id, employee?.color);
 
   return (
     <tr
@@ -92,7 +134,23 @@ function ScheduleRow({
           >
             {schedule.name}
           </button>
-          <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
+          {isEmployee ? (
+            <span
+              className="sc-chip emp"
+              data-emp-color={empColor}
+              data-testid={`sc-row-emp-${schedule.id}`}
+            >
+              @{schedule.employee_id || '—'}
+            </span>
+          ) : (
+            <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
+          )}
+          {empMissing && (
+            <span className="sc-chip warn" data-testid={`sc-row-emp-missing-${schedule.id}`}>
+              <TriangleAlert size={10} />
+              {t('schedules.state.failing')}
+            </span>
+          )}
           {!schedule.enabled && (
             <span className="td-chip sc-chip--disabled">{t('schedules.filter.disabled')}</span>
           )}
@@ -145,13 +203,15 @@ function ScheduleRow({
               setWorkbenchSessionId(effectiveSessionId);
               switchPage('session_workbench');
             }}
-            title={t('schedules.history.openSession')}
+            title={schedule.last_session_title || t('schedules.history.openSession')}
           >
             <ExternalLink size={11} />
             <span>
-              {effectiveSessionId.length > 12
-                ? `${effectiveSessionId.slice(0, 5)}...${effectiveSessionId.slice(-3)}`
-                : effectiveSessionId}
+              {schedule.last_session_title
+                ? schedule.last_session_title
+                : effectiveSessionId.length > 12
+                  ? `${effectiveSessionId.slice(0, 5)}...${effectiveSessionId.slice(-3)}`
+                  : effectiveSessionId}
             </span>
           </button>
         )}
@@ -167,7 +227,20 @@ export default function SchedulePage() {
   const currentScheduleId = usePageStore((s) => s.currentScheduleId);
   const switchPage = usePageStore((s) => s.switchPage);
 
+  const [localView, setLocalView] = useState<ScheduleView | null>(null);
+  useEffect(() => {
+    setLocalView(null);
+  }, [currentScheduleId]);
+
+  const activeView = useMemo(
+    () => localView ?? parseScheduleRoute(currentScheduleId),
+    [localView, currentScheduleId]
+  );
+
   const [body, setBody] = useState<ScheduleListResponse | null>(null);
+  const [employees, setEmployees] = useState<EmployeeItem[]>([]);
+  const [employeesLoaded, setEmployeesLoaded] = useState(false);
+  const [recipes, setRecipes] = useState<RecipeItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>('all');
@@ -178,20 +251,28 @@ export default function SchedulePage() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [restartingScheduler, setRestartingScheduler] = useState(false);
 
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [composing, setComposing] = useState(false);
-  const [composeError, setComposeError] = useState<string | null>(null);
-  const [composed, setComposed] = useState<api.ScheduleComposeResponse | null>(null);
-
   const { refresh } = useAutoRefresh(
     async () => {
       setRefreshing(true);
       try {
-        setBody(await api.getSchedules());
+        const apiKeys = new Set(Object.keys(api));
+        const hasEmployeesApi = apiKeys.has('getEmployees') && typeof api.getEmployees === 'function';
+        const hasRecipesApi = apiKeys.has('getRecipes') && typeof api.getRecipes === 'function';
+        const [schedulesRes, empList, recipeList] = await Promise.all([
+          api.getSchedules(),
+          hasEmployeesApi ? api.getEmployees().catch(() => null) : Promise.resolve(null),
+          hasRecipesApi ? api.getRecipes().catch(() => []) : Promise.resolve([]),
+        ]);
+        setBody(schedulesRes);
+        if (Array.isArray(empList)) {
+          setEmployees(empList);
+          setEmployeesLoaded(true);
+        }
+        if (Array.isArray(recipeList)) {
+          setRecipes(recipeList);
+        }
         setError(null);
       } catch (e) {
-        // 取不到就说取不到，不拿上一份旧清单顶着——旧的「上次成功」看起来和新的一模一样。
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setRefreshing(false);
@@ -201,6 +282,14 @@ export default function SchedulePage() {
   );
 
   const schedules = useMemo(() => body?.schedules ?? [], [body]);
+
+  const employeeById = useMemo(() => {
+    const map = new Map<string, EmployeeItem>();
+    for (const emp of employees) {
+      map.set(emp.member_post_id, emp);
+    }
+    return map;
+  }, [employees]);
 
   const counts = useMemo(() => {
     const out = {} as Record<ScheduleFilter, number>;
@@ -213,22 +302,52 @@ export default function SchedulePage() {
     return schedules.filter((s) => {
       if (!matchesFilter(s, filter)) return false;
       if (!q) return true;
-      return [s.name, s.id, targetText(s), s.cron ?? '', s.notify?.to ?? '']
+      return [
+        s.name,
+        s.id,
+        s.employee_id ?? '',
+        s.employee_title ?? '',
+        targetText(s),
+        s.cron ?? '',
+        s.notify?.to ?? '',
+      ]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
   }, [schedules, filter, search]);
 
-  // 按全量清单判断，与筛选无关：筛到「Enabled」看到空表时，提示条照常在。
   const allDisabled = schedules.length > 0 && counts.enabled === 0;
-  // 每 10 秒取数都会重画，「Today / Yesterday」跟着翻过零点，不会停在昨天的说法。
   const now = new Date();
 
-  const selected = currentScheduleId
-    ? schedules.find((s) => s.id === currentScheduleId) ?? null
+  const selected = activeView.id
+    ? schedules.find((s) => s.id === activeView.id) ?? null
     : null;
-  const missing = Boolean(currentScheduleId) && body !== null && selected === null;
+  const missing =
+    (activeView.mode === 'detail' || activeView.mode === 'edit') &&
+    Boolean(activeView.id) &&
+    body !== null &&
+    selected === null;
+
+  const goList = () => {
+    setLocalView({ mode: 'list', id: null });
+    switchPage('schedules');
+  };
+
+  const goNew = () => {
+    setLocalView({ mode: 'new', id: null });
+    switchPage('schedule_detail', 'new');
+  };
+
+  const goEdit = (id: string) => {
+    setLocalView({ mode: 'edit', id });
+    switchPage('schedule_detail', `edit/${id}`);
+  };
+
+  const goDetail = (id: string) => {
+    setLocalView({ mode: 'detail', id });
+    switchPage('schedule_detail', `detail/${id}`);
+  };
 
   /** 三个动作共用的外壳：锁按钮、报错、做完刷新。 */
   const act = async (kind: 'run' | 'toggle' | 'remove', work: () => Promise<unknown>) => {
@@ -248,7 +367,6 @@ export default function SchedulePage() {
   const runNow = (s: ScheduleItem) =>
     act('run', async () => {
       await api.runSchedule(s.id);
-      // 接口不等执行结束。补取一次，让这一轮的执行记录尽快露面。
       window.setTimeout(() => void refresh(), RUN_FOLLOWUP_MS);
     });
 
@@ -257,7 +375,7 @@ export default function SchedulePage() {
   const remove = (s: ScheduleItem) =>
     act('remove', async () => {
       await api.removeSchedule(s.id);
-      switchPage('schedules');
+      goList();
     });
 
   const enableAllSchedules = () =>
@@ -295,111 +413,94 @@ export default function SchedulePage() {
     }
   };
 
-  const submitDraft = async () => {
-    const text = draft.trim();
-    if (!text || composing) return;
+  const headerMeta = body
+    ? counts.failing > 0
+      ? t('schedules.headerMetaFailing', {
+          count: schedules.length,
+          enabled: counts.enabled,
+          failing: counts.failing,
+        })
+      : t('schedules.headerMeta', {
+          count: schedules.length,
+          enabled: counts.enabled,
+        })
+    : undefined;
 
-    setComposing(true);
-    setComposeError(null);
-    setComposed(null);
-    try {
-      const result = await api.composeSchedule(text);
-      setComposed(result);
-      setDraft('');
-      await refresh();
-      if (result.schedule_id) switchPage('schedule_detail', result.schedule_id);
-    } catch (e) {
-      setComposeError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setComposing(false);
-    }
-  };
+  const isWorkspace = activeView.mode !== 'list';
 
   return (
-    <div className="td-page tdp">
-      {/* 与事务页同一个主次：刷新会自己跑，只留图标；新建是主动作，放最右。 */}
+    <div className="td-page tdp sc-page">
       <PageHeader
         title={t('schedules.title')}
-        meta={
-          body
-            ? t('schedules.headerMeta', {
-                count: schedules.length,
-                enabled: schedules.filter((s) => s.enabled).length,
-              })
-            : undefined
-        }
+        meta={headerMeta}
         secondary={
-          <button
-            type="button"
-            className="page-header-btn page-header-btn--icon page-header-btn--ghost"
-            onClick={refresh}
-            disabled={refreshing}
-            title={t('common.refresh')}
-            aria-label={t('common.refresh')}
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-          </button>
+          <>
+            <div className="ui-seg-group" role="tablist" aria-label={t('schedules.title')}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView.mode === 'list'}
+                className={`ui-seg-pill ${activeView.mode === 'list' ? 'ui-seg-pill--active' : ''}`}
+                onClick={goList}
+                data-testid="sc-tab-list"
+              >
+                {t('schedules.views.list')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView.mode === 'new' || activeView.mode === 'edit'}
+                className={`ui-seg-pill ${
+                  activeView.mode === 'new' || activeView.mode === 'edit'
+                    ? 'ui-seg-pill--active'
+                    : ''
+                }`}
+                onClick={() => {
+                  if (activeView.mode === 'detail' && selected) {
+                    goEdit(selected.id);
+                  } else {
+                    goNew();
+                  }
+                }}
+                data-testid="sc-tab-edit"
+              >
+                {t('schedules.views.edit')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView.mode === 'detail'}
+                disabled={!selected && schedules.length === 0}
+                className={`ui-seg-pill ${activeView.mode === 'detail' ? 'ui-seg-pill--active' : ''}`}
+                onClick={() => {
+                  const targetId = selected?.id ?? schedules[0]?.id;
+                  if (targetId) goDetail(targetId);
+                }}
+                data-testid="sc-tab-detail"
+              >
+                {t('schedules.views.detail')}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="page-header-btn page-header-btn--icon page-header-btn--ghost"
+              onClick={refresh}
+              disabled={refreshing}
+              title={t('common.refresh')}
+              aria-label={t('common.refresh')}
+            >
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+          </>
         }
         primary={{
-          label: t('schedules.compose.button'),
-          icon: composerOpen ? <X size={14} /> : <Plus size={14} />,
-          onClick: () => setComposerOpen((open) => !open),
-          pressed: composerOpen,
+          label: t('schedules.views.newBtn'),
+          icon: activeView.mode === 'new' ? <X size={14} /> : <Plus size={14} />,
+          onClick: () => (activeView.mode === 'new' ? goList() : goNew()),
+          pressed: activeView.mode === 'new',
         }}
       />
 
-      {composerOpen && (
-        <div className="td-composer">
-          <textarea
-            autoFocus
-            className="td-composer-input"
-            rows={3}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void submitDraft();
-              }
-            }}
-            placeholder={t('schedules.compose.placeholder')}
-            disabled={composing}
-            aria-label={t('schedules.compose.button')}
-          />
-          <div className="td-composer-foot">
-            <span className="td-composer-hint">{t('schedules.compose.hint')}</span>
-            <button
-              type="button"
-              className="td-composer-submit"
-              onClick={() => void submitDraft()}
-              disabled={composing || draft.trim() === ''}
-            >
-              {composing && <Loader2 size={14} className="animate-spin" />}
-              {composing ? t('schedules.compose.working') : t('schedules.compose.submit')}
-            </button>
-          </div>
-
-          {composeError && (
-            <div className="td-error">{t('schedules.compose.failed', { message: composeError })}</div>
-          )}
-
-          {composed && (
-            <div className="td-composer-result">
-              <p className="td-composer-verdict">
-                {composed.schedule_id
-                  ? t('schedules.compose.created', { id: composed.schedule_id })
-                  : t('schedules.compose.nothingCreated')}
-              </p>
-              {composed.command && (
-                <code className="td-composer-command">{composed.command.join(' ')}</code>
-              )}
-              {composed.message && <p className="td-composer-message">{composed.message}</p>}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 一条都没启用时，调度器停不停没有区别，只说「全部停用」这一条。 */}
       {allDisabled ? (
         <div className="sc-banner" role="status">
           <CirclePause size={16} aria-hidden="true" />
@@ -454,115 +555,216 @@ export default function SchedulePage() {
         </div>
       )}
 
-      <div className="td-toolbar tdp-toolbar">
-        <div className="ui-seg-group tdp-seg-group" role="group" aria-label={t('schedules.detail.status')}>
-          {FILTERS.map((name) => (
-            <button
-              key={name}
-              type="button"
-              className={`ui-seg-pill ${filter === name ? 'ui-seg-pill--active' : ''}`}
-              onClick={() => setFilter(name)}
-              aria-pressed={filter === name}
-            >
-              {t(`schedules.filter.${name}`)}
-              <span className="ui-seg-count">{counts[name]}</span>
-            </button>
-          ))}
-        </div>
-        <div className="ui-search-box td-search">
-          <Search size={16} className="ui-search-box-icon" />
-          <input
-            type="text"
-            placeholder={t('schedules.searchPlaceholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label={t('schedules.searchPlaceholder')}
-          />
-          {search && (
-            <button
-              type="button"
-              className="ui-search-box-clear"
-              onClick={() => setSearch('')}
-              aria-label={t('common.clear')}
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
       {error && <div className="td-error">{t('schedules.loadFailed', { message: error })}</div>}
       {actionError && (
         <div className="td-error">{t('schedules.actions.failed', { message: actionError })}</div>
       )}
-      {missing && <div className="td-error">{t('schedules.notFound', { id: currentScheduleId })}</div>}
+      {missing && <div className="td-error">{t('schedules.notFound', { id: activeView.id })}</div>}
 
-      <div className="td-split">
-        <div className="td-list-pane sc-list-pane">
-          {body === null && !error ? (
-            <div className="td-hint">{t('common.loading')}</div>
-          ) : visible.length === 0 ? (
-            <EmptyState
-              Icon={Clock}
-              title={schedules.length === 0 ? t('schedules.emptyAll') : t('schedules.empty')}
-              description={
-                schedules.length === 0 ? t('schedules.emptyAllDesc') : t('schedules.emptyDesc')
-              }
-            />
-          ) : (
-            <table className="sc-table">
-              <colgroup>
-                <col />
-                <col className="sc-col-when" />
-                <col className="sc-col-last" />
-                <col className="sc-col-runs" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th scope="col">{t('schedules.table.schedule')}</th>
-                  <th scope="col">{t('schedules.table.when')}</th>
-                  <th scope="col">{t('schedules.table.lastRun')}</th>
-                  <th scope="col" className="sc-num">
-                    {t('schedules.table.runs')}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((s) => (
-                  <ScheduleRow
+      {!isWorkspace ? (
+        <>
+          <div className="td-toolbar tdp-toolbar">
+            <div className="ui-seg-group tdp-seg-group" role="group" aria-label={t('schedules.detail.status')}>
+              {FILTERS.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className={`ui-seg-pill ${filter === name ? 'ui-seg-pill--active' : ''}`}
+                  onClick={() => setFilter(name)}
+                  aria-pressed={filter === name}
+                >
+                  {t(`schedules.filter.${name}`)}
+                  <span className="ui-seg-count">{counts[name]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="ui-search-box td-search">
+              <Search size={16} className="ui-search-box-icon" />
+              <input
+                type="text"
+                placeholder={t('schedules.searchPlaceholder')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                aria-label={t('schedules.searchPlaceholder')}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="ui-search-box-clear"
+                  onClick={() => setSearch('')}
+                  aria-label={t('common.clear')}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="td-split">
+            <div className="td-list-pane sc-list-pane">
+              {body === null && !error ? (
+                <div className="td-hint">{t('common.loading')}</div>
+              ) : visible.length === 0 ? (
+                <EmptyState
+                  Icon={Clock}
+                  title={schedules.length === 0 ? t('schedules.emptyAll') : t('schedules.empty')}
+                  description={
+                    schedules.length === 0 ? t('schedules.emptyAllDesc') : t('schedules.emptyDesc')
+                  }
+                />
+              ) : (
+                <table className="sc-table">
+                  <colgroup>
+                    <col />
+                    <col className="sc-col-when" />
+                    <col className="sc-col-last" />
+                    <col className="sc-col-runs" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t('schedules.table.schedule')}</th>
+                      <th scope="col">{t('schedules.table.when')}</th>
+                      <th scope="col">{t('schedules.table.lastRun')}</th>
+                      <th scope="col" className="sc-num">
+                        {t('schedules.table.runs')}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((s) => (
+                      <ScheduleRow
+                        key={s.id}
+                        schedule={s}
+                        employee={s.employee_id ? employeeById.get(s.employee_id) : undefined}
+                        employeesLoaded={employeesLoaded}
+                        selected={s.id === activeView.id}
+                        now={now}
+                        busy={busy !== null}
+                        onRunNow={() => void runNow(s)}
+                        onClick={() => goDetail(s.id)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="sc-ws" data-testid="sc-workspace">
+          <aside className="sc-list-pane" data-testid="sc-sidebar-list">
+            <div className="sc-list-head">
+              <h2>{t('schedules.views.sidebarTitle', { count: schedules.length })}</h2>
+              <button
+                type="button"
+                className="sc-btn sm"
+                onClick={goNew}
+                data-testid="sc-sidebar-new-btn"
+              >
+                <Plus size={11} />
+                {t('schedules.views.newBtn')}
+              </button>
+            </div>
+            <div className="sc-list-items">
+              {schedules.map((s) => {
+                const st = stateOf(s);
+                const emp = s.employee_id ? employeeById.get(s.employee_id) : undefined;
+                const empColor = empColorToken(s.employee_id, emp?.color);
+                const isSel = activeView.mode !== 'new' && s.id === activeView.id;
+                const dotClass =
+                  st === 'failing' ? 'd-err' : s.enabled ? 'd-run' : 'd-idle';
+                return (
+                  <button
                     key={s.id}
-                    schedule={s}
-                    selected={s.id === currentScheduleId}
-                    now={now}
-                    busy={busy !== null}
-                    onRunNow={() => void runNow(s)}
-                    onClick={() =>
-                      s.id === currentScheduleId
-                        ? switchPage('schedules')
-                        : switchPage('schedule_detail', s.id)
-                    }
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                    type="button"
+                    className={`sc-card ${isSel ? 'sel' : ''}`}
+                    onClick={() => goDetail(s.id)}
+                    data-testid={`sc-sidebar-item-${s.id}`}
+                  >
+                    <div className="sc-card-top">
+                      <span className={`sc-dot ${dotClass}`} />
+                      <span className="sc-card-name">{s.name}</span>
+                    </div>
+                    <div className="sc-card-meta">
+                      {s.kind === 'employee' ? (
+                        <span className="sc-chip emp" data-emp-color={empColor}>
+                          @{s.employee_id || '—'}
+                        </span>
+                      ) : (
+                        <span className="sc-chip">{t(`schedules.kind.${s.kind}`)}</span>
+                      )}
+                      <span>{frequencyText(s, t)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
 
-        {selected && (
-          <div className="td-detail-pane">
-            {/* 换一条任务时整块重建，上一条停在「确认删除」的状态不能带过来。 */}
-            <ScheduleDetail
-              key={selected.id}
+          {activeView.mode === 'new' && (
+            <ScheduleEditPane
+              key="create"
+              schedule={null}
+              employees={employees}
+              recipes={recipes}
+              onSaved={(saved) => {
+                void refresh();
+                goDetail(saved.id);
+              }}
+              onCancel={goList}
+              onNlComposed={async (id) => {
+                await refresh();
+                if (id) goDetail(id);
+              }}
+            />
+          )}
+
+          {activeView.mode === 'edit' && selected && (
+            <ScheduleEditPane
+              key={`edit-${selected.id}`}
               schedule={selected}
+              employees={employees}
+              recipes={recipes}
+              onSaved={(saved) => {
+                void refresh();
+                goDetail(saved.id);
+              }}
+              onCancel={() => goDetail(selected.id)}
+              onPreviewDetail={() => goDetail(selected.id)}
+            />
+          )}
+
+          {activeView.mode === 'detail' && selected && (
+            <ScheduleDetail
+              key={`detail-${selected.id}`}
+              variant="workspace"
+              schedule={selected}
+              employee={
+                selected.employee_id
+                  ? employeeById.get(selected.employee_id) ??
+                    (employeesLoaded ? null : undefined)
+                  : undefined
+              }
               busy={busy}
               onRun={() => void runNow(selected)}
               onToggle={() => void toggle(selected)}
               onRemove={() => void remove(selected)}
-              onClose={() => switchPage('schedules')}
+              onEdit={() => goEdit(selected.id)}
+              onClose={goList}
             />
-          </div>
-        )}
-      </div>
+          )}
+
+          {(activeView.mode === 'edit' || activeView.mode === 'detail') && !selected && (
+            <div className="sc-work-pane">
+              <div className="sc-work-in">
+                <div className={missing ? 'sc-notice warn' : 'sc-notice'}>
+                  {missing ? t('schedules.notFound', { id: activeView.id }) : t('common.loading')}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

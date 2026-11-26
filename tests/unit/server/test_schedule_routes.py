@@ -214,3 +214,114 @@ class TestCompose:
         response = client.post("/api/schedules", json={"description": "一件事"})
         assert response.status_code == 502
         assert "配一个 profile" in response.json()["detail"]
+
+
+class TestStructuredScheduleEndpoints:
+    @pytest.fixture
+    def isolated_employees(self, tmp_path, monkeypatch):
+        from frago.employee.store import EmployeePostRecord, save_post
+
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        save_post(
+            EmployeePostRecord(
+                member_post_id="demo-emp",
+                title="示例分析师",
+                description="负责例行分析",
+                agent_kernel="coreagent",
+            )
+        )
+        return tmp_path
+
+    def test_结构化创建读取编辑员工定时任务与预览(self, client, isolated_employees):
+        # 1) 员工不存在时拒绝创建
+        bad_resp = client.post(
+            "/api/schedules/create",
+            json={
+                "name": "坏任务",
+                "kind": "employee",
+                "employee_id": "nonexistent-emp",
+                "prompt": "干活",
+                "cron": "0 9 * * *",
+            },
+        )
+        assert bad_resp.status_code == 422
+        assert "nonexistent-emp" in bad_resp.json()["detail"]
+
+        # 2) 合法创建
+        create_resp = client.post(
+            "/api/schedules/create",
+            json={
+                "name": "早盘巡检",
+                "kind": "employee",
+                "employee_id": "demo-emp",
+                "prompt": "输出今日要点",
+                "cron": "0 9 * * 1-5",
+                "session_title_template": "[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+            },
+        )
+        assert create_resp.status_code == 200
+        created = create_resp.json()
+        sid = created["id"]
+        assert created["kind"] == "employee"
+        assert created["employee_id"] == "demo-emp"
+        assert created["employee_title"] == "示例分析师"
+        assert created["employee_missing"] is False
+        assert created["session_title_template"] == "[{date} {weekday}] {employee} · {schedule_name} #{seq}"
+
+        # 3) 详情接口可读且预览接口返回 3 条未来运行记录
+        detail_resp = client.get(f"/api/schedules/{sid}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["id"] == sid
+
+        prev_resp = client.post(
+            "/api/schedules/preview",
+            json={
+                "name": "早盘巡检",
+                "kind": "employee",
+                "employee_id": "demo-emp",
+                "cron": "0 9 * * 1-5",
+                "session_title_template": "[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+                "run_count": 2,
+                "count": 3,
+            },
+        )
+        assert prev_resp.status_code == 200
+        runs = prev_resp.json()["runs"]
+        assert len(runs) == 3
+        assert runs[0]["seq"] == 3
+        assert "示例分析师" in runs[0]["session_title"]
+        assert "#3" in runs[0]["session_title"]
+
+        # 4) 编辑更新保持 ID 不变
+        edit_resp = client.put(
+            f"/api/schedules/{sid}",
+            json={
+                "name": "早盘巡检修订版",
+                "kind": "employee",
+                "employee_id": "demo-emp",
+                "prompt": "补充风控提示",
+                "interval_seconds": 1800,
+            },
+        )
+        assert edit_resp.status_code == 200
+        edited = edit_resp.json()
+        assert edited["id"] == sid
+        assert edited["name"] == "早盘巡检修订版"
+        assert edited["interval_seconds"] == 1800
+        assert edited["cron"] is None
+
+    def test_已绑定员工被删除后列表与详情显式标记_employee_missing(self, client, service, isolated_employees):
+        from frago.employee.store import delete_post
+
+        s = service.add_schedule(
+            name="已删员工任务",
+            employee_id="demo-emp",
+            prompt="跑一次",
+            interval_seconds=600,
+        )
+        delete_post("demo-emp")
+        row = client.get(f"/api/schedules/{s['id']}").json()
+        assert row["kind"] == "employee"
+        assert row["employee_id"] == "demo-emp"
+        assert row["employee_missing"] is True
+

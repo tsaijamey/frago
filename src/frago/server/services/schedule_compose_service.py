@@ -34,6 +34,8 @@ _ALLOWED_TOOLS = [
     for rule in (
         "Bash(frago schedule list:*)",
         "Bash(frago schedule add:*)",
+        "Bash(frago employee list:*)",
+        "Bash(frago employee show:*)",
         "Bash(frago recipe list:*)",
         "Bash(frago channel list:*)",
     )
@@ -65,10 +67,11 @@ DESCRIPTION
 
 怎么办：
 1. 先跑一次 frago schedule list，同样的任务已经有了就不要再建，说明是哪一条。
-2. 定形态，三选一：
+2. 定形态，四选一：
+   - 描述里点名了某位数字员工或需要岗位长期职责/底账语境：先 frago employee list 确认岗位 ID，写成 --employee <岗位ID> --prompt "<任务指令>"，并可附带 --title-template "[{{date}} {{weekday}}] {{employee}} · {{schedule_name}}"
    - 描述里点名了某个配方：先 frago recipe list 确认它存在，写成 frago schedule add <配方名>
-   - 一条 shell 命令就能做完的：--command "<命令>"
-   - 需要理解和判断的：--prompt "<自然语言任务>"
+   - 一条 shell 命令就能做完的：--command "<命令>"（切勿用 --command "frago agent ..." 绕路调员工）
+   - 需要临时理解和判断的：--prompt "<自然语言任务>"
 3. 时间用 --every（30s / 10m / 2h）或 --cron（五段式），二者只给一个。
 4. 时限用 --timeout（秒），不给就是 7200 秒（2 小时），到点整次运行被掐掉、算失败。
    拿不准就不写，默认的 2 小时对绝大多数活够用；明显要跑过 2 小时的才显式写大。

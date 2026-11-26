@@ -232,3 +232,99 @@ async def test_multiple_due_schedules_in_same_tick_do_not_retrigger(svc, monkeyp
     assert svc._is_due(by_id[s1["id"]], next_tick) is False
     assert svc._is_due(by_id[s2["id"]], next_tick) is False
 
+
+def test_add_update_and_migrate_employee_schedule(svc):
+    sch = svc.add_schedule(
+        name="早盘巡检",
+        prompt="检查行情",
+        employee_id="stock",
+        session_title_template="[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+        cron="0 9 * * 1-5",
+    )
+    assert sch["kind"] == "employee"
+    assert sch["employee_id"] == "stock"
+    assert sch["session_title_template"] == "[{date} {weekday}] {employee} · {schedule_name} #{seq}"
+
+    # 仅带 employee_id 的旧/半成品记录也能由 _migrate_schedule 自动识别为 employee
+    migrated = SchedulerService._migrate_schedule({"id": "sch_m1", "employee_id": "ops"})
+    assert migrated["kind"] == "employee"
+    assert migrated["session_title_template"] is None
+
+    updated = svc.update_schedule(
+        sch["id"],
+        name="盘中盯盘",
+        employee_id="analyst",
+        interval_seconds=300,
+        cron=None,
+    )
+    assert updated is not None
+    assert updated["id"] == sch["id"]
+    assert updated["name"] == "盘中盯盘"
+    assert updated["employee_id"] == "analyst"
+    assert updated["interval_seconds"] == 300
+    assert updated["cron"] is None
+
+
+def test_preview_next_runs_renders_dynamic_title_and_dates(svc, monkeypatch):
+    monkeypatch.setattr(
+        "frago.server.services.scheduler_service._now_utc",
+        lambda: datetime(2026, 11, 4, 8, 0, 0),
+    )
+    runs = svc.preview_next_runs(
+        {
+            "name": "早报",
+            "kind": "employee",
+            "employee_id": "analyst",
+            "session_title_template": "[{date} {weekday}] {employee} · {schedule_name} #{seq}",
+            "cron": "0 9 * * *",
+            "run_count": 30,
+        },
+        count=3,
+        employee_title="金融专家",
+    )
+    assert len(runs) == 3
+    assert runs[0]["seq"] == 31
+    assert runs[0]["session_title"] == "[11-04 周三] 金融专家 · 早报 #31"
+    assert runs[1]["seq"] == 32
+    assert runs[1]["session_title"] == "[11-05 周四] 金融专家 · 早报 #32"
+    assert runs[2]["seq"] == 33
+    assert runs[2]["session_title"] == "[11-06 周五] 金融专家 · 早报 #33"
+
+
+@pytest.mark.asyncio
+async def test_per_schedule_id_reentrancy_guard_skips_overlapping_trigger(svc, monkeypatch):
+    import asyncio
+
+    from frago.server.services import schedule_executor as ex
+
+    sch = svc.add_schedule(
+        name="防重入员工任务",
+        employee_id="demo-emp",
+        prompt="干活",
+        interval_seconds=60,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def fake_run_scheduled(schedule):
+        calls.append(schedule["id"])
+        started.set()
+        await release.wait()
+        return ex.RunOutcome(ok=True, kind="employee", stdout="done", digest="d1", session_title="t1")
+
+    monkeypatch.setattr(ex, "run_scheduled", fake_run_scheduled)
+
+    t1 = asyncio.create_task(svc._execute(sch))
+    await started.wait()
+
+    # 同一个 schedule_id 在上一轮尚未结束时再次触发，应立即被 per-schedule_id 锁/重入守卫拦截
+    await svc._execute(sch)
+    assert len(calls) == 1
+
+    release.set()
+    await t1
+    assert len(calls) == 1
+    assert sch["id"] not in svc._active_schedule_ids
+
+

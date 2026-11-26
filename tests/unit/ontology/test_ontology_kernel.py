@@ -1503,20 +1503,41 @@ class TestFivePillarShadowProjectors:
                 {"recipe_name": "mutating_board", "access": "public"}
             )
 
-        # ScheduleRuleSpec & ScheduleDispatchRuntime: command/recipe -> zero-token direct, agent_prompt -> PA
+        # ScheduleRuleSpec & ScheduleDispatchRuntime:
+        # command/recipe -> zero-token direct, agent_prompt -> PA, employee -> domain_employee
         sched_recipe = projector.project_schedule_rule(
             {"id": "daily-digest", "target_kind": "recipe", "cron": "0 8 * * *"}
         )
         sched_prompt = projector.project_schedule_rule(
             {"id": "inbox-triage", "target_kind": "agent_prompt", "cron": "0 9 * * *"}
         )
+        sched_emp = projector.project_schedule_rule(
+            {
+                "id": "stock-dma",
+                "target_kind": "employee",
+                "employee_id": "stock",
+                "cron": "0 9 * * 1-5",
+            }
+        )
+        with pytest.raises(ProjectionValidationError, match="employee_id"):
+            projector.project_schedule_rule(
+                {"id": "missing-emp", "target_kind": "employee", "cron": "0 9 * * *"}
+            )
         sched_runtime = ScheduleDispatchRuntime(graph=projector.graph)
         d_recipe = sched_runtime.dispatch(sched_recipe)
         d_prompt = sched_runtime.dispatch(sched_prompt)
+        d_emp = sched_runtime.dispatch(sched_emp)
         assert d_recipe.zero_token_direct is True
         assert d_recipe.route == "direct_executor"
         assert d_prompt.zero_token_direct is False
         assert d_prompt.route == "primary_scheduler"
+        assert d_emp.zero_token_direct is False
+        assert d_emp.route == "domain_employee"
+        assert d_emp.employee_post_id == "stock"
+        assert d_emp.trigger_event.payload["employee_post_id"] == "stock"
+        assert not BUILTIN_DEFINED_CLASSES["DirectExecutableSchedule"].matches(
+            sched_emp, projector.graph
+        )
 
         # TeamPairingProjection & TeamPolicyRuntime: 3-tier security evaluation
         team_proj = projector.project_team_pairing(

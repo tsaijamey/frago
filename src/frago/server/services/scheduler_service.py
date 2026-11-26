@@ -87,6 +87,15 @@ class SchedulerService:
         self._pa_enqueue: Callable[[dict[str, Any]], Coroutine] | None = None
         # Track schedules with active (unresolved) tasks for overlap control
         self._active_schedule_ids: set = set()
+        # Per-schedule_id reentrancy lock: prevents concurrent runs across tick & manual trigger
+        self._schedule_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_schedule_lock(self, schedule_id: str) -> asyncio.Lock:
+        lock = self._schedule_locks.get(schedule_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._schedule_locks[schedule_id] = lock
+        return lock
 
     @classmethod
     def get_instance(cls) -> "SchedulerService":
@@ -177,10 +186,19 @@ class SchedulerService:
             s["reply_channel"] = None
         if "reply_context" not in s:
             s["reply_context"] = {}
-        # kind 是后加的。老记录按「有 recipe 就是配方型，否则是自然语言型」推断，
-        # 推断结果落盘，之后不再重算——否则改了 recipe 字段会让形态跟着漂。
+        # kind 是后加的。老记录按「有 employee_id 是员工型，有 recipe 是配方型，否则是自然语言型」推断，
+        # 推断结果落盘，之后不再重算——否则改了字段会让形态跟着漂。
         if "kind" not in s:
-            s["kind"] = "recipe" if s.get("recipe") or s.get("recipe_name") else "prompt"
+            if s.get("employee_id"):
+                s["kind"] = "employee"
+            elif s.get("recipe") or s.get("recipe_name"):
+                s["kind"] = "recipe"
+            else:
+                s["kind"] = "prompt"
+        if "employee_id" not in s:
+            s["employee_id"] = None
+        if "session_title_template" not in s:
+            s["session_title_template"] = None
         if "command" not in s:
             s["command"] = None
         if "cwd" not in s:
@@ -225,20 +243,34 @@ class SchedulerService:
         instructions: str | None = None,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
+        employee_id: str | None = None,
+        session_title_template: str | None = None,
     ) -> dict[str, Any]:
         self._load()
-        if command:
+        clean_emp = str(employee_id).strip() if employee_id else None
+        clean_tpl = str(session_title_template).strip() if session_title_template else None
+        if clean_emp:
+            kind = "employee"
+        elif command:
             kind = "command"
         elif recipe_name:
             kind = "recipe"
         else:
             kind = "prompt"
-        schedule_name = name or recipe_name or (command or "")[:40] or "unnamed"
+        schedule_name = (
+            name
+            or recipe_name
+            or (f"@{clean_emp}" if clean_emp else "")
+            or (command or "")[:40]
+            or "unnamed"
+        )
         schedule_prompt = prompt or (f"执行 recipe {recipe_name}" if recipe_name else "")
         schedule = {
             "id": f"sch_{uuid.uuid4().hex[:8]}",
             "name": schedule_name,
             "kind": kind,
+            "employee_id": clean_emp,
+            "session_title_template": clean_tpl,
             "prompt": schedule_prompt,
             "recipe": recipe_name,
             "recipe_name": recipe_name,  # backward compat
@@ -271,6 +303,114 @@ class SchedulerService:
         self._schedules.append(schedule)
         self._save()
         return schedule
+
+    def update_schedule(self, schedule_id: str, **updates: Any) -> dict[str, Any] | None:
+        """原地更新一条定时任务的可编辑字段，保留 ID、创建时间、历史与运行统计。"""
+        self._load()
+        target: dict[str, Any] | None = None
+        for s in self._schedules:
+            if s["id"] == schedule_id:
+                target = s
+                break
+        if target is None:
+            return None
+
+        editable_keys = (
+            "name",
+            "kind",
+            "employee_id",
+            "session_title_template",
+            "prompt",
+            "recipe",
+            "recipe_name",
+            "command",
+            "cwd",
+            "params",
+            "instructions",
+            "allowed_tools",
+            "disallowed_tools",
+            "interval_seconds",
+            "cron",
+            "overlap",
+            "timeout",
+            "start_at",
+            "end_at",
+            "notify",
+            "enabled",
+        )
+        for key in editable_keys:
+            if key not in updates:
+                continue
+            val = updates[key]
+            if key in ("employee_id", "session_title_template"):
+                val = str(val).strip() if val else None
+            elif key in ("allowed_tools", "disallowed_tools"):
+                val = list(val or [])
+            elif key == "params":
+                val = dict(val or {})
+            target[key] = val
+
+        if "recipe" in updates and "recipe_name" not in updates:
+            target["recipe_name"] = target.get("recipe")
+        elif "recipe_name" in updates and "recipe" not in updates:
+            target["recipe"] = target.get("recipe_name")
+
+        self._save()
+        return target
+
+    def preview_next_runs(
+        self,
+        schedule_like: dict[str, Any],
+        *,
+        count: int = 3,
+        employee_title: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """计算未来 N 次触发时间及对应的动态会话标题预览。"""
+        from frago.server.services import schedule_executor as ex
+
+        n = max(1, min(int(count), 10))
+        now = _now_utc()
+        cron_expr = str(schedule_like.get("cron") or "").strip()
+        interval = schedule_like.get("interval_seconds")
+        times: list[datetime] = []
+
+        if cron_expr:
+            try:
+                from croniter import croniter
+
+                it = croniter(cron_expr, now)
+                for _ in range(n):
+                    times.append(it.get_next(datetime))
+            except (ValueError, KeyError):
+                times = []
+        elif interval and int(interval) > 0:
+            sec = int(interval)
+            for i in range(n):
+                times.append(now + timedelta(seconds=sec * (i + 1)))
+
+        if not times:
+            times = [now + timedelta(days=i + 1) for i in range(n)]
+
+        base_seq = max(
+            int(schedule_like.get("run_count") or 0),
+            len(schedule_like.get("history") or []),
+        )
+        rows: list[dict[str, Any]] = []
+        for idx, dt in enumerate(times):
+            seq = base_seq + idx + 1
+            rows.append(
+                {
+                    "seq": seq,
+                    "triggered_at": dt.isoformat(),
+                    "session_title": ex.render_session_title(
+                        schedule_like,
+                        triggered_at=dt,
+                        seq=seq,
+                        employee_title=employee_title,
+                    ),
+                }
+            )
+        return rows
 
     def remove_schedule(self, schedule_id: str) -> bool:
         self._load()
@@ -462,34 +602,47 @@ class SchedulerService:
                 continue
 
     async def _execute(self, schedule: dict[str, Any]) -> None:
-        """到期执行。三种形态都由调度器自己拉起、自己收结果。"""
+        """到期执行。按 schedule_id 加锁防并发重入，四种形态都由调度器自己拉起、自己收结果。"""
         schedule_id = schedule["id"]
+        lock = self._get_schedule_lock(schedule_id)
 
         # Overlap check: skip if previous trigger is still active
         overlap = schedule.get("overlap", "skip")
-        if overlap == "skip" and schedule_id in self._active_schedule_ids:
+        if overlap == "skip" and (schedule_id in self._active_schedule_ids or lock.locked()):
             logger.info(
                 "[scheduler] Schedule %s: skipping due to active task (overlap=skip)",
                 schedule_id,
             )
             return
 
-        # Ensure we mutate the current dict in self._schedules even if _load() replaced the list
-        for s in self._schedules:
-            if s["id"] == schedule_id:
-                if s is not schedule:
-                    s.update(schedule)
-                    schedule = s
-                break
-
-        # Immediately update last_run_at to prevent re-triggering on next tick
-        schedule["last_run_at"] = _now_utc().isoformat()
-        schedule["run_count"] = schedule.get("run_count", 0) + 1
-        self._save()
-
         self._active_schedule_ids.add(schedule_id)
         try:
-            await self._execute_native(schedule)
+            async with lock:
+                # Ensure we mutate the current dict in self._schedules even if _load() replaced the list
+                for s in self._schedules:
+                    if s["id"] == schedule_id:
+                        if s is not schedule:
+                            s.update(schedule)
+                            schedule = s
+                        break
+
+                # Immediately update last_run_at to prevent re-triggering on next tick
+                schedule["last_run_at"] = _now_utc().isoformat()
+                schedule["run_count"] = schedule.get("run_count", 0) + 1
+                self._save()
+
+                await self._execute_native(schedule)
+        finally:
+            self._active_schedule_ids.discard(schedule_id)
+
+    async def run_manual(self, schedule: dict[str, Any], *, triggered_at: str) -> None:
+        """手动立即触发：加同一把 schedule_id 锁防并发重入，不改正常调度周期。"""
+        schedule_id = schedule["id"]
+        lock = self._get_schedule_lock(schedule_id)
+        self._active_schedule_ids.add(schedule_id)
+        try:
+            async with lock:
+                await self._execute_native(schedule, triggered_at=triggered_at)
         finally:
             self._active_schedule_ids.discard(schedule_id)
 
@@ -509,8 +662,16 @@ class SchedulerService:
             "consecutive_failures": schedule.get("consecutive_failures", 0),
         }
 
+        exec_schedule = dict(schedule)
+        exec_schedule["_triggered_at"] = triggered_at or schedule.get("last_run_at") or _now_utc().isoformat()
+        exec_schedule["_seq"] = max(
+            int(schedule.get("run_count") or 0),
+            len(schedule.get("history") or []) + (1 if triggered_at is not None else 0),
+            1,
+        )
+
         try:
-            outcome = await ex.run_scheduled(schedule)
+            outcome = await ex.run_scheduled(exec_schedule)
         except Exception as e:  # noqa: BLE001 — 一个任务炸掉不该带走调度循环
             logger.exception("[scheduler] %s native execution crashed", schedule_id)
             outcome = ex.RunOutcome(ok=False, kind=schedule.get("kind", "?"), error=str(e))
@@ -536,6 +697,8 @@ class SchedulerService:
                 )
             s["last_status"] = "success" if outcome.ok else "failed"
             s["last_session_id"] = outcome.session_id or None
+            if outcome.session_title:
+                s["last_session_title"] = outcome.session_title
             if outcome.ok:
                 s["last_success_at"] = _now_utc().isoformat()
                 s["last_digest"] = outcome.digest
@@ -557,7 +720,8 @@ class SchedulerService:
                 "task_id": None,
                 # 自然语言任务这一趟 CoreAgent 开的那场会话，以及命令/员工调用可能关联的会话编号。
                 "session_id": outcome.session_id or None,
-                "answer": outcome.stdout[:_ANSWER_LIMIT] if outcome.kind == "prompt" else None,
+                "session_title": outcome.session_title or None,
+                "answer": outcome.stdout[:_ANSWER_LIMIT] if outcome.kind in ("prompt", "employee") else None,
             }
             s["last_run"] = run_item
             history = s.setdefault("history", [])

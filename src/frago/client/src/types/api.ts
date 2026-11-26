@@ -189,6 +189,8 @@ export interface EmployeeItem {
   work_scope?: string | null;
   cwd?: string | null;
   skills?: string[];
+  recipes?: string[];
+  knowledge_domains?: string[];
   color?: string | null;
   last_used_at?: string | null;
 }
