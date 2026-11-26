@@ -33,7 +33,9 @@ import StackPopover, { type StackPopoverState } from './StackPopover';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
 import { squeeze, type BranchExtras, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
+import DecisionInboxView from './DecisionInboxView';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
+import { useDecisionInbox } from '@/hooks/useDecisionInbox';
 import NewSessionModal from './NewSessionModal';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
@@ -111,8 +113,16 @@ export { shortenPathMiddle, withTilde };
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
-  const selectedId = usePageStore((s) => s.workbenchSessionId);
+  // `#sessions/inbox` 占用同一个路由槽位，在页面层拆成 `isInboxOpen` 与真正的会话 `selectedId`，
+  // 避免任何会话级 hook 去请求 `/workbench/sessions/inbox/...`。
+  const routeSessionId = usePageStore((s) => s.workbenchSessionId);
+  const isInboxOpen = routeSessionId === 'inbox';
+  const selectedId = isInboxOpen ? null : routeSessionId;
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+  const lastSessionIdRef = useRef<string | null>(selectedId);
+  useEffect(() => {
+    if (selectedId) lastSessionIdRef.current = selectedId;
+  }, [selectedId]);
   const pendingWorkbenchLaunch = usePageStore((s) => s.pendingWorkbenchLaunch);
   const consumePendingWorkbenchLaunch = usePageStore((s) => s.consumePendingWorkbenchLaunch);
   const { t } = useTranslation();
@@ -164,8 +174,8 @@ export default function SessionWorkbenchPage() {
   /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
   const [creatingNew, setCreatingNew] = useState(false);
   useEffect(() => {
-    if (selectedId) setCreatingNew(false);
-  }, [selectedId]);
+    if (routeSessionId) setCreatingNew(false);
+  }, [routeSessionId]);
   /** 刚复制了哪一场的续接命令：页头「…」菜单里那一项换成勾选，1.5 秒后复原。 */
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const handleCopy = useCallback(
@@ -215,6 +225,14 @@ export default function SessionWorkbenchPage() {
   useEffect(() => {
     setIsForYou(() => (id: string) => forYou.infoOf(id) !== null);
   }, [forYou]);
+  const inbox = useDecisionInbox({
+    onMutated: (item) => {
+      if (item.source === 'session') {
+        void sessions.reload();
+        forYou.refresh();
+      }
+    },
+  });
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
   // 开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它且客户端仍存活。
   // 已退出的空壳终端（`client_alive === false`，仅留在 `forYou.rows` 供清理弹窗用）不算有活跃终端。
@@ -1207,6 +1225,8 @@ export default function SessionWorkbenchPage() {
     [activeStackMarks, loadedRecordIds]
   );
 
+  const hasMainPane = Boolean(selectedId || isInboxOpen || showLaunch || creatingNew);
+
   return (
     /* 方案 4A 两栏布局：左栏会话清单 288px + 主栏记录流；右栏拆分移除，暂存交互收拢到滚动条轨道。 */
     <div
@@ -1214,16 +1234,26 @@ export default function SessionWorkbenchPage() {
       className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
     >
       {/* 手机上一次只放得下一栏：没选会话时给清单，选了或正在新建时整屏让给中栏。 */}
-      <div className={`min-h-0 min-w-0 ${selectedId || showLaunch || creatingNew ? 'phone:hidden' : ''}`}>
+      <div className={`min-h-0 min-w-0 ${hasMainPane ? 'phone:hidden' : ''}`}>
         <SessionRail
           state={sessions}
-          selectedId={creatingNew ? null : selectedId}
+          selectedId={creatingNew || isInboxOpen ? null : selectedId}
           onSelect={(sid) => {
             setCreatingNew(false);
             setWorkbenchSessionId(sid);
           }}
           creatingNew={creatingNew}
           onToggleNew={() => setCreatingNew((v) => !v)}
+          inbox={inbox}
+          isInboxOpen={isInboxOpen}
+          onOpenInbox={(proposalId) => {
+            setCreatingNew(false);
+            setStackPopover(null);
+            if (proposalId) {
+              inbox.setSelectedProposalId(proposalId);
+            }
+            setWorkbenchSessionId('inbox');
+          }}
           launch={launch}
           onDismissLaunch={dismiss}
           onCreated={(pending, text) => {
@@ -1249,7 +1279,7 @@ export default function SessionWorkbenchPage() {
 
       <div
         className={`flex min-h-0 min-w-0 flex-col bg-bg-primary ${
-          selectedId || showLaunch || creatingNew ? '' : 'phone:hidden'
+          hasMainPane ? '' : 'phone:hidden'
         }`}
       >
         {creatingNew ? (
@@ -1260,6 +1290,21 @@ export default function SessionWorkbenchPage() {
               setCreatingNew(false);
               setWorkbenchSessionId(null);
               begin(pending, text);
+            }}
+          />
+        ) : isInboxOpen ? (
+          <DecisionInboxView
+            inbox={inbox}
+            onBackToSessions={() => {
+              setCreatingNew(false);
+              const prevId = lastSessionIdRef.current;
+              const validPrev =
+                prevId && sessions.sessions.some((s) => s.session_id === prevId) ? prevId : null;
+              setWorkbenchSessionId(validPrev);
+            }}
+            onOpenSession={(sid) => {
+              setCreatingNew(false);
+              openSession(sid);
             }}
           />
         ) : (

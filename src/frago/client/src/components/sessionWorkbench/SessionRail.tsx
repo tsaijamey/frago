@@ -70,6 +70,7 @@ import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
+import type { DecisionInboxHookState } from '@/hooks/useDecisionInbox';
 import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
 import { stripWebBridgeContext } from '@/utils/webBridgeContext';
@@ -229,6 +230,15 @@ export function placeHeld(sections: RailSections, held: HeldSlot | null): RailSe
 }
 
 
+function formatInboxMiniTime(ts: number | null | undefined): string {
+  if (!ts || !Number.isFinite(ts)) return '';
+  const ms = ts > 1e12 ? ts : ts * 1000;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export interface SessionRailProps {
   state: WorkbenchSessionsState;
   selectedId: string | null;
@@ -281,6 +291,12 @@ export interface SessionRailProps {
   creatingNew?: boolean;
   /** 切换中栏内联新建会话起始页；不传时退回左栏自持状态（供单独挂载左栏的组件测试使用）。 */
   onToggleNew?: () => void;
+  /** 统一待拍板收件箱状态（由页面层持有；不传时不渲染顶部胶囊，保留独立左栏单测兼容性）。 */
+  inbox?: DecisionInboxHookState;
+  /** 当前是否处于 `#sessions/inbox` 收件箱视图。 */
+  isInboxOpen?: boolean;
+  /** 打开收件箱或直达其中某一项。 */
+  onOpenInbox?: (proposalId?: string) => void;
 }
 
 export default function SessionRail({
@@ -303,6 +319,9 @@ export default function SessionRail({
   today,
   creatingNew = false,
   onToggleNew,
+  inbox,
+  isInboxOpen = false,
+  onOpenInbox,
 }: SessionRailProps) {
   const { sessions, todaySessions, visible, counts, loading, error, filter, setFilter, reload } = state;
   const { t } = useTranslation();
@@ -357,11 +376,22 @@ export default function SessionRail({
     [todaySessions, visible]
   );
 
+  const snoozedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!inbox) return ids;
+    for (const item of inbox.items) {
+      if (item.source === 'session' && item.status === 'snoozed' && item.session_id) {
+        ids.add(item.session_id);
+      }
+    }
+    return ids;
+  }, [inbox]);
+
   const railCounts = useMemo<Record<RailFilter, number>>(() => {
     if (baseSessions.length === 0) {
       return {
         all: counts.all,
-        decision: counts['for-you'],
+        decision: 0,
         backlog: 0,
         running: 0,
       };
@@ -371,8 +401,9 @@ export default function SessionRail({
     let running = 0;
     for (const s of baseSessions) {
       const k = lifeOf(s).key;
-      if (k === 'waiting') decision += 1;
-      else if (k === 'callback') backlog += 1;
+      if (k === 'waiting' && !isScheduledSession(s) && !snoozedSessionIds.has(s.session_id)) {
+        decision += 1;
+      } else if (k === 'callback') backlog += 1;
       else if (k === 'running') running += 1;
     }
     return {
@@ -381,27 +412,33 @@ export default function SessionRail({
       backlog,
       running,
     };
-  }, [baseSessions, counts, lifeOf]);
+  }, [baseSessions, counts, lifeOf, snoozedSessionIds]);
 
   const filteredVisible = useMemo(() => {
     if (railFilter === 'all') return visible;
     if (railFilter === 'decision') {
+      const baseIds = new Set(baseSessions.map((b) => b.session_id));
       return baseSessions.filter(
         (s) =>
-          lifeOf(s).key === 'waiting' ||
-          sessions.some(
-            (k) =>
-              k.parent_session_id === s.session_id &&
-              k.relation?.kind === 'branch' &&
-              lifeOf(k).key === 'waiting'
-          )
+          !isScheduledSession(s) &&
+          !snoozedSessionIds.has(s.session_id) &&
+          (lifeOf(s).key === 'waiting' ||
+            sessions.some(
+              (k) =>
+                baseIds.has(k.session_id) &&
+                k.parent_session_id === s.session_id &&
+                k.relation?.kind === 'branch' &&
+                !isScheduledSession(k) &&
+                !snoozedSessionIds.has(k.session_id) &&
+                lifeOf(k).key === 'waiting'
+            ))
       );
     }
     if (railFilter === 'backlog') {
       return baseSessions.filter((s) => lifeOf(s).key === 'callback');
     }
     return baseSessions.filter((s) => lifeOf(s).key === 'running');
-  }, [railFilter, visible, baseSessions, lifeOf, sessions]);
+  }, [railFilter, visible, baseSessions, lifeOf, sessions, snoozedSessionIds]);
   /** 哪几场把自己派出去的 worker 展开着。默认一场都不展开——清单的主干是主会话。 */
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   /** 认不出谁派的那堆 worker 那一区是不是展开着。默认折起来。 */
@@ -532,8 +569,8 @@ export default function SessionRail({
     const todayFloor = startOfToday();
     const matchesRailFilter = (s: WorkbenchSession): boolean => {
       if (railFilter === 'all') return true;
+      if (railFilter === 'decision') return false;
       const k = lifeOf(s).key;
-      if (railFilter === 'decision') return k === 'waiting';
       if (railFilter === 'backlog') return k === 'callback';
       return k === 'running';
     };
@@ -1170,8 +1207,117 @@ export default function SessionRail({
     }
   };
 
+  const inboxPendingItems = useMemo(
+    () => (inbox ? inbox.items.filter((i) => i.status === 'pending') : []),
+    [inbox]
+  );
+
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-r border-border-color bg-bg-secondary">
+      {inbox ? (
+        <div className="inbox-dock shrink-0" data-testid="rail-inbox-dock">
+          <div className={`inbox-capsule-row ${isInboxOpen ? 'active' : ''}`}>
+            <button
+              type="button"
+              className="inbox-capsule"
+              id="rail-inbox-toggle"
+              data-testid="rail-inbox-capsule"
+              onClick={() => onOpenInbox?.()}
+              title={t('workbench.inbox.capsuleTooltip')}
+            >
+              <span
+                className={`inbox-pill-cnt ${inbox.counts.pending ? '' : 'zero'}`}
+                id="rail-inbox-cnt"
+                data-testid="rail-inbox-cnt"
+              >
+                {inbox.counts.pending}
+              </span>
+              <span className="inbox-capsule-title">{t('workbench.inbox.capsuleTitle')}</span>
+              <span className="inbox-capsule-sub" id="rail-inbox-sub">
+                {inbox.counts.pending > 0
+                  ? t('workbench.inbox.capsuleSubPending', {
+                      schedule: inbox.counts.schedule,
+                      session: inbox.counts.session,
+                    })
+                  : t('workbench.inbox.capsuleSubZero', { snoozed: inbox.counts.snoozed })}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="inbox-chev-btn"
+              id="rail-inbox-chevron"
+              data-testid="rail-inbox-chevron"
+              aria-expanded={inbox.railExpanded}
+              title={
+                inbox.railExpanded
+                  ? t('workbench.inbox.collapseDrawer')
+                  : t('workbench.inbox.expandDrawer')
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                inbox.toggleRailExpanded();
+              }}
+            >
+              {inbox.railExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          </div>
+          {inbox.railExpanded ? (
+            <div
+              className="inbox-mini-drawer"
+              id="rail-mini-drawer"
+              data-testid="rail-inbox-mini-drawer"
+            >
+              {inboxPendingItems.length > 0 ? (
+                inboxPendingItems.map((item) => (
+                  <button
+                    key={item.proposal_id}
+                    type="button"
+                    className={`inbox-mini-item ${
+                      isInboxOpen && inbox.selectedProposalId === item.proposal_id ? 'sel' : ''
+                    }`}
+                    data-testid={`rail-inbox-mini-item-${item.proposal_id}`}
+                    onClick={() => onOpenInbox?.(item.proposal_id)}
+                  >
+                    <div className="inbox-mini-top">
+                      <span
+                        className={`inbox-pill ${item.source === 'schedule' ? 'src-sch' : 'src-ses'}`}
+                        style={{ height: 16, fontSize: 10, padding: '0 5px' }}
+                      >
+                        {item.source === 'schedule'
+                          ? t('workbench.inbox.srcShortSchedule')
+                          : t('workbench.inbox.srcShortSession')}
+                      </span>
+                      <span className="inbox-mini-ttl trunc">{item.title}</span>
+                    </div>
+                    <div className="inbox-mini-meta">
+                      <span>{item.employee_name || item.employee_id || item.source_label}</span>
+                      <span>·</span>
+                      <span
+                        className={
+                          item.risk === 'high'
+                            ? 'text-accent-error'
+                            : item.risk === 'medium'
+                              ? 'text-accent-warning'
+                              : undefined
+                        }
+                      >
+                        {item.risk_label}
+                      </span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        {formatInboxMiniTime(item.updated_at || item.created_at)}
+                      </span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="inbox-mini-empty" data-testid="rail-inbox-mini-empty">
+                  {t('workbench.inbox.miniEmpty', { snoozed: inbox.counts.snoozed })}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="rail-top shrink-0 space-y-1.5 border-b border-border-color px-2.5 pb-2.5 pt-2.5">
         {/* 搜索入口与新建挤在一行。新建从一整块实心绿降成右边一颗中性图标按钮：人来这一页
             是为了找会话、接着说话，这一屏唯一的实心绿留给 Send。 */}

@@ -32,6 +32,8 @@ export const MessageType = {
   SESSION_QUEUE_UPDATE: 'session_queue_update',
   // The session page's side panel: the observer finished a pass over one session.
   SESSION_OBSERVER_UPDATE: 'session_observer_update',
+  // 统一待拍板收件箱有增改：通知收件箱列表与左栏胶囊实时重拉
+  DECISION_INBOX_UPDATE: 'decision_inbox_update',
   // 结对页右栏：中继那侧说对面动了，这一栏该重取一次（data.code 是哪个 team）
   TEAM_PEER_ACTIVITY: 'team_peer_activity',
 

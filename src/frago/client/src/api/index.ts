@@ -1679,4 +1679,66 @@ export const getSessionTerminal = withMode(
     }),
 );
 
+// ============================================================
+// 统一待拍板收件箱（Decision Inbox）
+// ============================================================
+
+export type {
+  DecisionInboxActionType,
+  DecisionInboxCounts,
+  DecisionInboxItem,
+  DecisionInboxListResponse,
+  DecisionInboxMutationResponse,
+  DecisionInboxOption,
+  DecisionInboxRisk,
+  DecisionInboxSource,
+  DecisionInboxStatus,
+  RejectDecisionRequest,
+  ResolveDecisionRequest,
+} from './client';
+
+const DECISION_INBOX_UNAVAILABLE = 'Decision inbox API not available in pywebview mode';
+
+export const getDecisionInbox = withMode(
+  (params?: { status?: 'all' | 'pending' | 'snoozed'; source?: 'all' | 'schedule' | 'session' }) =>
+    httpApi.getDecisionInbox(params),
+  async (_params?: {
+    status?: 'all' | 'pending' | 'snoozed';
+    source?: 'all' | 'schedule' | 'session';
+  }): Promise<httpApi.DecisionInboxListResponse> => ({
+    items: [],
+    counts: { pending: 0, schedule: 0, session: 0, snoozed: 0 },
+  }),
+);
+
+export const resolveDecisionItem = withMode(
+  (proposalId: string, body?: httpApi.ResolveDecisionRequest) =>
+    httpApi.resolveDecisionItem(proposalId, body),
+  (_proposalId: string, _body?: httpApi.ResolveDecisionRequest) =>
+    Promise.reject(new Error(DECISION_INBOX_UNAVAILABLE)),
+);
+
+export const rejectDecisionItem = withMode(
+  (proposalId: string, body?: httpApi.RejectDecisionRequest) =>
+    httpApi.rejectDecisionItem(proposalId, body),
+  (_proposalId: string, _body?: httpApi.RejectDecisionRequest) =>
+    Promise.reject(new Error(DECISION_INBOX_UNAVAILABLE)),
+);
+
+export const snoozeDecisionItem = withMode(
+  (proposalId: string) => httpApi.snoozeDecisionItem(proposalId),
+  (_proposalId: string) => Promise.reject(new Error(DECISION_INBOX_UNAVAILABLE)),
+);
+
+export const unsnoozeDecisionItem = withMode(
+  (proposalId: string) => httpApi.unsnoozeDecisionItem(proposalId),
+  (_proposalId: string) => Promise.reject(new Error(DECISION_INBOX_UNAVAILABLE)),
+);
+
+export const undoDecisionItem = withMode(
+  (proposalId: string) => httpApi.undoDecisionItem(proposalId),
+  (_proposalId: string) => Promise.reject(new Error(DECISION_INBOX_UNAVAILABLE)),
+);
+
+
 

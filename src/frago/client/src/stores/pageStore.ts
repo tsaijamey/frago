@@ -147,7 +147,9 @@ export const usePageStore = create<PageSlice>((set, get) => ({
   workbenchSessionId: initial.page === 'session_workbench' ? initial.id : null,
   pendingWorkbenchLaunch: null,
   promotedTodayIds:
-    initial.page === 'session_workbench' && initial.id ? [initial.id] : [],
+    initial.page === 'session_workbench' && initial.id && initial.id !== 'inbox'
+      ? [initial.id]
+      : [],
 
   switchPage: (page, id) => {
     const nextWorkbenchSessionId =
@@ -161,6 +163,7 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       promotedTodayIds:
         page === 'session_workbench' &&
         nextWorkbenchSessionId &&
+        nextWorkbenchSessionId !== 'inbox' &&
         !state.promotedTodayIds.includes(nextWorkbenchSessionId)
           ? [...state.promotedTodayIds, nextWorkbenchSessionId]
           : state.promotedTodayIds,
@@ -185,7 +188,10 @@ export const usePageStore = create<PageSlice>((set, get) => ({
       workbenchSessionId:
         page === 'session_workbench' ? (id ?? null) : state.workbenchSessionId,
       promotedTodayIds:
-        page === 'session_workbench' && id && !state.promotedTodayIds.includes(id)
+        page === 'session_workbench' &&
+        id &&
+        id !== 'inbox' &&
+        !state.promotedTodayIds.includes(id)
           ? [...state.promotedTodayIds, id]
           : state.promotedTodayIds,
     }));
@@ -199,7 +205,7 @@ export const usePageStore = create<PageSlice>((set, get) => ({
   },
   promoteSessionToToday: (sessionId) => {
     const clean = sessionId.trim();
-    if (!clean) return;
+    if (!clean || clean === 'inbox') return;
     set((state) =>
       state.promotedTodayIds.includes(clean)
         ? state

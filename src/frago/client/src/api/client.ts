@@ -2150,4 +2150,89 @@ export async function getSessionChildren(sessionId: string): Promise<SessionChil
   );
 }
 
+// ============================================================
+// 统一待拍板收件箱（Decision Inbox）
+// ============================================================
+
+export type {
+  DecisionInboxActionType,
+  DecisionInboxCounts,
+  DecisionInboxItem,
+  DecisionInboxListResponse,
+  DecisionInboxMutationResponse,
+  DecisionInboxOption,
+  DecisionInboxRisk,
+  DecisionInboxSource,
+  DecisionInboxStatus,
+  RejectDecisionRequest,
+  ResolveDecisionRequest,
+} from '@/types/api';
+import type {
+  DecisionInboxListResponse,
+  DecisionInboxMutationResponse,
+  RejectDecisionRequest,
+  ResolveDecisionRequest,
+} from '@/types/api';
+
+/** 拉取统一待拍板收件箱列表与同源聚合计数。 */
+export async function getDecisionInbox(params?: {
+  status?: 'all' | 'pending' | 'snoozed';
+  source?: 'all' | 'schedule' | 'session';
+}): Promise<DecisionInboxListResponse> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set('status', params.status);
+  if (params?.source) sp.set('source', params.source);
+  const qs = sp.toString();
+  return fetchApi<DecisionInboxListResponse>(`/workbench/decisions${qs ? `?${qs}` : ''}`);
+}
+
+/** 批准或选定方案批示一条待拍板事项。 */
+export async function resolveDecisionItem(
+  proposalId: string,
+  body: ResolveDecisionRequest = {}
+): Promise<DecisionInboxMutationResponse> {
+  return fetchApi<DecisionInboxMutationResponse>(
+    `/workbench/decisions/${encodeURIComponent(proposalId)}/resolve`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/** 驳回一条待拍板事项。 */
+export async function rejectDecisionItem(
+  proposalId: string,
+  body: RejectDecisionRequest = {}
+): Promise<DecisionInboxMutationResponse> {
+  return fetchApi<DecisionInboxMutationResponse>(
+    `/workbench/decisions/${encodeURIComponent(proposalId)}/reject`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/** 搁置一条待拍板事项（可逆）。 */
+export async function snoozeDecisionItem(proposalId: string): Promise<DecisionInboxMutationResponse> {
+  return fetchApi<DecisionInboxMutationResponse>(
+    `/workbench/decisions/${encodeURIComponent(proposalId)}/snooze`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+}
+
+/** 撤销搁置，恢复为 pending。 */
+export async function unsnoozeDecisionItem(
+  proposalId: string
+): Promise<DecisionInboxMutationResponse> {
+  return fetchApi<DecisionInboxMutationResponse>(
+    `/workbench/decisions/${encodeURIComponent(proposalId)}/unsnooze`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+}
+
+/** 撤销最近一次可逆状态切换（仅 pending <-> snoozed）。 */
+export async function undoDecisionItem(proposalId: string): Promise<DecisionInboxMutationResponse> {
+  return fetchApi<DecisionInboxMutationResponse>(
+    `/workbench/decisions/${encodeURIComponent(proposalId)}/undo`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+}
+
+
 

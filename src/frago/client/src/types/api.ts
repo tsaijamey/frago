@@ -1576,3 +1576,105 @@ export interface SessionChildrenResponse {
   child_processes: SessionChildProcess[];
 }
 
+// ============================================================
+// 统一待拍板收件箱（Decision Inbox / PM-RELEASE-20261124-TODO-TOP2-1）
+// ============================================================
+
+export type DecisionInboxSource = 'schedule' | 'session';
+export type DecisionInboxActionType =
+  | 'single-choice'
+  | 'multi-choice'
+  | 'binary'
+  | 'text-answer'
+  | 'choice-and-text'
+  | 'choice';
+export type DecisionInboxRisk = 'low' | 'medium' | 'high';
+export type DecisionInboxStatus =
+  | 'pending'
+  | 'snoozed'
+  | 'resolved'
+  | 'rejected'
+  | 'expired'
+  | 'superseded';
+
+export interface DecisionInboxOption {
+  key: string;
+  label: string;
+  effect?: string;
+  recommended?: boolean;
+  reversible?: boolean;
+}
+
+export interface DecisionInboxItem {
+  proposal_id: string;
+  dedup_key: string;
+  source: DecisionInboxSource;
+  source_label: string;
+  action_type: DecisionInboxActionType;
+  risk: DecisionInboxRisk;
+  risk_label: string;
+  irreversible: boolean;
+  title: string;
+  summary: string;
+  why: string;
+  skip_reason: string;
+  impact_scope: string;
+  evidence: string;
+  options: DecisionInboxOption[];
+  recommended: string | null;
+  selected_opt: string | null;
+  draft: string | null;
+  suggestion: string | null;
+  suggestions?: string[];
+  multi?: boolean;
+  session_id: string | null;
+  session_title?: string | null;
+  schedule_id: string | null;
+  schedule_name: string | null;
+  employee_id: string | null;
+  employee_name: string | null;
+  employee_color: string | null;
+  status: DecisionInboxStatus;
+  ttl_hours: number | null;
+  created_at: number;
+  updated_at: number;
+  last_seen_at: number;
+  expires_at: number | null;
+  occurrence_count: number;
+  last_reversible_from_state: string | null;
+  resolution: Record<string, unknown> | null;
+  schedule_notified_at?: number | null;
+}
+
+export interface DecisionInboxCounts {
+  pending: number;
+  schedule: number;
+  session: number;
+  snoozed: number;
+}
+
+export interface DecisionInboxListResponse {
+  items: DecisionInboxItem[];
+  counts: DecisionInboxCounts;
+}
+
+export interface DecisionInboxMutationResponse {
+  item: DecisionInboxItem;
+  counts: DecisionInboxCounts;
+  dispatch?: Record<string, unknown> | null;
+}
+
+export interface ResolveDecisionRequest {
+  choice?: string | null;
+  choices?: string[] | null;
+  answer_text?: string | null;
+  note?: string | null;
+  actor?: string;
+}
+
+export interface RejectDecisionRequest {
+  note?: string | null;
+  actor?: string;
+}
+
+
