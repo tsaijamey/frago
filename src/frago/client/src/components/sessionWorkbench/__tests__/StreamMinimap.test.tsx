@@ -9,8 +9,9 @@
  * jsdom 里没有几何，所有位置都是 0——这里只核对画了什么、画成什么颜色，不核对画在哪。
  */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import StreamMinimap from '../StreamMinimap';
 
 import RecordStream from '../RecordStream';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
@@ -384,5 +385,190 @@ describe('点没收口的分支标注：打开分支 / 标记已收口', () => {
     expect(screen.getByTestId('branch-mark-menu')).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByTestId('branch-mark-menu')).toBeNull();
+  });
+});
+
+describe('方案 4A：过程旁白过滤、滚动条暂存轨、180ms 悬停提示与键盘滚动', () => {
+  let painted: Map<string, { ranges: Range[]; priority?: number }>;
+
+  beforeEach(() => {
+    painted = fakeHighlights();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (CSS as unknown as Record<string, unknown>).highlights;
+    delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+  });
+
+  it('tool.call 之前的中间过程旁白带有 data-minimap-exclude 且不画进缩略条，只保留用户提问与最终回复', () => {
+    const u1 = rec({ kind: 'user.say', payload: { text: '查一下配置' } });
+    const midNarration = rec({ kind: 'agent.say', payload: { text: '我先看下文件' } });
+    const tc = rec({
+      kind: 'tool.call',
+      payload: { call_id: 'c-nar', tool_name: 'Read', tool_family: 'file-read', args: { file_path: '/a' } },
+    });
+    const tr = rec({ kind: 'tool.result', payload: { call_id: 'c-nar', tool_name: 'Read', status: 'ok', body: 'ok' } });
+    const finalSay = rec({ kind: 'agent.say', payload: { text: '查完了，结论如下' } });
+
+    const { container } = render(
+      <RecordStream
+        sessionId={SID}
+        records={[u1, midNarration, tc, tr, finalSay]}
+        loading={false}
+        loadingOlder={false}
+        hasOlder={false}
+        error={null}
+        onLoadOlder={() => {}}
+        minimap
+      />
+    );
+
+    // 切到全部镜头检验：即使中栏展示中间旁白 DOM，仍带有 data-minimap-exclude="true"
+    fireEvent.click(screen.getByTestId('lens-all'));
+    const midBody = container.querySelector(`[data-record-id="${midNarration.id}"][data-record-body]`);
+    const finalBody = container.querySelector(`[data-record-id="${finalSay.id}"][data-record-body]`);
+    expect(midBody?.getAttribute('data-minimap-exclude')).toBe('true');
+    expect(finalBody?.hasAttribute('data-minimap-exclude')).toBe(false);
+
+    const bars = [...screen.getByTestId('stream-minimap').querySelectorAll('[data-minimap-bar]')];
+    expect(bars.map((b) => b.getAttribute('data-minimap-bar'))).toEqual(['user', 'agent']);
+    expect(painted.size).toBe(0);
+  });
+
+  it('展示滚动条暂存轨标签与顶部汇总胶囊、支持 180ms 悬停提示与 stackFreeze 冻结', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 480 });
+
+    const unloaded = mark('s-old', 'missing-record-id', '更早的决策');
+    const activeLoaded = mark('s-now', reply.id, '第三点待定', { note: '先核对配置' });
+    const usedMark = mark('s-used', user.id, '先看', { used: true, used_at: 10 });
+    const onOpenPopover = vi.fn();
+    const onFreezeChange = vi.fn();
+    const onUserScroll = vi.fn();
+
+    const scrollBox = document.createElement('div');
+    Object.defineProperty(scrollBox, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(scrollBox, 'clientHeight', { configurable: true, value: 480 });
+    scrollBox.scrollTop = 100;
+    const recEl = document.createElement('div');
+    recEl.setAttribute('data-record-id', reply.id);
+    recEl.getBoundingClientRect = () => ({ top: 240, left: 0, right: 200, bottom: 300 } as DOMRect);
+    scrollBox.appendChild(recEl);
+    document.body.appendChild(scrollBox);
+
+    try {
+      const scrollRef = { current: scrollBox };
+      const { rerender } = render(
+        <StreamMinimap
+          scrollRef={scrollRef}
+          ticks={[]}
+          version={1}
+          onUserScroll={onUserScroll}
+          marks={[unloaded, activeLoaded, usedMark]}
+          onOpenPopover={onOpenPopover}
+          onFreezeChange={onFreezeChange}
+        />
+      );
+
+      // 顶部汇总胶囊与轨侧标签同时渲染
+      expect(screen.getByTestId('stack-top-summary')).toBeTruthy();
+      const label = screen.getByTestId('stack-rail-label');
+      expect(label.getAttribute('data-mark-id')).toBe('s-now');
+      expect(label.textContent).toContain('先核对配置');
+
+      // 悬停在标签层触发 stackFreeze，180ms 后出现 tooltip
+      const layer = screen.getByTestId('stack-labels-layer');
+      fireEvent.mouseEnter(layer);
+      expect(screen.getByTestId('stream-minimap-dock').getAttribute('data-frozen')).toBe('true');
+      expect(onFreezeChange).toHaveBeenLastCalledWith(true);
+
+      fireEvent.mouseEnter(label);
+      expect(screen.queryByTestId('stack-hover-tip')).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(185);
+      });
+      expect(screen.getByTestId('stack-hover-tip').textContent).toContain('先核对配置');
+
+      // 点击标签触发 onOpenPopover
+      fireEvent.click(label);
+      expect(onOpenPopover).toHaveBeenCalledTimes(1);
+      expect(onOpenPopover.mock.calls[0][0].mode).toBe('item');
+      expect(onOpenPopover.mock.calls[0][0].markId).toBe('s-now');
+
+      // 离开标签层，若 popoverOpen 为 true 仍保持冻结
+      fireEvent.mouseLeave(layer);
+      rerender(
+        <StreamMinimap
+          scrollRef={scrollRef}
+          ticks={[]}
+          version={1}
+          onUserScroll={onUserScroll}
+          marks={[unloaded, activeLoaded, usedMark]}
+          popoverOpen
+          onOpenPopover={onOpenPopover}
+          onFreezeChange={onFreezeChange}
+        />
+      );
+      expect(screen.getByTestId('stream-minimap-dock').getAttribute('data-frozen')).toBe('true');
+
+      // 键盘方向键滚动触发 onUserScroll 并更新 scrollTop
+      const track = screen.getByTestId('stream-minimap');
+      fireEvent.keyDown(track, { key: 'ArrowDown' });
+      expect(onUserScroll).toHaveBeenCalledTimes(1);
+      expect(scrollBox.scrollTop).toBe(148);
+
+      fireEvent.keyDown(track, { key: 'End' });
+      expect(scrollBox.scrollTop).toBe(720);
+
+      fireEvent.keyDown(track, { key: 'Home' });
+      expect(scrollBox.scrollTop).toBe(0);
+    } finally {
+      scrollBox.remove();
+    }
+  });
+
+  it('矮视口（railHeight < 480px）下 SVG viewBox 高度与实测轨道高度一致，折线与标签中点对齐', () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 300 });
+    const active = mark('s-short', reply.id, '矮视口标签', { note: '短窗口校验' });
+
+    const scrollBox = document.createElement('div');
+    Object.defineProperty(scrollBox, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(scrollBox, 'clientHeight', { configurable: true, value: 300 });
+    scrollBox.scrollTop = 0;
+    const recEl = document.createElement('div');
+    recEl.setAttribute('data-record-id', reply.id);
+    recEl.getBoundingClientRect = () => ({ top: 150, left: 0, right: 200, bottom: 210 } as DOMRect);
+    scrollBox.appendChild(recEl);
+    document.body.appendChild(scrollBox);
+
+    try {
+      render(
+        <StreamMinimap
+          scrollRef={{ current: scrollBox }}
+          ticks={[]}
+          version={1}
+          onUserScroll={vi.fn()}
+          marks={[active]}
+          onOpenPopover={vi.fn()}
+          onFreezeChange={vi.fn()}
+        />
+      );
+
+      const layer = screen.getByTestId('stack-labels-layer');
+      const svg = layer.querySelector('svg.mm-leader-svg');
+      expect(svg).not.toBeNull();
+      const viewBoxParts = (svg!.getAttribute('viewBox') || '').split(' ').map(Number);
+      expect(viewBoxParts[3]).toBe(300);
+
+      const label = screen.getByTestId('stack-rail-label');
+      const labelTop = Number.parseFloat(label.style.top);
+      const labelMidY = labelTop + 11; // STACK_LABEL_H (22) / 2
+      const pathD = svg!.querySelector('path')?.getAttribute('d') || '';
+      const startY = Number.parseFloat(pathD.split(' ')[2]);
+      expect(Math.abs(startY - labelMidY)).toBeLessThan(0.2);
+    } finally {
+      scrollBox.remove();
+    }
   });
 });

@@ -19,6 +19,8 @@
 export interface ComposerQuoteItem {
   id: string;
   text: string;
+  /** 来源暂存标注编号：存在时与滚动条暂存轨双向绑定（移除引用卡片自动退回未处理态）。 */
+  sourceMarkId?: string;
 }
 
 export interface TextQuoteBlockItem {

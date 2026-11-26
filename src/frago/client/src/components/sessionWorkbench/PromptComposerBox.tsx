@@ -79,7 +79,7 @@ export interface PromptComposerBoxProps {
   onRemoveEmployee?: (id: string) => void;
   employeesCatalog?: EmployeeItem[];
   quotes?: ComposerQuoteItem[];
-  onAddQuote?: (quoteText: string) => void;
+  onAddQuote?: (quoteText: string, sourceMarkId?: string) => void;
   onRemoveQuote?: (id: string) => void;
   onAddFiles: (files: FileList | File[]) => void | Promise<void>;
   attachCount: number;

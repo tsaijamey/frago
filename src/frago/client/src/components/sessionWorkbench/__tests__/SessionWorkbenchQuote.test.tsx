@@ -325,7 +325,10 @@ describe('暂存转用过：一轮还没说完也照样转', () => {
     api.getSessionMarks.mockResolvedValue({ version: 1, marks: [stacked] });
     await mountOn(MAIN);
     await act(async () => {
-      fireEvent.click(await screen.findByTestId('stack-item-fill'));
+      fireEvent.click(await screen.findByTestId('composer-stack-pill'));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('stack-row-fill'));
     });
     const input = (await screen.findByTestId('composer-input')) as HTMLTextAreaElement;
     await waitFor(() =>
@@ -340,6 +343,53 @@ describe('暂存转用过：一轮还没说完也照样转', () => {
     const calls = api.putSessionMarks.mock.calls;
     const body = calls[calls.length - 1][1] as { marks: WorkbenchMark[] };
     expect(body.marks.find((m) => m.id === 'mk_s')?.used).toBe(true);
+  });
+
+  it('方案 4A 两栏布局无右栏、暂存与草稿双向同步，以及删除后 4 秒撤销恢复', async () => {
+    api.getSessionMarks.mockResolvedValue({ version: 1, marks: [stacked] });
+    await mountOn(MAIN);
+
+    // 1. 仅渲染左栏 + 主栏两栏结构，不再渲染右栏 ReportPanel
+    const pageRoot = document.querySelector('[data-session-menu-page]');
+    expect(pageRoot?.className).toContain('grid-cols-[288px_minmax(0,1fr)]');
+    expect(screen.queryByTestId('report-lower')).toBeNull();
+
+    // 2. 填入草稿 -> 再次打开浮层显示「移出草稿」，点击后从输入区撤回并恢复待使用
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('composer-stack-pill'));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('stack-row-fill'));
+    });
+    expect(await screen.findByTestId('text-quote-preview')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('composer-stack-pill'));
+    });
+    expect(screen.getByTestId('stack-row-remove-draft')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('stack-row-remove-draft'));
+    });
+    await waitFor(() => expect(screen.queryByTestId('text-quote')).toBeNull());
+    expect(screen.getByTestId('stack-row-fill')).toBeTruthy();
+
+    // 3. 切入单条态删除 -> 出现 4s 撤销条，点击撤销恢复该暂存条目
+    const rowMain = screen.getByTestId('stack-list-row').querySelector('.sp-row-main')!;
+    await act(async () => {
+      fireEvent.click(rowMain);
+    });
+    expect(screen.getByTestId('stack-popover').getAttribute('data-mode')).toBe('item');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('stack-popover-delete'));
+    });
+    expect(screen.getByTestId('stack-delete-toast')).toBeTruthy();
+    expect(screen.queryByTestId('composer-stack-pill')).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('stack-toast-undo'));
+    });
+    expect(screen.queryByTestId('stack-delete-toast')).toBeNull();
+    expect(await screen.findByTestId('composer-stack-pill')).toBeTruthy();
   });
 });
 

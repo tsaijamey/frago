@@ -98,8 +98,9 @@ export interface SendToSessionState {
    * 人通过 Quote 引用进输入框的原文片段，发出去时按 `"""\n...\n"""\n>>> ` 拼入消息。
    */
   quotes: ComposerQuoteItem[];
-  addQuote: (text: string) => void;
+  addQuote: (text: string, sourceMarkId?: string) => void;
   removeQuote: (id: string) => void;
+  removeQuoteByMarkId: (markId: string) => void;
   clearQuotes: () => void;
   sending: boolean;
   /** 失败原因，照抄服务端的说法。成功或重新发送时清掉。 */
@@ -341,14 +342,20 @@ export function useSendToSession(
   const removeEmployee = useCallback((id: string) => {
     setEmployees((prev) => prev.filter((e) => e.member_post_id !== id));
   }, []);
-  const addQuote = useCallback((rawQuote: string) => {
+  const addQuote = useCallback((rawQuote: string, sourceMarkId?: string) => {
     const trimmed = rawQuote.trim();
     if (!trimmed) return;
     const id = `q_${Date.now()}_${(quoteIdSeq.current += 1)}`;
-    setQuotes((prev) => [...prev, { id, text: trimmed }]);
+    setQuotes((prev) => {
+      if (sourceMarkId && prev.some((q) => q.sourceMarkId === sourceMarkId)) return prev;
+      return [...prev, sourceMarkId ? { id, text: trimmed, sourceMarkId } : { id, text: trimmed }];
+    });
   }, []);
   const removeQuote = useCallback((id: string) => {
     setQuotes((prev) => prev.filter((q) => q.id !== id));
+  }, []);
+  const removeQuoteByMarkId = useCallback((markId: string) => {
+    setQuotes((prev) => prev.filter((q) => q.sourceMarkId !== markId));
   }, []);
   const clearQuotes = useCallback(() => {
     setQuotes([]);
@@ -626,6 +633,7 @@ export function useSendToSession(
     quotes,
     addQuote,
     removeQuote,
+    removeQuoteByMarkId,
     clearQuotes,
     sending,
     error,

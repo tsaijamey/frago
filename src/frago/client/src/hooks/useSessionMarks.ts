@@ -57,6 +57,8 @@ export interface SessionMarksState {
   setNote: (id: string, note: string) => void;
   /** 删一条。 */
   remove: (id: string) => void;
+  /** 撤回删除：把刚删除的标注按原位插回。 */
+  restoreMark?: (mark: WorkbenchMark, index?: number) => void;
   /** 把这一条挪到 `to` 这个位置（按整份数组算）。 */
   move: (id: string, to: number) => void;
   /**
@@ -280,6 +282,23 @@ export function useSessionMarks(sessionId: string | null): SessionMarksState {
     [commit]
   );
 
+  /** 按原位（或末尾）恢复一条刚删除的标注，保留其原有 id/时间戳/used 状态（4s 撤销用）。 */
+  const restoreMark = useCallback(
+    (mark: WorkbenchMark, index?: number) => {
+      if (!sidRef.current) return;
+      const list = current.current;
+      if (list.some((m) => m.id === mark.id)) return;
+      const next = [...list];
+      const at =
+        typeof index === 'number' && index >= 0 && index <= next.length
+          ? index
+          : next.length;
+      next.splice(at, 0, mark);
+      commit(next);
+    },
+    [commit]
+  );
+
   const move = useCallback(
     (id: string, to: number) => {
       const list = current.current;
@@ -338,5 +357,5 @@ export function useSessionMarks(sessionId: string | null): SessionMarksState {
     }
   }, [apply]);
 
-  return { marks, loaded, addMark, addMarks, setNote, remove, move, markUsed, syncBranches };
+  return { marks, loaded, addMark, addMarks, setNote, remove, restoreMark, move, markUsed, syncBranches };
 }

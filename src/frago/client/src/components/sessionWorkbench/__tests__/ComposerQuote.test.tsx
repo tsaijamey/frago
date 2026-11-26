@@ -12,9 +12,10 @@
  * 高度契约（两行起、九行封顶、一行 24 像素）本来就是按行数写的，换成行数照样核得住。
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import Composer from '../Composer';
+import type { ComposerQuoteItem } from '@/utils/textQuoteBlocks';
 import i18n from '@/i18n';
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
@@ -277,5 +278,95 @@ describe('批注打包与粘贴三引号拆解为引用卡片', () => {
     expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
     expect(screen.getByTestId('text-quote-preview').textContent).toBe('旧格式片段');
     expect(el.value).toBe('为什么还在');
+  });
+});
+
+describe('暂存双向草稿同步与非轨兜底胶囊', () => {
+  it('同一 sourceMarkId 重复填入去重不叠加，且 removeQuoteByMarkId 可精准移出草稿', () => {
+    const onQuotesChange = vi.fn<(items: ComposerQuoteItem[]) => void>();
+    const view = render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        quote={null}
+        onQuotesChange={onQuotesChange}
+        onSent={NOOP}
+      />
+    );
+    view.rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        quote={{ text: '关键前提', note: '先确认', sourceMarkId: 'mk-1', at: 1 }}
+        onQuotesChange={onQuotesChange}
+        onSent={NOOP}
+      />
+    );
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
+    expect(box().value).toBe('先确认');
+    expect(onQuotesChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ text: '关键前提', sourceMarkId: 'mk-1' }),
+    ]);
+
+    // 同一 sourceMarkId 再次触发不重复追加
+    view.rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        quote={{ text: '关键前提', note: '先确认', sourceMarkId: 'mk-1', at: 2 }}
+        onQuotesChange={onQuotesChange}
+        onSent={NOOP}
+      />
+    );
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
+
+    // 外部命令按 markId 移出草稿
+    view.rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        quote={{ text: '关键前提', note: '先确认', sourceMarkId: 'mk-1', at: 2 }}
+        removeQuoteByMarkId={{ markId: 'mk-1', note: '先确认', at: 1 }}
+        onQuotesChange={onQuotesChange}
+        onSent={NOOP}
+      />
+    );
+    expect(screen.queryAllByTestId('text-quote')).toHaveLength(0);
+    expect(box().value).toBe('');
+    expect(onQuotesChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it('showStackPill 为真且 stackCount > 0 时渲染「暂存 N」兜底胶囊并触发汇总回调', () => {
+    const onOpenStackSummary = vi.fn();
+    const view = render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        stackCount={3}
+        showStackPill
+        onOpenStackSummary={onOpenStackSummary}
+        onSent={NOOP}
+      />
+    );
+    const pill = screen.getByTestId('composer-stack-pill');
+    expect(pill.textContent).toContain('3');
+    expect(pill.querySelector('.csp-dot')).not.toBeNull();
+    expect(pill.querySelector('.csp-cnt')?.textContent).toBe('3');
+    expect(pill.querySelector('.dot')).toBeNull();
+    expect(pill.querySelector('.n')).toBeNull();
+    fireEvent.click(pill);
+    expect(onOpenStackSummary).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        stackCount={3}
+        showStackPill={false}
+        onOpenStackSummary={onOpenStackSummary}
+        onSent={NOOP}
+      />
+    );
+    expect(screen.queryByTestId('composer-stack-pill')).toBeNull();
   });
 });

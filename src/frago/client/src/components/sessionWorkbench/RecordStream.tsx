@@ -94,6 +94,8 @@ import {
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
+import type { StackPopoverState } from './StackPopover';
+import { computeFinalAgentSayIds } from '@/utils/stackRailLayout';
 import {
   AGENT_ACTIVITY,
   MAX_BACKFILL_PAGES,
@@ -1459,6 +1461,14 @@ export interface RecordStreamProps {
   childrenData?: SessionChildrenResponse | null;
   /** `/children` 接口首取加载中标记。 */
   childrenLoading?: boolean;
+  /** 已入草稿箱的 stack mark ID 集合（用于右轨区分「待使用」与「已入草稿」）。 */
+  inDraftMarkIds?: ReadonlySet<string>;
+  /** 当前激活的 Stack 浮层（用于冻结右轨与高亮对应标签）。 */
+  stackPopover?: StackPopoverState | null;
+  /** 点击右轨标签/簇/顶部胶囊时打开 Stack 浮层。 */
+  onOpenStackPopover?: (state: StackPopoverState) => void;
+  /** 视图处于非轨模式（Watcher/Files/Terminal/Hook/Tool/System 或无轨）时通知上层展示 Composer 兜底胶囊。 */
+  onStreamViewChange?: (view: { nonRail: boolean }) => void;
 }
 
 interface WatcherSlice {
@@ -1738,6 +1748,10 @@ export default function RecordStream({
   observer = null,
   childrenData = null,
   childrenLoading = false,
+  inDraftMarkIds,
+  stackPopover = null,
+  onOpenStackPopover,
+  onStreamViewChange,
 }: RecordStreamProps) {
   const { t, i18n } = useTranslation();
   const isZh = i18n.language?.startsWith('zh');
@@ -1797,6 +1811,8 @@ export default function RecordStream({
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
   const resolved = useMemo(() => withQueueOutcomes(records), [records]);
+  /** 基于未聚合的原始记录判定最终回复 ID，供缩略滚动条过滤过程旁白。 */
+  const finalAgentSayIds = useMemo(() => computeFinalAgentSayIds(resolved), [resolved]);
 
   const counts = useMemo(() => {
     const tally: Record<StreamLens, number> = {
@@ -2170,6 +2186,9 @@ export default function RecordStream({
         key={record.id}
         data-record-id={record.id}
         data-record-kind={isPureAsyncCallbackRecord(record) ? 'async.callback' : record.kind}
+        data-minimap-exclude={
+          record.kind === 'agent.say' && !finalAgentSayIds.has(record.id) ? 'true' : undefined
+        }
         {...{ [RECORD_BODY_ATTR]: '' }}
         className="wb-record"
       >
@@ -2942,6 +2961,17 @@ export default function RecordStream({
   // 缩略滚动条只在「全部」「对话」两档出现（spec 20260928-webui-session-stack 已定）。
   const showMinimap =
     minimap && !watcherOpen && (lens === 'all' || lens === 'talk') && visible.length > 0;
+  const hasStackGutter =
+    showMinimap &&
+    !filesOpen &&
+    !terminalOpen &&
+    marks.some((m) => m.kind === 'stack' && !m.used);
+  const streamNonRail =
+    !sessionId || !showMinimap || filesOpen || terminalOpen;
+
+  useEffect(() => {
+    onStreamViewChange?.({ nonRail: streamNonRail });
+  }, [onStreamViewChange, streamNonRail]);
 
   if (!sessionId) {
     return (
@@ -3202,7 +3232,11 @@ export default function RecordStream({
         className={`min-h-0 flex-1 overflow-y-auto ${
           watcherOpen
             ? ''
-            : `pb-10 pl-5 pt-4 ${showMinimap ? 'record-stream-no-bar pr-10' : 'pr-5'}`
+            : `pb-10 pl-5 pt-4 ${
+                showMinimap
+                  ? `record-stream-no-bar ${hasStackGutter ? 'has-stack-gutter' : 'pr-10'}`
+                  : 'pr-5'
+              }`
         }`}
         data-testid="record-stream-scroll"
       >
@@ -4122,6 +4156,12 @@ export default function RecordStream({
           ticks={ticks}
           version={groups}
           onUserScroll={noteManualIntent}
+          marks={marks}
+          inDraftMarkIds={inDraftMarkIds}
+          popoverOpen={Boolean(stackPopover)}
+          activePopover={stackPopover}
+          onOpenPopover={onOpenStackPopover}
+          showStackRail={!filesOpen && !terminalOpen}
         />
       ) : null}
 
@@ -4135,8 +4175,8 @@ export default function RecordStream({
           onClick={jumpToLatest}
           title={t('workbench.stream.jumpToLatest')}
           aria-label={t('workbench.stream.jumpToLatest')}
-          className={`absolute bottom-12 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border-color bg-bg-elevated text-text-secondary shadow-md backdrop-blur-sm transition-colors hover:text-text-primary ${
-            showMinimap ? 'right-10' : 'right-4'
+          className={`stream-jump absolute bottom-12 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border-color bg-bg-elevated text-text-secondary shadow-md backdrop-blur-sm transition-colors hover:text-text-primary ${
+            hasStackGutter ? 'has-stack-gutter' : showMinimap ? 'right-10' : 'right-4'
           }`}
         >
           <ArrowDown size={15} strokeWidth={2} />

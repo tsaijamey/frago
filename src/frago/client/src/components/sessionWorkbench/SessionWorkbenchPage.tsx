@@ -19,7 +19,7 @@
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronLeft, Loader2, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -28,8 +28,8 @@ import SessionFiles from './SessionFiles';
 import { SessionTerminal } from './SessionTerminal';
 import FileViewer, { type FileEditSendPayload } from './FileViewer';
 import { shortenPathMiddle, withTilde } from './filePaths';
-import ReportPanel from './ReportPanel';
-import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
+import { marksAboard, quotesAboard, type LocateState } from './StackPanel';
+import StackPopover, { type StackPopoverState } from './StackPopover';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
 import { squeeze, type BranchExtras, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
@@ -56,7 +56,6 @@ import { formatClock, formatDuration } from './RecordCard';
 import { ForYouChip, resumeCommand, shortAge } from './SessionItem';
 import { loadYaml, parseUiComponentOutput, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
-import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { useSessionObserver } from '@/hooks/useSessionObserver';
 import { useSessionChildren } from '@/hooks/useSessionChildren';
@@ -72,7 +71,7 @@ import {
   updateSessionTitle,
 } from '@/api';
 import { useSessionFiles } from '@/hooks/useSessionFiles';
-import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripTextQuoteBlocks, type ComposerQuoteItem } from '@/utils/textQuoteBlocks';
 import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 
 /**
@@ -216,8 +215,6 @@ export default function SessionWorkbenchPage() {
   useEffect(() => {
     setIsForYou(() => (id: string) => forYou.infoOf(id) !== null);
   }, [forYou]);
-  // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
-  const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
   // 开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它且客户端仍存活。
   // 已退出的空壳终端（`client_alive === false`，仅留在 `forYou.rows` 供清理弹窗用）不算有活跃终端。
@@ -373,24 +370,73 @@ export default function SessionWorkbenchPage() {
   marksRef.current = marks.marks;
 
   /**
-   * 暂存条目「用过了」的判定：点了「填入」只算**待发出**（只在内存里）；随后这场会话从
-   * 输入框发出成功一次，才把那几条标成用过。填了不发、切走会话，都不算。
-   *
-   * 出门那一刻再核一遍：只有发出去的那句话里**确实还带着这条原文**的才算用上——填进去
-   * 之后又删掉、改填了别的，那条就没用上，留在待发出里。一次发出之前填了好几条，这几条
-   * 都带着就都算。
+   * 暂存条目是否已填入当前草稿箱（由 Composer 上报的 `quotes[].sourceMarkId` 双向同步）：
+   * 填入输入框即刻亮起「已入草稿」状态，从输入框删除或从浮层「移出草稿」即刻回退为待处理；
+   * 发出成功（落进会话或进队列）且发出原文中仍带着对应引用时，才永久标为已用过。
    */
-  const [pendingUse, setPendingUse] = useState<string[]>([]);
-  const pendingUseRef = useRef<string[]>([]);
-  pendingUseRef.current = pendingUse;
+  const [composerQuotes, setComposerQuotes] = useState<ComposerQuoteItem[]>([]);
+  const inDraftMarkIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const q of composerQuotes) {
+      if (q.sourceMarkId) ids.add(q.sourceMarkId);
+    }
+    return ids;
+  }, [composerQuotes]);
+  const inDraftMarkIdsRef = useRef<ReadonlySet<string>>(inDraftMarkIds);
+  inDraftMarkIdsRef.current = inDraftMarkIds;
+
+  const [removeQuoteByMarkId, setRemoveQuoteByMarkId] = useState<{
+    markId: string;
+    note?: string;
+    at: number;
+  } | null>(null);
+  const removeQuoteSeq = useRef(0);
+
+  const [stackPopover, setStackPopover] = useState<StackPopoverState | null>(null);
+  const [streamNonRail, setStreamNonRail] = useState(true);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(max-width: 1024px)').matches
+      : false
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(max-width: 1024px)');
+    const sync = () => setIsNarrowViewport(mq.matches);
+    sync();
+    mq.addEventListener?.('change', sync);
+    return () => mq.removeEventListener?.('change', sync);
+  }, []);
+
+  const [undoDeleteToast, setUndoDeleteToast] = useState<{
+    mark: WorkbenchMark;
+    index: number;
+  } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    },
+    []
+  );
+
   /**
    * 信封编号 → 这一单是哪一场发的、带出去了哪几条暂存。接口回来成功才标用过，失败退回
    * 待发出。换会话**不清**这份：接口要等整整一轮才回来，人发完就切去别处是常事，回来时
    * 照样要把那一场的那几条标上。
    */
   const riding = useRef(new Map<string, { sid: string; ids: string[] }>());
-  // 换会话只清待发出：填了还没发的，切走就不算。
-  useEffect(() => setPendingUse([]), [selectedId]);
+  // 换会话清掉当前输入区的草稿同步态与浮层：上一场的暂存只在上一场有效。
+  useEffect(() => {
+    setComposerQuotes([]);
+    setRemoveQuoteByMarkId(null);
+    setStackPopover(null);
+    setUndoDeleteToast(null);
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+  }, [selectedId]);
 
   /**
    * 引用的留痕时机与暂存「用过了」同一个道理：点「引用」只把原文填进输入框，那一刻
@@ -449,10 +495,9 @@ export default function SessionWorkbenchPage() {
         setHoldId(selectedId);
       }
       const id = markSent(text, attachments, skills);
-      const aboard = marksAboard(text, pendingUseRef.current, marksRef.current);
+      const aboard = marksAboard(text, Array.from(inDraftMarkIdsRef.current), marksRef.current);
       if (id && selectedId && aboard.length) {
         riding.current.set(id, { sid: selectedId, ids: aboard });
-        setPendingUse((prev) => prev.filter((mid) => !aboard.includes(mid)));
       }
       const quoted = quotesAboard(text, pendingQuotesRef.current);
       if (id && selectedId && quoted.length) {
@@ -470,16 +515,11 @@ export default function SessionWorkbenchPage() {
     [selectedId, forYou, markSent]
   );
 
-  /** 没发出去：这一单带着的暂存退回待发出，重试时照样算。 */
+  /** 没发出去：这一单带着的暂存从 riding 退回，草稿引用的 sourceMarkId 由 Composer 自动回滚保留。 */
   const onSendFailed = useCallback(
     (outboundId?: string) => {
-      const aboard = outboundId ? riding.current.get(outboundId) : undefined;
-      if (outboundId && aboard) {
+      if (outboundId) {
         riding.current.delete(outboundId);
-        // 人已经切去别的会话就不退了：待发出只在当前这一场里有意义。
-        if (aboard.sid === selectedId) {
-          setPendingUse((prev) => [...prev, ...aboard.ids.filter((mid) => !prev.includes(mid))]);
-        }
       }
       // 带出去的引用也退回待发出。
       const quoted = outboundId ? ridingQuotes.current.get(outboundId) : undefined;
@@ -518,7 +558,12 @@ export default function SessionWorkbenchPage() {
    * 编号用自增的次数而不是时间：同一段话连引两次，时间戳可能一模一样，输入区会以为
    * 是同一件事而把第二次吃掉。
    */
-  const [quote, setQuote] = useState<{ text: string; note?: string; at: number } | null>(null);
+  const [quote, setQuote] = useState<{
+    text: string;
+    note?: string;
+    sourceMarkId?: string;
+    at: number;
+  } | null>(null);
   const quoteSeq = useRef(0);
   // 换会话把没落地的引用收掉——那段话是从上一场的记录里圈的。
   useEffect(() => setQuote(null), [selectedId]);
@@ -538,10 +583,81 @@ export default function SessionWorkbenchPage() {
   const directSendSeq = useRef(0);
   useEffect(() => setDirectSend(null), [selectedId]);
 
-  /** 暂存列表「填入」：按引用格式落进输入框，想法接在后面；这一条进入待发出。 */
+  /** 暂存条目「填入输入框」：带 sourceMarkId 落进 Composer 草稿，并自动关闭单条浮层。 */
   const fillFromStack = useCallback((mark: WorkbenchMark) => {
-    setQuote({ text: mark.text, note: mark.note, at: (quoteSeq.current += 1) });
-    setPendingUse((prev) => (prev.includes(mark.id) ? prev : [...prev, mark.id]));
+    setQuote({
+      text: mark.text,
+      note: mark.note,
+      sourceMarkId: mark.id,
+      at: (quoteSeq.current += 1),
+    });
+    setStackPopover(null);
+    requestAnimationFrame(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]');
+      if (ta) {
+        ta.focus();
+      }
+    });
+  }, []);
+
+  /** 从 Composer 草稿箱撤回某条暂存引用，保持暂存条目在轨道上退回「待使用」。 */
+  const removeFromDraft = useCallback((mark: WorkbenchMark) => {
+    setRemoveQuoteByMarkId({
+      markId: mark.id,
+      note: mark.note,
+      at: (removeQuoteSeq.current += 1),
+    });
+  }, []);
+
+  /** 删除暂存条目并提供 4 秒底部居中撤销条。 */
+  const deleteStackWithUndo = useCallback(
+    (mark: WorkbenchMark) => {
+      const idx = marksRef.current.findIndex((m) => m.id === mark.id);
+      marks.remove(mark.id);
+      if (inDraftMarkIdsRef.current.has(mark.id)) {
+        removeFromDraft(mark);
+      }
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      setUndoDeleteToast({ mark, index: idx >= 0 ? idx : marksRef.current.length });
+      undoTimerRef.current = setTimeout(() => {
+        undoTimerRef.current = null;
+        setUndoDeleteToast(null);
+      }, 4000);
+    },
+    [marks, removeFromDraft]
+  );
+
+  const undoDeleteStack = useCallback(() => {
+    if (!undoDeleteToast) return;
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    marks.restoreMark?.(undoDeleteToast.mark, undoDeleteToast.index);
+    setUndoDeleteToast(null);
+  }, [marks, undoDeleteToast]);
+
+  const closeStackPopover = useCallback((opts?: { restoreFocus?: boolean }) => {
+    setStackPopover((prev) => {
+      if (opts?.restoreFocus && prev?.triggerEl && typeof prev.triggerEl.focus === 'function') {
+        requestAnimationFrame(() => prev.triggerEl?.focus());
+      }
+      return null;
+    });
+  }, []);
+
+  const handleStreamViewChange = useCallback((view: { nonRail: boolean }) => {
+    setStreamNonRail(view.nonRail);
+  }, []);
+
+  const handleOpenStackSummaryFromComposer = useCallback((triggerEl: HTMLElement) => {
+    const r = triggerEl.getBoundingClientRect();
+    setStackPopover({
+      mode: 'summary',
+      anchorRect: { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+      triggerEl,
+      placement: 'above-left',
+    });
   }, []);
 
   /**
@@ -1073,12 +1189,29 @@ export default function SessionWorkbenchPage() {
     }
   };
 
+  const activeStackMarks = useMemo(
+    () => marks.marks.filter((m) => m.kind === 'stack' && !m.used),
+    [marks.marks]
+  );
+  const loadedRecordIds = useMemo(
+    () => new Set((recordsSessionId === selectedId ? records : []).map((r) => r.id)),
+    [records, recordsSessionId, selectedId]
+  );
+  const unloadedMarkIds = useMemo(
+    () =>
+      new Set(
+        activeStackMarks
+          .filter((m) => !loadedRecordIds.has(m.record_id))
+          .map((m) => m.id)
+      ),
+    [activeStackMarks, loadedRecordIds]
+  );
+
   return (
-    /* 默认列宽照原型：清单 288 · 记录 · 观察者 228（清单 09-24 定 256，09-29 第五轮卡片改成三行、
-       状态行要摆 For you · 时长 · 终端 · 子会话数 · 「…」，放不下，改 288）。人拖过的右栏宽度
-       照旧优先（记在浏览器里）；平板档照旧藏起观察者栏，断点不动。 */
-    <div data-session-menu-page className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
-      style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
+    /* 方案 4A 两栏布局：左栏会话清单 288px + 主栏记录流；右栏拆分移除，暂存交互收拢到滚动条轨道。 */
+    <div
+      data-session-menu-page
+      className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
     >
       {/* 手机上一次只放得下一栏：没选会话时给清单，选了或正在新建时整屏让给中栏。 */}
       <div className={`min-h-0 min-w-0 ${selectedId || showLaunch || creatingNew ? 'phone:hidden' : ''}`}>
@@ -1365,6 +1498,10 @@ export default function SessionWorkbenchPage() {
               }}
               marks={marks.marks}
               minimap
+              inDraftMarkIds={inDraftMarkIds}
+              stackPopover={stackPopover}
+              onOpenStackPopover={setStackPopover}
+              onStreamViewChange={handleStreamViewChange}
               onSelectSession={openSession}
               locateTarget={locateTarget}
               onLocateResult={onLocateResult}
@@ -1459,6 +1596,11 @@ export default function SessionWorkbenchPage() {
           trails={trails}
           onShowInStream={(recordId) => setScrollTarget({ recordId, at: Date.now() })}
           quote={quote}
+          removeQuoteByMarkId={removeQuoteByMarkId}
+          onQuotesChange={setComposerQuotes}
+          stackCount={activeStackMarks.length}
+          showStackPill={streamNonRail || isNarrowViewport}
+          onOpenStackSummary={handleOpenStackSummaryFromComposer}
           packedPrompt={packedPrompt}
           contextTokens={contextTokens}
           onHandoff={() => void handoff()}
@@ -1485,32 +1627,81 @@ export default function SessionWorkbenchPage() {
         )}
       </div>
 
-      <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
-        <ReportPanel
-          sessionId={selectedId}
-          width={report.width}
-          onWidthChange={report.setWidth}
-          lower={
-            selectedId ? (
-              <StackPanel
-                marks={marks.marks}
-                pendingIds={pendingUse}
-                locate={locateState}
-                onFill={fillFromStack}
-                onLocate={(mark) => {
-                  onLocateResult(mark.id, 'found');
-                  setLocateTarget({ mark, at: Date.now() });
-                }}
-                onDelete={marks.remove}
-                onMove={marks.move}
-                onNoteChange={marks.setNote}
-              />
-            ) : undefined
+      {selectedId ? (
+        <StackPopover
+          state={stackPopover}
+          marks={marks.marks}
+          inDraftMarkIds={inDraftMarkIds}
+          unloadedMarkIds={unloadedMarkIds}
+          locateState={locateState}
+          onClose={closeStackPopover}
+          onSwitchToItem={(markId, backTo) =>
+            setStackPopover((prev) =>
+              prev
+                ? {
+                    mode: 'item',
+                    markId,
+                    anchorRect: prev.anchorRect,
+                    triggerEl: prev.triggerEl,
+                    placement: prev.placement,
+                    backTo,
+                  }
+                : null
+            )
           }
+          onBack={() =>
+            setStackPopover((prev) => {
+              if (!prev || prev.mode !== 'item' || !prev.backTo) return prev;
+              if (prev.backTo.mode === 'cluster') {
+                return {
+                  mode: 'cluster',
+                  clusterId: prev.backTo.clusterId,
+                  markIds: prev.backTo.markIds,
+                  anchorRect: prev.anchorRect,
+                  triggerEl: prev.triggerEl,
+                  placement: prev.placement,
+                };
+              }
+              return {
+                mode: 'summary',
+                anchorRect: prev.anchorRect,
+                triggerEl: prev.triggerEl,
+                placement: prev.placement,
+              };
+            })
+          }
+          onFill={fillFromStack}
+          onRemoveFromDraft={removeFromDraft}
+          onLocate={(mark) => {
+            onLocateResult(mark.id, 'found');
+            setLocateTarget({ mark, at: Date.now() });
+            setStackPopover(null);
+          }}
+          onDelete={deleteStackWithUndo}
+          onNoteChange={marks.setNote}
         />
-      </div>
+      ) : null}
 
-      {/* 浮窗挂在整页这一层，不挂在记录流里面：它要盖住整屏（连同左栏与右栏），摆在中栏里
+      {undoDeleteToast ? (
+        <div
+          className="stack-toast"
+          data-testid="stack-delete-toast"
+          role="status"
+          aria-live="polite"
+        >
+          <span>{t('workbench.stack.deletedToast')}</span>
+          <button
+            type="button"
+            data-testid="stack-toast-undo"
+            className="stack-toast-undo"
+            onClick={undoDeleteStack}
+          >
+            {t('workbench.stack.undo')}
+          </button>
+        </div>
+      ) : null}
+
+      {/* 浮窗挂在整页这一层，不挂在记录流里面：它要盖住整屏（连同左栏），摆在中栏里
           会被那一栏的滚动区裁掉一半。 */}
       {selectedId && viewerIndex !== null && files[viewerIndex] ? (
         <FileViewer

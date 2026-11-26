@@ -71,6 +71,7 @@ import {
   parseTextQuoteBlocks,
   serializeQuotesWithPrompt,
   stripTextQuoteBlocks,
+  type ComposerQuoteItem,
 } from '@/utils/textQuoteBlocks';
 import SendProgress, { resolveStepLabel } from './SendProgress';
 import { TextQuoteBlocksView } from './TextQuote';
@@ -127,7 +128,15 @@ export interface ComposerProps {
    * 从右栏暂存列表「填入」的那一份还带着当时写下的想法 `note`，接在 `>>> ` 后面，光标
    * 停在想法末尾——人多半是顺着那句想法往下补完决定。
    */
-  quote?: { text: string; note?: string; at: number } | null;
+  quote?: { text: string; note?: string; sourceMarkId?: string; at: number } | null;
+  /** 从滚动条暂存轨/浮层主动退回一条已填入草稿的暂存引用。 */
+  removeQuoteByMarkId?: { markId: string; note?: string; at: number } | null;
+  /** 将草稿中的引用卡片列表同步给外层，用于驱动滚动条暂存轨双向状态。 */
+  onQuotesChange?: (quotes: ComposerQuoteItem[]) => void;
+  /** 非轨视图 / 窄屏下在底部输入区右侧展示的「暂存 N」兜底入口。 */
+  stackCount?: number;
+  showStackPill?: boolean;
+  onOpenStackSummary?: (triggerEl: HTMLElement) => void;
   /**
    * 从 FileViewer「打包批注填入对话框」送过来的整份新 prompt。
    * 直接填入输入框并展示关联存档路径提示条，供人检视后按 Send 发送。
@@ -346,6 +355,11 @@ export default function Composer({
   trails = [],
   onShowInStream,
   quote = null,
+  removeQuoteByMarkId = null,
+  onQuotesChange,
+  stackCount = 0,
+  showStackPill = false,
+  onOpenStackSummary,
   packedPrompt = null,
   answer = null,
   directSend = null,
@@ -384,6 +398,7 @@ export default function Composer({
     quotes,
     addQuote,
     removeQuote,
+    removeQuoteByMarkId: removeQuoteItemByMarkId,
     clearQuotes,
     sending,
     error,
@@ -454,7 +469,7 @@ export default function Composer({
     } catch (e) {
       setQueueError(e instanceof Error ? e.message : String(e));
       setText(rawDraftText);
-      for (const q of draftQuotes) addQuote(q.text);
+      for (const q of draftQuotes) addQuote(q.text, q.sourceMarkId);
       for (const sk of draftSkills) addSkill(sk);
       for (const emp of draftEmployees) addEmployee(emp);
     } finally {
@@ -534,22 +549,37 @@ export default function Composer({
     ? [...trails].reverse().find((tr) => tr.steps.failed !== undefined)
     : undefined;
 
+  // 同步草稿引用卡片变化给外层（用于驱动滚动条暂存轨双向「已填入/待处理」切换）
+  const onQuotesChangeRef = useRef(onQuotesChange);
+  onQuotesChangeRef.current = onQuotesChange;
+  useEffect(() => {
+    onQuotesChangeRef.current?.(quotes);
+  }, [quotes]);
+
   // 引用落进输入框：结构化挂载为顶部引用卡片（100% 复用 DirectiveQuote 样式契约），
   // 若带暂存想法（note），想法进入打字区供人继续编辑；同一段话连引两次也是两次，靠的是按下的时刻。
   const lastQuoteAt = useRef(0);
+  const lastRemoveMarkAt = useRef(0);
   useEffect(() => {
     lastQuoteAt.current = 0;
+    lastRemoveMarkAt.current = 0;
   }, [sessionId]);
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
   const quoteAt = quote?.at ?? 0;
   const quoteText = quote?.text ?? '';
   const quoteNote = quote?.note ?? '';
+  const quoteSourceMarkId = quote?.sourceMarkId;
   useEffect(() => {
     // 时刻为 0 表示这一场还没有人引用过任何东西。
     if (!quoteText || !quoteAt || lastQuoteAt.current === quoteAt) return;
     lastQuoteAt.current = quoteAt;
-    addQuote(quoteText);
+    const alreadyExists = Boolean(
+      quoteSourceMarkId && quotesRef.current.some((q) => q.sourceMarkId === quoteSourceMarkId)
+    );
+    addQuote(quoteText, quoteSourceMarkId);
     const trimmedNote = quoteNote.trim();
-    if (trimmedNote) {
+    if (trimmedNote && !alreadyExists) {
       const prev = textRef.current;
       const lead = prev && !prev.endsWith('\n') ? '\n' : '';
       const next = `${prev}${lead}${trimmedNote}`;
@@ -558,7 +588,20 @@ export default function Composer({
     } else {
       caretTo.current = textRef.current.length;
     }
-  }, [quoteAt, quoteText, quoteNote, addQuote, setText]);
+  }, [quoteAt, quoteText, quoteNote, quoteSourceMarkId, addQuote, setText]);
+
+  const removeMarkId = removeQuoteByMarkId?.markId ?? '';
+  const removeMarkNote = removeQuoteByMarkId?.note ?? '';
+  const removeMarkAt = removeQuoteByMarkId?.at ?? 0;
+  useEffect(() => {
+    if (!removeMarkId || !removeMarkAt || lastRemoveMarkAt.current === removeMarkAt) return;
+    lastRemoveMarkAt.current = removeMarkAt;
+    removeQuoteItemByMarkId(removeMarkId);
+    const trimmedNote = removeMarkNote.trim();
+    if (trimmedNote && textRef.current.trim() === trimmedNote) {
+      setText('');
+    }
+  }, [removeMarkId, removeMarkNote, removeMarkAt, removeQuoteItemByMarkId, setText]);
 
   // 文档批注打包填入输入框：附带可溯源存档路径条，供人检视或补充后按 Send 发送。
   const [packedBanner, setPackedBanner] = useState<{ count: number; tracePath: string } | null>(
@@ -1056,6 +1099,19 @@ export default function Composer({
           }
           rightActionsSlot={
             <>
+              {showStackPill && stackCount > 0 && !blocked && onOpenStackSummary ? (
+                <button
+                  type="button"
+                  data-testid="composer-stack-pill"
+                  className="composer-stack-pill"
+                  title={t('workbench.stack.railSummaryTitle', { count: stackCount })}
+                  onClick={(e) => onOpenStackSummary(e.currentTarget)}
+                >
+                  <span className="csp-dot" aria-hidden="true" />
+                  <span>{t('workbench.stack.title')}</span>
+                  <span className="csp-cnt">{stackCount}</span>
+                </button>
+              ) : null}
               {onEnqueue && !blocked ? (
                 <button
                   type="button"
