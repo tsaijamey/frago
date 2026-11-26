@@ -116,6 +116,41 @@ class OpencodeTurn:
     completed_at: int | None
     """终结那条消息的 ``time.completed``（毫秒）；未答完时为 None。"""
 
+    error: str | None = None
+    """本轮终结消息附带的报错说明（如 APIError）；无报错时为 None。"""
+
+
+def _extract_message_error(data: dict[str, Any]) -> str | None:
+    """从 opencode assistant 消息信封提取报错摘要（若有）。"""
+    raw = data.get("error")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        return raw.strip() or None
+    if isinstance(raw, dict):
+        name = str(raw.get("name") or "").strip()
+        err_data = raw.get("data")
+        data_dict = err_data if isinstance(err_data, dict) else {}
+        status_code = data_dict.get("statusCode")
+        if status_code is None:
+            status_code = raw.get("statusCode")
+        msg = data_dict.get("message")
+        if not isinstance(msg, str) or not msg.strip():
+            msg = raw.get("message")
+        msg_str = msg.strip() if isinstance(msg, str) else ""
+        head = f"{name}:{status_code}" if (name and status_code is not None) else name
+        if head and msg_str:
+            return f"{head}: {msg_str}"
+        if msg_str:
+            return msg_str
+        if head:
+            return head
+        try:
+            return json.dumps(raw, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(raw).strip() or None
+    return str(raw).strip() or None
+
 
 def db_path() -> Path:
     """会话库路径。``FRAGO_OPENCODE_DB`` 覆盖（单测据此指向临时库）。"""
@@ -754,23 +789,32 @@ def _v2_latest_turn(conn: sqlite3.Connection, session_id: str) -> OpencodeTurn |
 
     final_message_id: str | None = None
     completed_at: int | None = None
-    for mid, data in turn:
+    turn_error: str | None = None
+    for idx, (mid, data) in enumerate(turn):
+        msg_err = _extract_message_error(data)
         stamp = (data.get("time") or {}).get("completed")
+        is_last = idx == len(turn) - 1
+        finish = data.get("finish")
         if not isinstance(stamp, int):
-            # 还在写：正在流式生成的那条消息没有完成时刻。
+            # 还在写：通常无完成时刻不算终结；但若末条已经带错误信封且非 tool-calls，也应立即止损报错。
+            if msg_err and is_last and finish != FINISH_CONTINUES:
+                final_message_id = mid
+                turn_error = msg_err
             continue
-        if data.get("finish") == FINISH_CONTINUES:
+        if finish == FINISH_CONTINUES:
             # 工具调用段：这一段确实写完了，但后面还有下一段。
             continue
         final_message_id = mid
         completed_at = stamp
+        turn_error = msg_err
 
     return OpencodeTurn(
         parent_id=parent_id,
         final_message_id=final_message_id,
         done=final_message_id is not None,
-        text=_v2_turn_text(turn),
+        text="" if turn_error else _v2_turn_text(turn),
         completed_at=completed_at,
+        error=turn_error,
     )
 
 
@@ -820,24 +864,33 @@ def latest_turn(opencode_session_id: str) -> OpencodeTurn | None:
     ]
     final_message_id: str | None = None
     completed_at: int | None = None
-    for mid, data in turn_messages:
+    turn_error: str | None = None
+    for idx, (mid, data) in enumerate(turn_messages):
+        msg_err = _extract_message_error(data)
         stamp = (data.get("time") or {}).get("completed")
+        is_last = idx == len(turn_messages) - 1
+        finish = data.get("finish")
         if not isinstance(stamp, int):
-            # 还在写：正在流式生成的那条消息没有完成时刻。
+            # 还在写：通常无完成时刻不算终结；但若末条已经带错误信封且非 tool-calls，也应立即止损报错。
+            if msg_err and is_last and finish != FINISH_CONTINUES:
+                final_message_id = mid
+                turn_error = msg_err
             continue
-        if data.get("finish") == FINISH_CONTINUES:
+        if finish == FINISH_CONTINUES:
             # 工具调用段：这一段确实写完了，但后面还有下一段。
             continue
         final_message_id = mid
         completed_at = stamp
+        turn_error = msg_err
 
-    text = _turn_text([mid for mid, _ in turn_messages])
+    text = "" if turn_error else _turn_text([mid for mid, _ in turn_messages])
     return OpencodeTurn(
         parent_id=parent_id,
         final_message_id=final_message_id,
         done=final_message_id is not None,
         text=text,
         completed_at=completed_at,
+        error=turn_error,
     )
 
 

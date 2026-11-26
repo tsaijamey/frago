@@ -643,3 +643,52 @@ def test_codex_awaiting_input_and_busy_probes():
     assert drv.facets.hook_injection.merges_tool_context_into_result is True
     assert drv.facets.hook_injection.patch_tool_names == ("apply_patch",)
 
+
+def test_codex_completion_probe_separates_error_aborted_needs_input_and_ok(monkeypatch):
+    """验证 codex._completion_probe 区分 error / turn_aborted(含部分文本) / request_user_input / empty / ok。"""
+    from frago.session.codex_store import CodexTurn
+
+    monkeypatch.setattr(codex_driver, "_bound_session_id", lambda _s: "codex-sid-1")
+
+    def _probe_with(turn: CodexTurn, pane: str = FOOTER_PANE):
+        monkeypatch.setattr(codex_driver.codex_store, "latest_turn", lambda _sid: turn)
+        return codex_driver._completion_probe(_FakePane(pane))
+
+    # 1. turn.error -> status="error"
+    v_err = _probe_with(
+        CodexTurn(done=True, turn_id="t1", text="", error="HTTP 500 upstream error", stop_reason="end_turn")
+    )
+    assert v_err is not None and v_err.done is True and v_err.status == "error"
+    assert "500" in (v_err.text or "")
+
+    # 2. request_user_input -> status="needs_input"
+    v_need = _probe_with(
+        CodexTurn(done=True, turn_id="t2", text="请选择方案", error=None, stop_reason="request_user_input")
+    )
+    assert v_need is not None and v_need.done is True and v_need.status == "needs_input"
+    assert v_need.text == "请选择方案"
+
+    # 3. turn_aborted 且前序有部分输出、turn.error 为空 -> 不得误判 ok，必须为 error
+    v_abort = _probe_with(
+        CodexTurn(done=True, turn_id="t3", text="正在检查文件...", error=None, stop_reason="interrupted")
+    )
+    assert v_abort is not None and v_abort.done is True and v_abort.status == "error"
+    assert "interrupted" in (v_abort.text or "")
+
+    # 4. 空文本且窗格为空闲 -> error；窗格命中 _NEEDS_INPUT -> needs_input
+    v_empty_err = _probe_with(CodexTurn(done=True, turn_id="t4", text="", error=None, stop_reason="end_turn"))
+    assert v_empty_err is not None and v_empty_err.done is True and v_empty_err.status == "error"
+
+    v_empty_auth = _probe_with(
+        CodexTurn(done=True, turn_id="t5", text="", error=None, stop_reason="end_turn"),
+        pane="Error: invalid API key\n" + FOOTER_PANE,
+    )
+    assert v_empty_auth is not None and v_empty_auth.done is True and v_empty_auth.status == "needs_input"
+
+    # 5. 正常 end_turn -> status="ok"
+    v_ok = _probe_with(
+        CodexTurn(done=True, turn_id="t6", text="任务完成", error=None, stop_reason="end_turn")
+    )
+    assert v_ok is not None and v_ok.done is True and v_ok.status == "ok" and v_ok.text == "任务完成"
+
+

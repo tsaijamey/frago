@@ -226,3 +226,65 @@ def test_api_profile_preserves_wire_field():
     )
     dumped = p.model_dump(mode="json")
     assert dumped["wire"] == "openai"
+
+
+def test_classify_rejects_stop_reason_error_and_empty_result_even_when_is_error_false():
+    payload_stop_err = (
+        '{"duration_ms":100,"error_kind":null,"is_error":false,"model":"m",'
+        '"result":"HTTP 500 Internal Server Error","stop_reason":"error","type":"result"}'
+    )
+    got_stop = _classify(payload_stop_err, "", 0, 100)
+    assert got_stop.status == "error"
+
+    payload_empty = (
+        '{"duration_ms":100,"error_kind":null,"is_error":false,"model":"m",'
+        '"result":"   ","stop_reason":"end_turn","type":"result"}'
+    )
+    got_empty = _classify(payload_empty, "", 0, 100)
+    assert got_empty.status == "error"
+
+
+def test_classify_chat_rejects_empty_text_even_when_ok_true():
+    chat_empty = '{"ok":true,"text":"   ","type":"final"}'
+    got = _classify_chat(chat_empty, "", 0, 50)
+    assert got.status == "error"
+
+
+def test_run_process_returns_timeout_on_timeout_expired(monkeypatch):
+    import subprocess
+
+    from frago.agent_driver import kernel_backend
+
+    class _TimeoutPopen:
+        pid = 12345
+        returncode = None
+
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def communicate(self, *_a, **_kw):
+            raise subprocess.TimeoutExpired(cmd=["frago-core"], timeout=5.0)
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout=None):
+            self.returncode = -15
+            return -15
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(kernel_backend.subprocess, "Popen", _TimeoutPopen)
+    got = kernel_backend._run_process(
+        ["frago-core", "--mode", "agent"],
+        "hi",
+        cwd="/tmp",
+        env={},
+        timeout_s=5.0,
+    )
+    assert got.status == "timeout"
+

@@ -948,3 +948,48 @@ def test_needs_input_does_not_misfire_on_permission_talk(pane: str) -> None:
     signal = load_driver("opencode").needs_input_signal
     assert signal is not None
     assert not signal.matches(pane)
+
+
+def test_probe_marks_message_error_as_error_status(live_db: sqlite3.Connection) -> None:
+    """opencode v1.18/v2 消息含 error 字段时（无论 time.completed 是否落库）探针返回 status='error'。"""
+    opencode_store.put_binding("p_err", "ses_err", "/w")
+    _add_session(live_db, "ses_err", "/w", 1)
+    _add_message(live_db, "m_u", "ses_err", 10, {"role": "user", "parentID": None})
+    _add_message(
+        live_db,
+        "m_e",
+        "ses_err",
+        20,
+        {
+            "role": "assistant",
+            "parentID": "m_u",
+            "error": {"name": "APIError", "data": {"message": "HTTP 429 Too Many Requests"}},
+        },
+    )
+    driver = load_driver("opencode")
+    verdict = driver.completion_probe(_session(FakeTmux(["pane"]), "p_err"))
+    assert verdict is not None
+    assert verdict.done is True
+    assert verdict.status == "error"
+    assert "429" in (verdict.text or "")
+
+
+def test_probe_empty_answer_separates_needs_input_and_error(live_db: sqlite3.Connection) -> None:
+    opencode_store.put_binding("p_empty", "ses_empty", "/w")
+    _add_session(live_db, "ses_empty", "/w", 1)
+    _add_message(live_db, "m_u", "ses_empty", 10, {"role": "user", "parentID": None})
+    _add_message(
+        live_db,
+        "m_a",
+        "ses_empty",
+        20,
+        {"role": "assistant", "parentID": "m_u", "finish": "stop", "time": {"created": 20, "completed": 25}},
+    )
+    driver = load_driver("opencode")
+
+    v_err = driver.completion_probe(_session(FakeTmux([_PANE_RESUMED]), "p_empty"))
+    assert v_err is not None and v_err.done is True and v_err.status == "error"
+
+    v_perm = driver.completion_probe(_session(FakeTmux([_PERMISSION_PANE]), "p_empty"))
+    assert v_perm is not None and v_perm.done is True and v_perm.status == "needs_input"
+

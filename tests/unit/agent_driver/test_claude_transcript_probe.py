@@ -590,3 +590,202 @@ def test_launch_wires_the_custom_api_key_pre_write(tmp_path, monkeypatch):
     )
 
     assert seen == [{"ANTHROPIC_API_KEY": "sk-x"}]
+
+
+# ── error / needs_input / marker-fallback probe tests ──────────────────────
+
+
+def test_claude_probe_marks_api_error_as_error_status(tmp_path, monkeypatch):
+    from frago.agent_driver.drivers import claude as claude_driver
+    from frago.session import transcript_completion as tc
+    from frago.session.monitor import encode_project_path
+
+    monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
+    cwd = "/Users/frago/Repos/frago"
+    sid = claude_driver.claude_session_uuid("claude-err-1")
+    proj = tmp_path / encode_project_path(cwd)
+    proj.mkdir(parents=True)
+    (proj / f"{sid}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "apiErrorStatus": 500,
+                "uuid": "u-err-500",
+                "requestId": "req-500",
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": "API Error: 500 Internal Server Error"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    session = TmuxAgentSession(
+        session_id="claude-err-1",
+        driver=load_claude_driver(),
+        cwd=cwd,
+        runner=FakeTmux(["pane"]),
+        sleep=_no_sleep,
+    )
+    verdict = claude_driver._completion_probe(session)
+    assert verdict is not None
+    assert verdict.done is True
+    assert verdict.status == "error"
+    assert verdict.marker == "u-err-500"
+    assert "500" in (verdict.text or "")
+
+
+def test_claude_probe_empty_answer_separates_needs_input_and_error(tmp_path, monkeypatch):
+    from frago.agent_driver.drivers import claude as claude_driver
+    from frago.session import transcript_completion as tc
+    from frago.session.monitor import encode_project_path
+
+    monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
+    cwd = "/Users/frago/Repos/frago"
+    sid = claude_driver.claude_session_uuid("claude-empty-1")
+    proj = tmp_path / encode_project_path(cwd)
+    proj.mkdir(parents=True)
+    (proj / f"{sid}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "uuid": "u-empty",
+                "requestId": "req-empty",
+                "message": {"role": "assistant", "stop_reason": "end_turn", "content": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    err_sess = TmuxAgentSession(
+        session_id="claude-empty-1",
+        driver=load_claude_driver(),
+        cwd=cwd,
+        runner=FakeTmux(["❯ \n"]),
+        sleep=_no_sleep,
+    )
+    v_err = claude_driver._completion_probe(err_sess)
+    assert v_err is not None
+    assert v_err.done is True
+    assert v_err.status == "error"
+
+    auth_sess = TmuxAgentSession(
+        session_id="claude-empty-1",
+        driver=load_claude_driver(),
+        cwd=cwd,
+        runner=FakeTmux(["Invalid API key · Fix external API key"]),
+        sleep=_no_sleep,
+    )
+    v_auth = claude_driver._completion_probe(auth_sess)
+    assert v_auth is not None
+    assert v_auth.done is True
+    assert v_auth.status == "needs_input"
+
+
+def test_claude_probe_cold_start_error_without_uuid_or_request_id_does_not_timeout(
+    tmp_path, monkeypatch
+):
+    from frago.agent_driver.drivers import claude as claude_driver
+    from frago.session import transcript_completion as tc
+    from frago.session.monitor import encode_project_path
+
+    monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
+    cwd = "/Users/frago/Repos/frago"
+    sid = claude_driver.claude_session_uuid("claude-nomarker")
+    proj = tmp_path / encode_project_path(cwd)
+    proj.mkdir(parents=True)
+    jsonl_path = proj / f"{sid}.jsonl"
+
+    drv = load_claude_driver()
+    # 绕过真实 tmux submit，只验证 cold-start 时探针合成的非空 marker 能推动 TmuxAgentSession.send 返回 error
+    no_submit_drv = AgentDriver(
+        agent_type="claude",
+        launch_command=drv.launch_command,
+        ready_signal=drv.ready_signal,
+        submit=lambda _s, _p: None,
+        done_signal=drv.done_signal,
+        extract=drv.extract,
+        completion_probe=drv.completion_probe,
+        needs_input_signal=drv.needs_input_signal,
+    )
+
+    captures = {"n": 0}
+
+    def _write_err_on_capture(argv):
+        if argv[1:2] == ["capture-pane"]:
+            captures["n"] += 1
+            # 第 1 次为 submit 前取 baseline，第 2 次开始才落盘异常记录，模拟提交后上游报错
+            if captures["n"] >= 2 and not jsonl_path.exists():
+                jsonl_path.write_text(
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "isApiErrorMessage": True,
+                            "message": {
+                                "role": "assistant",
+                                "stop_reason": "end_turn",
+                                "content": [{"type": "text", "text": "API Error: 429 rate_limit"}],
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+        return "busy pane"
+
+    class _FakeRunner(FakeTmux):
+        def __call__(self, argv):
+            return _write_err_on_capture(argv)
+
+    sess = TmuxAgentSession(
+        session_id="claude-nomarker",
+        driver=no_submit_drv,
+        cwd=cwd,
+        runner=_FakeRunner(["busy pane"]),
+        poll_interval_s=0.0,
+        sleep=_no_sleep,
+    )
+    res = sess.send("hi", timeout_s=0.2)
+    assert res.status == "error"
+    assert "429" in res.text
+
+
+def test_claude_probe_uses_request_id_marker_when_uuid_absent(tmp_path, monkeypatch):
+    from frago.agent_driver.drivers import claude as claude_driver
+    from frago.session import transcript_completion as tc
+    from frago.session.monitor import encode_project_path
+
+    monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
+    cwd = "/Users/frago/Repos/frago"
+    sid = claude_driver.claude_session_uuid("claude-reqid-only")
+    proj = tmp_path / encode_project_path(cwd)
+    proj.mkdir(parents=True)
+    (proj / f"{sid}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "requestId": "req-only-1",
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": "ok answer"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    session = TmuxAgentSession(
+        session_id="claude-reqid-only",
+        driver=load_claude_driver(),
+        cwd=cwd,
+        runner=FakeTmux(["pane"]),
+        sleep=_no_sleep,
+    )
+    verdict = claude_driver._completion_probe(session)
+    assert verdict is not None
+    assert verdict.done is True
+    assert verdict.status == "ok"
+    assert verdict.marker == "req-only-1"
+

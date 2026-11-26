@@ -1504,6 +1504,134 @@ def test_v3_worker_resume_reopens_and_drops_stale_turn_seq(
     assert done_rec.turn_seq == 2
 
 
+def test_five_kernels_error_timeout_and_needs_input_never_marked_completed_or_delivered_success(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PM-RELEASE-20261125-DISPATCH-SPLIT-1A: 5 内核 error/timeout/needs_input 严格分离，绝不误记 completed。"""
+    from types import SimpleNamespace
+
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+    monkeypatch.setattr(async_dispatch, "wait_for_pending_child_dispatches", lambda *_a, **_kw: "")
+    monkeypatch.setattr(async_dispatch, "deliver_callback_to_session", lambda *_a, **_kw: True)
+
+    def _make_job(idx: int, kind: str, kernel: str) -> async_dispatch.AsyncDispatchJob:
+        sid = f"{kernel}-sid-{idx}"
+        rec = svc.start_turn(sid, agent_kernel_id=kernel, origin="worker")
+        return async_dispatch.AsyncDispatchJob(
+            job_id=f"disp-split-{idx}",
+            kind=kind,
+            mode="new",
+            caller_session_id="caller-split",
+            caller_employee_id=None,
+            caller_cwd="/tmp",
+            target_session_id=sid,
+            target_name=sid,
+            employee_id="emp-1" if kind == "employee" else None,
+            agent=kernel,
+            cwd="/tmp",
+            prompt="do work",
+            task_summary="do work",
+            status="running",
+            turn_seq=rec.turn_seq,
+        )
+
+    # A) 5 个内核在 _execute_worker_job 中的非 ok 状态映射（经 _run_worker_turn_sync）
+    for idx, (kernel, turn_status, expected_rc, expected_ont_state) in enumerate(
+        [
+            ("claude", "error", 1, "error"),
+            ("codex", "timeout", 1, "error"),
+            ("opencode", "needs_input", 2, "awaiting_input"),
+            ("agy", "error", 1, "error"),
+            ("coreagent", "needs_input", 2, "awaiting_input"),
+        ],
+        start=1,
+    ):
+        job = _make_job(idx, "worker", kernel)
+
+        def _fake_worker_turn(_prompt, *, _st=turn_status, _sid=job.target_session_id, **_kw):
+            return _sid, _st, f"{_st}-msg"
+
+        monkeypatch.setattr(agent_cli, "_run_worker_turn_sync", _fake_worker_turn)
+        rc, _out, err = async_dispatch._execute_worker_job(job)
+
+        assert rc == expected_rc, f"{kernel} {turn_status} rc mismatch"
+        assert turn_status in err
+        rec = svc.get_session(job.target_session_id)
+        assert rec is not None and rec.lifecycle_state == expected_ont_state
+
+    # B) drive_send 与 employee 同样拒绝把 needs_input 归为 rc=0
+    import frago.cli.drive_command as drive_cli
+
+    drive_job = _make_job(90, "drive_send", "codex")
+    monkeypatch.setattr(
+        drive_cli,
+        "_resolve_or_die",
+        lambda _n: SimpleNamespace(agent_type="codex", session_id=drive_job.target_session_id),
+    )
+    monkeypatch.setattr(drive_cli, "make_runner", lambda: lambda _argv: "")
+    monkeypatch.setattr(drive_cli, "_refresh_tmux_name", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        drive_cli,
+        "_bind_session",
+        lambda _e, _d, _r: SimpleNamespace(
+            capture_pane=lambda: "› ",
+            send=lambda *_a, **_kw: SimpleNamespace(status="needs_input", text="请确认"),
+        ),
+    )
+    monkeypatch.setattr(
+        "frago.agent_driver.driver.load_driver",
+        lambda _k: SimpleNamespace(ready_signal=SimpleNamespace(matches=lambda _p: True)),
+    )
+    rc_d, _out_d, err_d = async_dispatch._execute_drive_send_job(drive_job)
+    assert rc_d == 2 and "needs_input" in err_d
+
+    emp_job = _make_job(91, "employee", "claude")
+    monkeypatch.setattr(
+        emp_cli,
+        "_run_agent_turn_for_employee",
+        lambda *_a, **_kw: (emp_job.target_session_id, "needs_input", "请确认授权"),
+    )
+    rc_e, _out_e, err_e = async_dispatch._execute_employee_job(emp_job)
+    assert rc_e == 2 and "needs_input" in err_e
+
+    # C) execute_dispatch_job 在 rc=1 (error/timeout) 与 rc=2 (needs_input) 时，job.status 必为 failed 且回调为 failed
+    for idx, rc_val in enumerate((1, 2), start=100):
+        j = _make_job(idx, "worker", "claude")
+        p = async_dispatch.save_dispatch_job(j)
+        monkeypatch.setattr(
+            async_dispatch,
+            "_execute_worker_job",
+            lambda _j, _r=rc_val: (_r, "detail", "needs_input" if _r == 2 else "error"),
+        )
+        final_job = async_dispatch.execute_dispatch_job(p)
+        assert final_job.status == "failed"
+        assert final_job.delivery_state == "delivered"
+        assert final_job.exit_code == rc_val
+        cb_xml = async_dispatch.format_callback_prompt(final_job)
+        assert 'status="failed"' in cb_xml
+        assert 'status="completed"' not in cb_xml
+
+    # D) 仅当 rc=0 且 status!="failed" 时才写成 completed
+    ok_job = _make_job(200, "worker", "claude")
+    p_ok = async_dispatch.save_dispatch_job(ok_job)
+    monkeypatch.setattr(async_dispatch, "_execute_worker_job", lambda _j: (0, "all good", ""))
+    done_job = async_dispatch.execute_dispatch_job(p_ok)
+    assert done_job.status == "completed"
+    assert done_job.delivery_state == "delivered"
+    assert 'status="completed"' in async_dispatch.format_callback_prompt(done_job)
+
+
+
 
 
 

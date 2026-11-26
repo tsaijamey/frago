@@ -253,3 +253,76 @@ def test_trailing_tool_result_or_system_informational_does_not_flip_done():
     assert r.done is True
     assert r.stop_reason == "end_turn"
     assert r.final_text == "上一轮完结"
+
+
+# ── error & empty-answer classification (PM-RELEASE-20261125-DISPATCH-SPLIT-1A) ──
+
+
+def test_api_error_message_marks_is_error_and_never_leaks_text():
+    for status_code, msg in (
+        (500, "API Error: 500 Internal Server Error"),
+        (429, "API Error: 429 rate_limit_error"),
+        (504, "Request timeout while streaming"),
+    ):
+        recs = [
+            _assistant("req1", "end_turn", _text("partial text before error")),
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "apiErrorStatus": status_code,
+                "uuid": f"u-{status_code}",
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "content": _text(msg),
+                },
+            },
+        ]
+        r = evaluate_records(recs)
+        assert r.done is True
+        assert r.is_error is True
+        assert r.empty_answer is False
+        assert r.final_text == ""
+        assert str(status_code) in (r.error_message or "") or msg in (r.error_message or "")
+
+
+def test_record_level_error_and_stop_reason_error_mark_is_error():
+    recs_rec_err = [
+        {
+            "type": "assistant",
+            "uuid": "u-err",
+            "error": {"type": "api_error", "message": "upstream 500"},
+            "message": {"role": "assistant", "stop_reason": "end_turn", "content": []},
+        }
+    ]
+    r1 = evaluate_records(recs_rec_err)
+    assert r1.done is True
+    assert r1.is_error is True
+    assert r1.final_text == ""
+    assert "upstream 500" in (r1.error_message or "")
+
+    recs_stop_err = [
+        {
+            "type": "assistant",
+            "uuid": "u-stop-err",
+            "requestId": "req-err",
+            "message": {"role": "assistant", "stop_reason": "error", "content": []},
+        }
+    ]
+    r2 = evaluate_records(recs_stop_err)
+    assert r2.done is True
+    assert r2.is_error is True
+    assert r2.final_text == ""
+
+
+def test_empty_answer_distinguishes_blank_from_thinking_only():
+    blank = evaluate_records([_assistant("req-blank", "end_turn", [])])
+    assert blank.done is True
+    assert blank.empty_answer is True
+    assert blank.is_error is True
+
+    thinking_only = evaluate_records([_assistant("req-think", "end_turn", _thinking("let me ponder"))])
+    assert thinking_only.done is True
+    assert thinking_only.empty_answer is True
+    assert thinking_only.is_error is False
+

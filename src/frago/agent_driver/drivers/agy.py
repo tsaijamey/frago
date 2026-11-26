@@ -649,6 +649,9 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
 
 
 # ── 完成探针 ────────────────────────────────────────────────────────
+_EMPTY_ANSWER_NOTE = "agy 本轮结束但未产出有效文本输出，可能是上游异常或空答中断。"
+
+
 def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     """权威完成探针：读 transcript 判本轮是否答完 + 取终答；顺手认领。
 
@@ -677,6 +680,41 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
                     status="error",
                 )
         return CompletionVerdict(done=False, text=None, marker=turn.turn_id)
+    if turn.error:
+        logger.warning(
+            "agy turn finished with hidden error (session=%s, turn=%s): %s",
+            sid,
+            turn.turn_id,
+            turn.error,
+        )
+        return CompletionVerdict(
+            done=True,
+            text=turn.error,
+            marker=turn.turn_id,
+            status="error",
+        )
+    if not turn.text.strip():
+        pane_now = ""
+        capture = getattr(session, "capture_pane", None)
+        if callable(capture):
+            with contextlib.suppress(Exception):
+                pane_now = capture() or ""
+        if pane_now and _NEEDS_INPUT.matches(pane_now):
+            return CompletionVerdict(
+                done=True,
+                text=_EMPTY_ANSWER_NOTE,
+                marker=turn.turn_id,
+                status="needs_input",
+            )
+        logger.warning(
+            "agy turn finished with empty output (session=%s, turn=%s)", sid, turn.turn_id
+        )
+        return CompletionVerdict(
+            done=True,
+            text=_EMPTY_ANSWER_NOTE,
+            marker=turn.turn_id,
+            status="error",
+        )
     return CompletionVerdict(done=True, text=turn.text, marker=turn.turn_id)
 
 

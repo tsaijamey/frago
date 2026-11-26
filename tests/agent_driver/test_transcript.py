@@ -106,3 +106,33 @@ def test_list_sessions_sees_tmux_session() -> None:
     write_turn("s-list", "opencode", "/w", "hello", _result("world"))
     sessions = list_sessions(agent_type=AgentType.OPENCODE, limit=10)
     assert any(s.session_id == "s-list" for s in sessions)
+
+
+@pytest.mark.parametrize(
+    ("turn_status", "expected_session_status", "expect_ended_at"),
+    [
+        ("ok", "completed", True),
+        ("needs_input", "awaiting_input", False),
+        ("error", "error", True),
+        ("timeout", "error", True),
+    ],
+)
+def test_write_turn_persists_terminal_status_and_ended_at(
+    storage_base,
+    turn_status: str,
+    expected_session_status: str,
+    expect_ended_at: bool,
+) -> None:
+    import json
+
+    sid = f"sess-{turn_status}"
+    res = TurnResult(text=f"out-{turn_status}", raw_delta="", status=turn_status, duration_ms=42)
+    assert write_turn(sid, "claude", "/w", "prompt", res) is True
+
+    meta = json.loads((storage_base / "claude" / sid / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["status"] == expected_session_status
+    if expect_ended_at:
+        assert meta["ended_at"] is not None
+    else:
+        assert meta["ended_at"] is None
+

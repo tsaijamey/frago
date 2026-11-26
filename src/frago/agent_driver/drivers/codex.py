@@ -909,20 +909,21 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
 
 
 # ── 完成探针 ────────────────────────────────────────────────────────
-# 本轮已终结、但 codex 给它标了错误（provider 拒绝、鉴权失败、模型不可用等）。
-# 判 ``needs_input`` 而不是 ``error``：``error`` 在本层的既有语义是"driver / tmux
-# 这条链路自己坏了"，而这里链路全程正常，坏的是凭据或 provider 的接纳，得由真人去
-# 改配置才走得下去——与屏幕上的认证墙是同一类失败，只是这一次它没往屏幕上打字。
+# 本轮已终结、但 codex 给它标了错误（provider 拒绝、鉴权失败、模型不可用、运行报错等）。
+# 统一映射为 ``status="error"``；只有明确的 ``request_user_input`` 或窗格命中
+# ``_NEEDS_INPUT`` 门（认证墙 / 单写者锁 / 权限交互）才返回 ``status="needs_input"``。
 _TURN_ERROR_NOTE = (
-    "本轮结束但 codex 标了错误，通常是鉴权失败、provider 拒绝或模型不可用。\n"
+    "本轮结束但 codex 标了错误，通常是鉴权失败、provider 拒绝、模型不可用或运行异常。\n"
     "用 `codex doctor` 查 provider、鉴权来源与端点可达性；配置在 ~/.codex/config.toml。\n"
     "codex 报的原文：\n"
 )
 
 _EMPTY_ANSWER_NOTE = (
-    "本轮结束但没有任何输出，通常是鉴权失败或 provider 拒绝。\n"
+    "本轮结束但没有任何输出，通常是鉴权失败、provider 拒绝或空答异常。\n"
     "用 `codex doctor` 查 provider、鉴权来源与端点可达性；配置在 ~/.codex/config.toml。"
 )
+
+_REQUEST_USER_INPUT_NOTE = "codex 正在等待用户输入或确认。"
 
 
 def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
@@ -951,9 +952,42 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
             done=True,
             text=f"{_TURN_ERROR_NOTE}{turn.error}",
             marker=turn.turn_id,
+            status="error",
+        )
+    if turn.stop_reason == "request_user_input":
+        return CompletionVerdict(
+            done=True,
+            text=turn.text.strip() or _REQUEST_USER_INPUT_NOTE,
+            marker=turn.turn_id,
             status="needs_input",
         )
+    if turn.stop_reason not in (None, "end_turn"):
+        reason = str(turn.stop_reason)
+        logger.warning(
+            "codex turn terminated abnormally (session=%s, turn=%s, reason=%s)",
+            sid,
+            turn.turn_id,
+            reason,
+        )
+        return CompletionVerdict(
+            done=True,
+            text=f"{_TURN_ERROR_NOTE}turn_aborted ({reason})",
+            marker=turn.turn_id,
+            status="error",
+        )
     if not turn.text.strip():
+        pane_now = ""
+        capture = getattr(session, "capture_pane", None)
+        if callable(capture):
+            with contextlib.suppress(Exception):
+                pane_now = capture() or ""
+        if pane_now and _NEEDS_INPUT.matches(pane_now):
+            return CompletionVerdict(
+                done=True,
+                text=_EMPTY_ANSWER_NOTE,
+                marker=turn.turn_id,
+                status="needs_input",
+            )
         logger.warning(
             "codex turn finished with no output (session=%s, turn=%s)", sid, turn.turn_id
         )
@@ -961,7 +995,7 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
             done=True,
             text=_EMPTY_ANSWER_NOTE,
             marker=turn.turn_id,
-            status="needs_input",
+            status="error",
         )
     return CompletionVerdict(done=True, text=turn.text, marker=turn.turn_id)
 

@@ -424,16 +424,12 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
         )
 
 
-# 本轮已终结、但聚合出来的正文是空的。真实现场：OpenRouter 因认证头配错被拒，模型
-# 零产出，那条助手消息带完成时刻、结束标记是 ``unknown``、文本为空。
-#
-# 这一轮判 ``needs_input`` 而不是 ``error``：``error`` 在本层的既有语义是"driver /
-# tmux 这条链路自己坏了"（会话中途消失、投喂退非零），而这里链路全程正常，坏的是
-# 凭据或 provider 的接纳，得由真人去改 profile 才走得下去——与本 driver 已有的
-# ``_NEEDS_INPUT`` 屏幕门（invalid api key / unauthorized / 余额不足）是同一类失败，
-# 只是这一次它没往屏幕上打字。同一个根因 NEVER 因为可见与否落到两个状态上。
+# 本轮已终结、但带有报错或聚合正文为空。
+# - 若消息信封带 ``error``（即便含 ``time.completed``），一律映射为 ``status="error"``；
+# - 若无文本输出：仅当窗格明确命中 ``_NEEDS_INPUT`` 门（认证墙 / 权限确认等）时返 ``needs_input``，
+#   其余空答异常一律返回 ``status="error"``，绝不折入 ``ok``。
 _EMPTY_ANSWER_NOTE = (
-    "本轮结束但没有任何输出，通常是鉴权失败或 provider 拒绝。\n"
+    "本轮结束但没有任何输出，通常是鉴权失败、provider 拒绝或空答异常。\n"
     "请检查这条 profile 的密钥与认证方式（自定义端点里 OpenRouter 这类要求 "
     "Authorization: Bearer，密钥头不被接受），以及账户余额与模型可用性。"
 )
@@ -448,11 +444,9 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     退回屏幕信号，本轮照常跑完。
 
     完成判据在 ``opencode_store.latest_turn`` 里：本轮存在带完成时刻、且结束标记不是
-    ``tool-calls`` 的助手消息。中途的 ``tool-calls`` 段一律不算答完，否则只是把屏幕
-    误判换成数据库误判。
-
-    答完但一个字都没产出时，本轮判为 ``needs_input``（理由见 ``_EMPTY_ANSWER_NOTE``），
-    NEVER 以成功姿态返回一个空字符串。
+    ``tool-calls`` 的助手消息。若终结消息携带 ``error``（即使含 ``time.completed``），
+    直接返回 ``status="error"``；答完但一个字都没产出时，命中屏幕交互门返 ``needs_input``，
+    否则返 ``status="error"``，NEVER 以成功姿态返回一个空字符串。
     """
     sid = _bound_session_id(session)
     if sid is None:
@@ -462,9 +456,34 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     turn = opencode_store.latest_turn(sid)
     if turn is None:
         return None
+    if turn.error:
+        logger.warning(
+            "opencode turn finished with error (session=%s, message=%s): %s",
+            sid,
+            turn.final_message_id,
+            turn.error,
+        )
+        return CompletionVerdict(
+            done=True,
+            text=turn.error,
+            marker=turn.final_message_id,
+            status="error",
+        )
     if not turn.done:
         return CompletionVerdict(done=False, text=None, marker=turn.final_message_id)
     if not turn.text.strip():
+        pane_now = ""
+        capture = getattr(session, "capture_pane", None)
+        if callable(capture):
+            with contextlib.suppress(Exception):
+                pane_now = capture() or ""
+        if pane_now and _NEEDS_INPUT.matches(pane_now):
+            return CompletionVerdict(
+                done=True,
+                text=_EMPTY_ANSWER_NOTE,
+                marker=turn.final_message_id,
+                status="needs_input",
+            )
         logger.warning(
             "opencode turn finished with no output (session=%s, message=%s)",
             sid,
@@ -474,7 +493,7 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
             done=True,
             text=_EMPTY_ANSWER_NOTE,
             marker=turn.final_message_id,
-            status="needs_input",
+            status="error",
         )
     return CompletionVerdict(done=True, text=turn.text, marker=turn.final_message_id)
 

@@ -1431,7 +1431,7 @@ def _execute_employee_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
                     rec.active_session_ids = cleaned_ids
                     save_post(rec)
 
-    ok = turn_status in ("ok", "needs_input")
+    ok = turn_status == "ok"
     clean_ans = str(answer_text or "").strip()
     if ok:
         err = ""
@@ -1448,7 +1448,8 @@ def _execute_employee_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
         error_text=err,
         old_target=old_target,
     )
-    return (0 if ok else 1), clean_ans, err
+    rc = 0 if ok else (2 if turn_status == "needs_input" else 1)
+    return rc, clean_ans, err
 
 
 def _execute_worker_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
@@ -1517,7 +1518,8 @@ def _execute_worker_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
         error_text=err,
         old_target=old_target,
     )
-    return (0 if ok else 1), clean_ans, err
+    rc = 0 if ok else (2 if turn_status == "needs_input" else 1)
+    return rc, clean_ans, err
 
 
 def _execute_drive_send_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
@@ -1550,16 +1552,18 @@ def _execute_drive_send_job(job: AsyncDispatchJob) -> tuple[int, str, str]:
             timeout_s=float(job.timeout) if job.timeout and job.timeout > 0 else None,
         )
         _refresh_tmux_name(entry, session)
-        ok = result.status == "ok"
+        norm_status = str(result.status or "ok").strip().lower()
+        ok = norm_status == "ok"
         ans = str(result.text or "").strip()
-        err_msg = "" if ok else f"status={result.status}"
+        err_msg = "" if ok else f"status={norm_status}"
         _closeout_dispatch_target(
             job,
-            turn_status=str(result.status or "ok"),
+            turn_status=norm_status,
             answer_text=ans,
             error_text=err_msg,
         )
-        return (0 if ok else 1), ans, err_msg
+        rc = 0 if ok else (2 if norm_status == "needs_input" else 1)
+        return rc, ans, err_msg
     except Exception as exc:
         _closeout_dispatch_target(job, turn_status="error", error_text=str(exc))
         return 1, "", str(exc)

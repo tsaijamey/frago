@@ -1071,6 +1071,56 @@ def test_agy_hook_passes_employee_id_to_engine_even_if_worker_role_inherited(
     assert captured_sub_env.get("FRAGO_AGENT_ROLE") == "employee"
 
 
+def test_completion_probe_done_turn_separates_error_empty_and_needs_input(app_dir, monkeypatch):
+    """验证 agy._completion_probe 在 turn.done=True 时对 turn.error、空答、needs_input 与正常答复的剥离。"""
+    from frago.session.agy_store import AgyTurn
+
+    monkeypatch.setattr(agy_driver, "_bound_session_id", lambda _s: CONVERSATION_ID)
+    monkeypatch.setattr(agy_driver, "_claim_once", lambda _s: None)
+
+    class _Sess:
+        session_id = CONVERSATION_ID
+        cwd = "/tmp/proj"
+        native_session_id = True
+
+        def __init__(self, pane: str) -> None:
+            self._pane = pane
+
+        def capture_pane(self) -> str:
+            return self._pane
+
+    # 1. turn.done=True 但带 error -> status="error"
+    monkeypatch.setattr(
+        agy_store,
+        "latest_turn",
+        lambda _sid: AgyTurn(turn_id="0", done=True, text="", error="HTTP 500 internal error"),
+    )
+    v_err = agy_driver._completion_probe(_Sess(READY_PANE))
+    assert v_err is not None and v_err.done is True and v_err.status == "error"
+
+    # 2. turn.done=True 但文本为空：空闲窗格 -> error；授权/认证窗格 -> needs_input
+    monkeypatch.setattr(
+        agy_store,
+        "latest_turn",
+        lambda _sid: AgyTurn(turn_id="1", done=True, text="   ", error=None),
+    )
+    v_empty_err = agy_driver._completion_probe(_Sess(READY_PANE))
+    assert v_empty_err is not None and v_empty_err.done is True and v_empty_err.status == "error"
+
+    v_empty_auth = agy_driver._completion_probe(_Sess("Error: invalid api key\n" + READY_PANE))
+    assert v_empty_auth is not None and v_empty_auth.done is True and v_empty_auth.status == "needs_input"
+
+    # 3. turn.done=True 正常答复 -> status="ok"
+    monkeypatch.setattr(
+        agy_store,
+        "latest_turn",
+        lambda _sid: AgyTurn(turn_id="2", done=True, text="完成答复", error=None),
+    )
+    v_ok = agy_driver._completion_probe(_Sess(READY_PANE))
+    assert v_ok is not None and v_ok.done is True and v_ok.status == "ok" and v_ok.text == "完成答复"
+
+
+
 
 
 

@@ -534,7 +534,7 @@ def _classify(
             text=note[:500], status="error", duration_ms=duration_ms, tmux_name=tmux_name
         )
 
-    text = str(payload.get("result") or "")
+    text = str(payload.get("result") or payload.get("error") or "")
     if not payload.get("is_error"):
         if returncode:
             # **自相矛盾：result 说自己没出错，内核却以非零退出。** 以退出码为准——一轮
@@ -543,12 +543,26 @@ def _classify(
             return KernelTurn(
                 text=note[:500], status="error", duration_ms=duration_ms, tmux_name=tmux_name
             )
+        if payload.get("error_kind") or payload.get("stop_reason") in ("error", "refusal"):
+            return KernelTurn(
+                text=text or str(payload.get("error_kind") or "coreagent error"),
+                status=_failure_status(payload, text),
+                duration_ms=duration_ms,
+                tmux_name=tmux_name,
+            )
+        if not text.strip():
+            return KernelTurn(
+                text="coreagent 本轮结束但未返回任何文本输出。",
+                status="error",
+                duration_ms=duration_ms,
+                tmux_name=tmux_name,
+            )
         return KernelTurn(
             text=text, status="ok", duration_ms=duration_ms, tmux_name=tmux_name
         )
 
     return KernelTurn(
-        text=text,
+        text=text or str(payload.get("error_kind") or "coreagent error"),
         status=_failure_status(payload, text),
         duration_ms=duration_ms,
         tmux_name=tmux_name,
@@ -580,10 +594,24 @@ def _classify_chat(
             # 与 agent 那条同一条规矩：自报成功却非零退出，以退出码为准。
             note = (stderr or text or "").strip()
             return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
+        if payload.get("error_kind"):
+            return KernelTurn(
+                text=text or str(payload.get("error_kind") or "coreagent chat error"),
+                status=_failure_status(payload, text),
+                duration_ms=duration_ms,
+            )
+        if not text.strip():
+            return KernelTurn(
+                text="coreagent chat 本轮结束但未返回任何文本输出。",
+                status="error",
+                duration_ms=duration_ms,
+            )
         return KernelTurn(text=text, status="ok", duration_ms=duration_ms)
 
     return KernelTurn(
-        text=text, status=_failure_status(payload, text), duration_ms=duration_ms
+        text=text or str(payload.get("error_kind") or "coreagent chat error"),
+        status=_failure_status(payload, text),
+        duration_ms=duration_ms,
     )
 
 

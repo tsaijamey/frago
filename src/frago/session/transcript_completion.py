@@ -63,6 +63,9 @@ class TurnCompletion:
     session_id: str | None
     source_path: str | None
     last_terminal_ts: datetime | None = None  # terminal record's timestamp; idle clock anchor
+    is_error: bool = False           # True when isApiErrorMessage / error field / empty-answer anomaly
+    error_message: str | None = None # human-readable error message (never leaked into final_text)
+    empty_answer: bool = False       # True when a done turn produced no assistant text
 
 
 def _parse_ts(raw: Any) -> datetime | None:
@@ -122,9 +125,7 @@ def _is_trailing_new_turn_signal(record: dict[str, Any]) -> bool:
             stripped = content.strip()
             if not stripped:
                 return False
-            if stripped.startswith("<local-command-"):
-                return False
-            return True
+            return not stripped.startswith("<local-command-")
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict):
@@ -149,10 +150,86 @@ def _is_trailing_new_turn_signal(record: dict[str, Any]) -> bool:
                 return True
         return False
 
-    if rec_type == "system" and record.get("subtype") == "hook_response":
-        if str(record.get("hook_event") or "") == "UserPromptSubmit":
-            return True
+    return (
+        rec_type == "system"
+        and record.get("subtype") == "hook_response"
+        and str(record.get("hook_event") or "") == "UserPromptSubmit"
+    )
 
+
+def _coerce_error_text(raw: Any) -> str:
+    """Flatten a record/message ``error`` field into a concise non-empty string."""
+    if raw is None or raw is False:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        for key in ("message", "error", "detail", "type", "code"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        try:
+            return json.dumps(raw, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(raw).strip()
+    return str(raw).strip()
+
+
+def _extract_group_error(group: list[dict[str, Any]]) -> str | None:
+    """Return an error description if any record in the turn group is an API/engine error."""
+    has_error = False
+    text_parts: list[str] = []
+    meta_parts: list[str] = []
+
+    for rec in group:
+        msg = rec.get("message")
+        msg_dict = msg if isinstance(msg, dict) else {}
+        is_api_err = rec.get("isApiErrorMessage") is True
+        rec_err = _coerce_error_text(rec.get("error"))
+        msg_err = _coerce_error_text(msg_dict.get("error"))
+        stop_is_err = msg_dict.get("stop_reason") == "error"
+        api_status = rec.get("apiErrorStatus")
+
+        if not (is_api_err or rec_err or msg_err or stop_is_err):
+            continue
+
+        has_error = True
+        content_text = _extract_text(msg_dict.get("content", "")).strip()
+        if content_text and content_text not in text_parts:
+            text_parts.append(content_text)
+        for candidate in (msg_err, rec_err):
+            if candidate and candidate not in meta_parts:
+                meta_parts.append(candidate)
+        if api_status not in (None, "", False) and str(api_status) not in meta_parts:
+            meta_parts.append(f"HTTP {api_status}")
+
+    if not has_error:
+        return None
+    if text_parts:
+        joined = "\n".join(text_parts)
+        return joined
+    if meta_parts:
+        return "; ".join(meta_parts)
+    return "Claude API error"
+
+
+def _has_substantive_non_text_blocks(group: list[dict[str, Any]]) -> bool:
+    """Return True when the turn group carries thinking or tool_use blocks (not an empty envelope)."""
+    for rec in group:
+        msg = rec.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "thinking" and str(block.get("thinking") or "").strip():
+                return True
+            if btype == "tool_use":
+                return True
     return False
 
 
@@ -223,15 +300,38 @@ def evaluate_records(
         group = [r for r in assistants if r.get("requestId") == request_id]
     else:
         group = [terminal]
+
+    group_error = _extract_group_error(group)
+    if group_error is not None:
+        # API/engine error bubbles carry ``type="assistant"`` and often a text block
+        # like "API Error: ..."; never leak error text as normal ``final_text``.
+        return TurnCompletion(
+            done=True,
+            stop_reason=stop_reason,
+            final_text="",
+            request_id=request_id,
+            last_uuid=terminal.get("uuid"),
+            pending_tool_use=False,
+            session_id=session_id or terminal.get("sessionId"),
+            source_path=source_path,
+            last_terminal_ts=_parse_ts(terminal.get("timestamp")),
+            is_error=True,
+            error_message=group_error,
+            empty_answer=False,
+        )
+
     parts = []
     for r in group:
         text = _extract_text((r.get("message") or {}).get("content", ""))
         if text:
             parts.append(text)
     final_text = "".join(parts)
+    done = stop_reason in _DONE_REASONS
+    empty_answer = bool(done and not final_text.strip())
+    empty_is_error = bool(empty_answer and not _has_substantive_non_text_blocks(group))
 
     return TurnCompletion(
-        done=stop_reason in _DONE_REASONS,
+        done=done,
         stop_reason=stop_reason,
         final_text=final_text,
         request_id=request_id,
@@ -240,6 +340,9 @@ def evaluate_records(
         session_id=session_id or terminal.get("sessionId"),
         source_path=source_path,
         last_terminal_ts=_parse_ts(terminal.get("timestamp")),
+        is_error=empty_is_error,
+        error_message="Claude turn ended with empty response" if empty_is_error else None,
+        empty_answer=empty_answer,
     )
 
 

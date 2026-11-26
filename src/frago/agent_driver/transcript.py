@@ -31,6 +31,18 @@ def _coerce_source(source: SessionSource | str) -> SessionSource:
     return SessionSource.WEB if str(source).lower() == "web" else SessionSource.TERMINAL
 
 
+def _resolve_session_terminal_state(
+    result: TurnResult, now: datetime
+) -> tuple[SessionStatus, datetime | None]:
+    """把 TurnResult.status 映射为 metadata.json 的 SessionStatus 与 ended_at。"""
+    norm = str(getattr(result, "status", "ok") or "ok").strip().lower()
+    if norm == "ok":
+        return SessionStatus.COMPLETED, now
+    if norm == "needs_input":
+        return SessionStatus.AWAITING_INPUT, None
+    return SessionStatus.ERROR, now
+
+
 def write_turn(
     session_id: str,
     agent_type: AgentType | str,
@@ -92,5 +104,6 @@ def write_turn(
 
     session.step_count = base_step + written
     session.last_activity = now
+    session.status, session.ended_at = _resolve_session_terminal_state(result, now)
     write_metadata(session)
     return True

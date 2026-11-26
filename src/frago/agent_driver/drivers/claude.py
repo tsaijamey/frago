@@ -9,6 +9,8 @@ extract 擦掉 TUI 边框、侧栏、页脚等视觉 chrome，只留答案文本
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -710,6 +712,12 @@ def is_terminal_busy(pane: str) -> bool:
     return _WORKING.matches(pane)
 
 
+_TURN_ERROR_NOTE = "claude 本轮执行返回错误，未产出有效答复。"
+_EMPTY_ANSWER_NOTE = (
+    "claude 本轮结束但没有任何文本输出，可能是上游接口异常、鉴权失败或空答中断。"
+)
+
+
 def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     """权威完成探针：读 claude 的 session JSONL 判本轮是否答完 + 取最终文本。
 
@@ -721,10 +729,68 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     if path is None:
         return None
     completion = tc_mod.evaluate_file(path)
+    marker = completion.last_uuid or completion.request_id
+    if marker is None and (completion.done or completion.is_error):
+        if completion.last_terminal_ts is not None:
+            marker = f"ts:{completion.last_terminal_ts.isoformat()}"
+        else:
+            size = 0
+            with contextlib.suppress(OSError):
+                size = path.stat().st_size
+            digest = hashlib.sha1(
+                f"{completion.stop_reason or ''}\0{completion.error_message or ''}\0{completion.final_text}".encode(
+                    "utf-8", errors="replace"
+                )
+            ).hexdigest()[:12]
+            marker = f"synth:{size}:{digest}"
+    if completion.is_error and not completion.empty_answer:
+        err_text = (completion.error_message or "").strip() or _TURN_ERROR_NOTE
+        logger.warning(
+            "claude turn finished with error (session=%s, marker=%s): %s",
+            session.session_id,
+            marker,
+            err_text,
+        )
+        return CompletionVerdict(
+            done=True,
+            text=err_text,
+            marker=marker,
+            status="error",
+        )
+    if not completion.done:
+        return CompletionVerdict(
+            done=False,
+            text=None,
+            marker=completion.last_uuid,
+        )
+    if completion.empty_answer or not completion.final_text.strip():
+        pane_now = ""
+        capture = getattr(session, "capture_pane", None)
+        if callable(capture):
+            with contextlib.suppress(Exception):
+                pane_now = capture() or ""
+        if pane_now and _NEEDS_INPUT.matches(pane_now):
+            return CompletionVerdict(
+                done=True,
+                text=_EMPTY_ANSWER_NOTE,
+                marker=marker,
+                status="needs_input",
+            )
+        logger.warning(
+            "claude turn finished with empty output (session=%s, marker=%s)",
+            session.session_id,
+            marker,
+        )
+        return CompletionVerdict(
+            done=True,
+            text=(completion.error_message or "").strip() or _EMPTY_ANSWER_NOTE,
+            marker=marker,
+            status="error",
+        )
     return CompletionVerdict(
-        done=completion.done,
-        text=completion.final_text if completion.done else None,
-        marker=completion.last_uuid,
+        done=True,
+        text=completion.final_text,
+        marker=marker,
     )
 
 
