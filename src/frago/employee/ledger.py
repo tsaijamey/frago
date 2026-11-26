@@ -2544,7 +2544,8 @@ def _derive_intent_playbooks(
                 "default_action": (
                     "将权威规范章节（`frago book recipe-spec-writing`、`frago book recipe-creation`、"
                     "`frago book interactive-recipe`、`frago book must-recipe-data`）与 `frago-recipe-ops` 知识域写入任务书，"
-                    "交由 Worker 按标准四步推进（`plan` 写 `spec.md` → `create` 生成模板并填实现 → `validate` 过检 → `run`/`open` 本机验证）。"
+                    "交由 Worker 按标准四步推进（`plan` 写 `spec.md` → `create` 生成模板并填实现 → `validate` 过检 → `run`/`open` 本机验证，"
+                    "并在任务书中写清终态定义及实际页面/运行态回读核验步骤）。"
                     "【本机生效 vs 服务器开放硬边界】本机（`local` 区）配方落盘即自动被服务识别生效、主人免权限直通；"
                     "有界面的配方只需将 `default_mode` 设为打开页面的 mode（调 `self.publish` + `self.open_page`）或执行 `frago recipe open <名字>` 即可使用；"
                     "严禁为让本机配方生效而执行 `frago recipe expose` 或调 `frago app ask` 询问开放权限（`expose` 仅在用户明确要求向远端/多账号服务器外部他人开放页面时使用）。"
@@ -2565,9 +2566,11 @@ def _derive_intent_playbooks(
                 "intent": "看现状 / 复盘 / 拆解当前情况",
                 "trigger_phrases": ["现在什么情况", "复盘", "看一下", "进展", "拆解"],
                 "default_action": (
-                    "结合已挂载的近期活跃事项与槽位目录摘要，将相关数据槽位路径、知识域方向及核查准则写进任务书，"
+                    "先锚定人类想确认的终态对象，再对照当前对话、已挂载的「近期活跃事项与最新结论」及近期会话阶段结论——"
+                    "若已知信息已能准确、无猜地回答人类（或仅需参谋拆解、方案权衡与优先级排序），直接在本会话给出结论与建议；"
+                    "仅当缺一手现状核实（需翻目录、查文件/日志或重度复盘）时，才将相关数据槽位路径、知识域方向、核查准则及终态定义与回读核验步骤写进任务书，"
                     "塞进对口的已有 Worker 会话（`frago agent --resume <session_id> --prompt-file <任务书.md>`）"
-                    "或新开 Worker 会话（`frago agent --prompt-file <任务书.md>`）去读取核实并代审，拿回结论后在本会话向人类汇报并给出决策建议。"
+                    "或新开 Worker 会话（`frago agent --prompt-file <任务书.md>`）去读取核实并代审，确认终态回读实证无误后在本会话向人类汇报并给出决策建议。"
                 ),
                 "recipes_or_slots": slot_paths,
             }
@@ -2582,9 +2585,10 @@ def _derive_intent_playbooks(
                 "intent": "调度本岗位配方与自动化工具",
                 "trigger_phrases": triggers[:12],
                 "default_action": (
-                    "将候选配方名、相关数据槽位路径与执行准则作为参考方向编入任务书，交由已有或新开的 Worker 会话"
+                    "将候选配方名、相关数据槽位路径、执行准则及人类验收的终态定义与回读核验步骤一并编入任务书"
+                    "（仅当涉不可逆外部副作用且用户原话未明说做到哪一步时先动前确认，已明确或可逆则直接推进），交由已有或新开的 Worker 会话"
                     "（`frago agent --resume <session_id> --prompt-file <任务书.md>` 或 `frago agent --prompt-file <任务书.md>`）"
-                    "去执行 `frago recipe info <名字>` 与 `frago recipe run <名字> --params '<JSON>'`，回收审核结果后在本会话向人类交付结论。"
+                    "去执行 `frago recipe info <名字>` 与 `frago recipe run <名字> --params '<JSON>'`，核对回传的终态回读实证后在本会话向人类交付结论。"
                 ),
                 "recipes_or_slots": recipe_names,
             }
@@ -2595,8 +2599,10 @@ def _derive_intent_playbooks(
                 "intent": "调取本岗位既有结论与领域准则",
                 "trigger_phrases": ["以前怎么定的", "有没有沉淀", "查一下知识", "之前遇到过吗"],
                 "default_action": (
-                    "绝不自己在主会话盲搜细节，将候选知识域名与关联历史会话 ID 作为参考方向写入任务书交给 Worker "
-                    "执行 `frago <domain> find` / `frago session ask` 取证与核验，再基于 Worker 交回的结论在本会话向人类输出决策建议。"
+                    "先核对当前会话与首屏语境中的「业务词汇表」「近期活跃事项」「近期会话阶段结论」是否已给出明确口径——"
+                    "能直接无猜回答或做判断权衡时当场直答；若上下文无明确结论、不查就只能猜，则绝不自己在主会话盲搜文件或凭记忆臆测，"
+                    "将候选知识域名、关联历史会话 ID 与需核验的终态依据写入任务书交给 Worker "
+                    "执行 `frago <domain> find` / `frago session ask` 取证与回读核验，再基于 Worker 交回的实证结论在本会话向人类输出决策建议。"
                 ),
                 "recipes_or_slots": [f"domain:{d}" for d in sorted(domain_names)],
             }
