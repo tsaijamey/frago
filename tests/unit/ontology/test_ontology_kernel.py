@@ -4514,14 +4514,18 @@ class TestCallbackDeliveryOntologyGate1AndGate2:
             ("delivering", "queued"),
             ("delivering", "failed"),
             ("queued", "failed"),
+            ("failed", "queued"),
         }
         states = ("queued", "delivering", "delivered", "failed")
         for a in states:
             for b in states:
                 assert is_legal_callback_delivery_transition(a, b) is ((a, b) in legal), (a, b)
         assert CALLBACK_DELIVERY_TRANSITIONS["delivered"] == frozenset()
+        assert CALLBACK_DELIVERY_TRANSITIONS["failed"] == frozenset({"queued"})
         assert is_legal_callback_delivery_transition("queued", "delivered") is False
         assert is_legal_callback_delivery_transition("delivered", "queued") is False
+        assert is_legal_callback_delivery_transition("failed", "delivered") is False
+        assert is_legal_callback_delivery_transition("failed", "delivering") is False
 
     def test_gate_2_projects_dispatch_ledger_into_process_and_state(self) -> None:
         from frago.ontology import project_callback_delivery_dict
@@ -4729,6 +4733,74 @@ class TestCallbackDeliveryOntologyGate3:
         assert (
             record_callback_delivery_outcome(
                 job_id=job2.job_id,
+                from_state="delivering",
+                to_state="delivered",
+                prior_delivery_state="delivering",
+            )
+            == "delivered"
+        )
+
+        # 7. 受控恢复边 failed -> queued：
+        #    (a) 缺少非空 reason 必须拒绝
+        #    (b) failure_kind="permanent" 必须拒绝
+        #    (c) 非法 failure_kind 必须拒绝
+        #    (d) 提供非空 reason 且 failure_kind="transient"（或省略）允许恢复回 queued，再经 delivering -> delivered
+        job3 = _make_job("test-job-gate3-controlled-recovery", "failed")
+        save_dispatch_job(job3)
+
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
+                from_state="failed",
+                to_state="queued",
+                reason="   ",
+                prior_delivery_state="failed",
+                failure_kind="transient",
+            )
+
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
+                from_state="failed",
+                to_state="queued",
+                reason="attempt permanent recovery",
+                prior_delivery_state="failed",
+                failure_kind="permanent",
+            )
+
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
+                from_state="failed",
+                to_state="queued",
+                reason="bad kind",
+                prior_delivery_state="failed",
+                failure_kind="unknown",
+            )
+
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
+                from_state="failed",
+                to_state="queued",
+                reason="recover transient ImportError delivery failure",
+                prior_delivery_state="failed",
+                failure_kind="transient",
+            )
+            == "queued"
+        )
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state="queued",
+            )
+            == "delivering"
+        )
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job3.job_id,
                 from_state="delivering",
                 to_state="delivered",
                 prior_delivery_state="delivering",

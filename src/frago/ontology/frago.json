@@ -599,7 +599,7 @@
           "src/frago/server/services/workbench_queue.py",
           "src/frago/server/services/workbench_queue_patrol_service.py"
         ],
-        "description": "异步回传报文的送达状态（queued 已入队、delivering 送达中、delivered 已落进发起方会话记录、failed 最终送不到），通过 exhibits_state 挂载于 CallbackDeliveryProcess。合法跃迁：queued→delivering→delivered；delivering→queued（本次注入失败放回队首）；delivering→failed、queued→failed。delivered 为终态，且不得绕过 delivering 直接到 delivered。"
+        "description": "异步回传报文的送达状态（queued 已入队、delivering 送达中、delivered 已落进发起方会话记录、failed 最终送不到），通过 exhibits_state 挂载于 CallbackDeliveryProcess。合法跃迁：queued→delivering→delivered；delivering→queued（瞬态投递失败退回排队并携带退避）；delivering→failed、queued→failed；failed→queued（受控恢复边：仅限非永久性故障 failure_kind != 'permanent' 且提供非空 reason 时由恢复巡检重新入队）。delivered 为严格不可逆终态，且不得绕过 delivering 直接到 delivered。"
       },
       {
         "class_id": "HarnessLifecycleState",
@@ -1568,7 +1568,7 @@
     },
     {
       "action_id": "record_callback_delivery_outcome",
-      "parameters": ["job_id", "from_state", "to_state", "reason", "prior_delivery_state"],
+      "parameters": ["job_id", "from_state", "to_state", "reason", "prior_delivery_state", "failure_kind"],
       "signature": {
         "initiator_domain": "AgentKernel | SubtaskWorkerRole | PrimarySchedulerRole",
         "target_range": "CallbackDeliveryProcess",
@@ -1577,7 +1577,8 @@
           "from_state": "str",
           "to_state": "str",
           "reason": "str | None",
-          "prior_delivery_state": "str | None"
+          "prior_delivery_state": "str | None",
+          "failure_kind": "str | None"
         },
         "return_type": "str",
         "error_types": ["ActionContractError"]
@@ -1586,7 +1587,9 @@
         "preconditions": [
           "job_id MUST be a non-empty string.",
           "from_state and to_state MUST both be CallbackDeliveryState allowed values.",
-          "(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed."
+          "(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed, or controlled recovery failed→queued.",
+          "Controlled recovery failed→queued REQUIRES a non-empty reason and failure_kind != 'permanent'.",
+          "When failure_kind is provided (non-empty), it MUST be one of {'transient', 'permanent'}."
         ],
         "postconditions": [
           "CallbackDeliveryProcess exhibits CallbackDeliveryState == to_state."

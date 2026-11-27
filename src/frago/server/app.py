@@ -8,6 +8,7 @@ Creates and configures the FastAPI application with:
 - Background session synchronization
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -280,6 +281,13 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     )
 
     workbench_queue.mark_server_process(True)
+    # 启动时先做一次可恢复回调对账，把因服务重启/瞬态导入失败滞留的回传单放回队列
+    try:
+        from frago.session.async_dispatch import reconcile_recoverable_callback_deliveries
+
+        await asyncio.to_thread(reconcile_recoverable_callback_deliveries)
+    except Exception:
+        logger.debug("Initial recoverable callback reconciliation failed", exc_info=True)
     queue_patrol = WorkbenchQueuePatrolService.get_instance()
     await queue_patrol.start()
 
@@ -394,8 +402,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     # Initialize workbench stream bridge (lazy — starts watching when a
     # session is first viewed, pushes record deltas via WebSocket).
-    import asyncio
-
     from frago.server.services.workbench_stream_bridge import WorkbenchStreamBridge
 
     loop = asyncio.get_running_loop()

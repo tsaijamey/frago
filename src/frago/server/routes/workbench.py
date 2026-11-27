@@ -2221,6 +2221,12 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
     from frago.server.services import stage_orchestrator
     from frago.server.services import tmux_sessions_service as svc
 
+    def _bump_abort_epoch_safe(target_sid: str) -> None:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            get_default_session_service().bump_abort_epoch(target_sid)
+
     def _stop() -> dict[str, Any]:
         if request.stage_reset or sid == "__stage_reset__":
             target_sid = None if sid == "__stage_reset__" else sid
@@ -2228,6 +2234,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             stopped_any = bool(
                 stage_info["stopped_presenters"] or stage_info["stopped_sessions"]
             )
+            if stopped_any and target_sid:
+                _bump_abort_epoch_safe(target_sid)
             return {
                 "sid": sid,
                 "alive": stopped_any,
@@ -2258,6 +2266,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             outcome = coreagent_runner.stop(sid, by="页面上的人")
             core_dropped = int(outcome.get("dropped", 0))
             if outcome.get("running"):
+                if outcome.get("stopped"):
+                    _bump_abort_epoch_safe(sid)
                 return {
                     "sid": sid,
                     # `alive` 与另外几家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
@@ -2297,6 +2307,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
                 "error": None,
             }
         result = svc.close_sessions([link.name])[0]
+        if result["ok"]:
+            _bump_abort_epoch_safe(sid)
         return {
             "sid": sid,
             "alive": True,

@@ -935,3 +935,334 @@ class TestCallbackDeliverySystemizedFixes:
         receipt = workbench_queue.get_queue_delivery_receipt(TEST_SID)
         assert "disp-ca04-second-b" in (receipt.get("delivered_job_ids") or [])
 
+    def test_wave_b1_import_error_degrades_to_lightweight_disk_enqueue_and_retains_queued(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wave B1 子问题 B：子进程环境缺失重依赖（如 ImportError: No module named 'fastapi'）时，
+        watcher 通过零重依赖纯标准库直写队列与活跃索引，派发单保持 queued + transient + next_retry_at，
+        绝不误落 failed；随后服务端巡检能无缝接管并收敛为 delivered / completed。
+        """
+        import builtins
+
+        # 与生产 session_observer.session_dir 保持一致（claude-code -> sessions/claude/<sid>）
+        sessions_root = tmp_path / "sessions"
+        monkeypatch.setattr(
+            session_observer,
+            "session_dir",
+            lambda sid, family: sessions_root / session_observer._FAMILY_DIR.get(family, family) / sid,
+        )
+
+        job = async_dispatch.AsyncDispatchJob(
+            job_id="disp-waveb1-importerr",
+            kind="worker",
+            mode="new",
+            caller_session_id=TEST_SID,
+            caller_employee_id=None,
+            caller_cwd="/repo",
+            target_session_id="worker-sess-no-fastapi",
+            target_name="worker-no-fastapi",
+            employee_id=None,
+            agent="coreagent",
+            cwd="/repo",
+            prompt="do work",
+            task_summary="do work",
+        )
+        job_file = async_dispatch.save_dispatch_job(job)
+
+        monkeypatch.setattr(
+            async_dispatch,
+            "_execute_worker_job",
+            lambda _j: (0, "worker completed cleanly without fastapi", ""),
+        )
+        monkeypatch.setattr(
+            async_dispatch, "wait_for_pending_child_dispatches", lambda *_a, **_kw: ""
+        )
+
+        # 模拟 detached watcher 子进程导入 workbench_queue 时触发缺依赖 ImportError
+        real_import = builtins.__import__
+
+        def _blocking_import(name: str, globals_=None, locals_=None, fromlist=(), level=0):
+            if (
+                name == "frago.server.services.workbench_queue"
+                or (name == "frago.server.services" and "workbench_queue" in (fromlist or ()))
+            ):
+                raise ImportError("No module named 'fastapi'")
+            return real_import(name, globals_, locals_, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _blocking_import)
+        first_job = async_dispatch.execute_dispatch_job(job_file)
+        monkeypatch.setattr(builtins, "__import__", real_import)
+
+        assert first_job is not None
+        assert first_job.exit_code == 0
+        assert first_job.execution_completed_at is not None
+        # 核心断言：绝不误标 failed，而是保留在 queued 等待巡检恢复
+        assert first_job.delivery_state == "queued"
+        assert first_job.status == "running"
+        assert first_job.delivery_failure_kind == "transient"
+        assert first_job.next_retry_at is not None
+        assert first_job.delivery_attempts == 1
+        assert "fastapi" in (first_job.delivery_error or "")
+
+        # 纯标准库直写的队列与活跃索引能被正常 workbench_queue 完整读取
+        q_items = workbench_queue.list_queue(TEST_SID)
+        assert len(q_items) == 1
+        assert q_items[0].get("job_id") == "disp-waveb1-importerr"
+        assert TEST_SID in workbench_queue._read_active_queues_index()
+
+        # 幂等去重：再次调用轻量入队不会产生重复条目
+        dup_id, already_deliv = async_dispatch._lightweight_enqueue_callback(
+            TEST_SID,
+            prompt="duplicate attempt",
+            job_id="disp-waveb1-importerr",
+            cwd="/repo",
+        )
+        assert dup_id == q_items[0]["id"]
+        assert already_deliv is False
+        assert len(workbench_queue.list_queue(TEST_SID)) == 1
+
+        # 随后服务端正常巡检接管，直接投递并收敛派发单为 delivered / completed
+        records = _ready_turn(1)
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records))
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+        sent: list[str] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_send_prompt",
+            lambda _sid, prompt, _cwd=None: sent.append(prompt) or True,
+        )
+
+        injected = workbench_queue.patrol_active_queues(sync=True)
+        assert TEST_SID in injected
+        assert len(sent) == 1
+        assert "disp-waveb1-importerr" in sent[0]
+        final_job = async_dispatch.load_dispatch_job("disp-waveb1-importerr")
+        assert final_job is not None
+        assert final_job.delivery_state == "delivered"
+        assert final_job.status == "completed"
+
+    def test_wave_b1_reconcile_recoverable_callback_deliveries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wave B1 子问题 B：reconcile_recoverable_callback_deliveries 完整验证
+        24h 瞬态 failed 受控恢复（failed -> queued）、幂等防重、永久/超期/superseded 跳过、
+        退避窗口门控与回执直收敛。
+        """
+        from datetime import UTC, datetime, timedelta
+
+        now_dt = datetime(2026, 11, 27, 15, 0, 0, tzinfo=UTC)
+        now_ts = now_dt.timestamp()
+        recent_iso = (now_dt - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stale_iso = (now_dt - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        future_retry_iso = (now_dt + timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        past_retry_iso = (now_dt - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def _save(job_id: str, **overrides: Any) -> async_dispatch.AsyncDispatchJob:
+            base: dict[str, Any] = {
+                "job_id": job_id,
+                "kind": "worker",
+                "mode": "new",
+                "caller_session_id": TEST_SID,
+                "caller_employee_id": None,
+                "caller_cwd": "/repo",
+                "target_session_id": f"worker-{job_id}",
+                "target_name": f"worker-{job_id}",
+                "employee_id": None,
+                "agent": "coreagent",
+                "cwd": "/repo",
+                "prompt": "work",
+                "task_summary": "work",
+                "exit_code": 0,
+                "output": f"result for {job_id}",
+                "created_at": recent_iso,
+                "updated_at": recent_iso,
+            }
+            base.update(overrides)
+            j = async_dispatch.AsyncDispatchJob(**base)
+            async_dispatch.save_dispatch_job(j)
+            return j
+
+        # 1) 24h 内因瞬态 ImportError 误落 failed 且 attempts==1 -> 必须经 failed -> queued 恢复并幂等入队
+        _save(
+            "disp-rec-transient",
+            status="failed",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            delivery_failure_kind=None,
+            completed_at=recent_iso,
+        )
+        # 2) 超过 24h 的旧 failed -> 跳过不恢复
+        _save(
+            "disp-rec-stale",
+            status="failed",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            completed_at=stale_iso,
+            updated_at=stale_iso,
+        )
+        # 3) 显式标记 permanent 的 failed -> 严禁恢复
+        _save(
+            "disp-rec-permanent",
+            status="failed",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            delivery_failure_kind="permanent",
+            completed_at=recent_iso,
+        )
+        # 4) superseded 单据 -> 严禁恢复
+        _save(
+            "disp-rec-superseded",
+            status="superseded",
+            superseded_by="disp-newer",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            completed_at=recent_iso,
+        )
+        # 5) 滞留 queued + 退避窗口未到 -> 暂不入队
+        _save(
+            "disp-rec-backoff-wait",
+            status="running",
+            delivery_state="queued",
+            delivery_attempts=1,
+            delivery_failure_kind="transient",
+            execution_completed_at=recent_iso,
+            next_retry_at=future_retry_iso,
+        )
+        # 6) 滞留 queued + 退避窗口已过 -> 确保幂等入队并清空 next_retry_at
+        _save(
+            "disp-rec-backoff-due",
+            status="running",
+            delivery_state="queued",
+            delivery_attempts=1,
+            delivery_failure_kind="transient",
+            execution_completed_at=recent_iso,
+            next_retry_at=past_retry_iso,
+        )
+        # 7) 发起方回执中已存在 delivered_job_ids -> 直接收敛为 delivered / completed
+        _save(
+            "disp-rec-already-delivered",
+            status="failed",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            completed_at=recent_iso,
+        )
+        q_dir = workbench_queue.queue_dir(TEST_SID)
+        st = workbench_queue._read_queue_state(q_dir)
+        st["delivered_job_ids"] = ["disp-rec-already-delivered"]
+        workbench_queue._write_queue_state(q_dir, st)
+
+        res1 = async_dispatch.reconcile_recoverable_callback_deliveries(now_ts=now_ts)
+        assert res1["requeued_from_failed"] == ["disp-rec-transient"]
+        assert res1["ensured_queued"] == ["disp-rec-backoff-due"]
+        assert res1["finalized_delivered"] == ["disp-rec-already-delivered"]
+
+        # 校验磁盘状态
+        j_trans = async_dispatch.load_dispatch_job("disp-rec-transient")
+        assert j_trans is not None
+        assert j_trans.delivery_state == "queued"
+        assert j_trans.status == "running"
+        assert j_trans.completed_at is None
+
+        assert async_dispatch.load_dispatch_job("disp-rec-stale").delivery_state == "failed"  # type: ignore[union-attr]
+        assert async_dispatch.load_dispatch_job("disp-rec-permanent").delivery_state == "failed"  # type: ignore[union-attr]
+        assert async_dispatch.load_dispatch_job("disp-rec-superseded").status == "superseded"  # type: ignore[union-attr]
+
+        j_due = async_dispatch.load_dispatch_job("disp-rec-backoff-due")
+        assert j_due is not None and j_due.next_retry_at is None
+
+        j_done = async_dispatch.load_dispatch_job("disp-rec-already-delivered")
+        assert j_done is not None
+        assert j_done.delivery_state == "delivered"
+        assert j_done.status == "completed"
+
+        # 校验队列中恰好有 2 条（disp-rec-transient 与 disp-rec-backoff-due），且二次巡检零重复
+        q1 = workbench_queue.list_queue(TEST_SID)
+        assert {it.get("job_id") for it in q1} == {"disp-rec-transient", "disp-rec-backoff-due"}
+        assert len(q1) == 2
+
+        res2 = async_dispatch.reconcile_recoverable_callback_deliveries(now_ts=now_ts)
+        assert res2["requeued_from_failed"] == []
+        assert len(workbench_queue.list_queue(TEST_SID)) == 2
+
+        # 退避时间推进 120s 后，disp-rec-backoff-wait 到期入队
+        res3 = async_dispatch.reconcile_recoverable_callback_deliveries(now_ts=now_ts + 120.0)
+        assert "disp-rec-backoff-wait" in res3["ensured_queued"]
+        assert {it.get("job_id") for it in workbench_queue.list_queue(TEST_SID)} == {
+            "disp-rec-transient",
+            "disp-rec-backoff-due",
+            "disp-rec-backoff-wait",
+        }
+
+    def test_wave_b1_patrol_service_autonomously_recovers_and_delivers_transient_failed_job(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wave B1 端到端：WorkbenchQueuePatrolService 周期巡检自动恢复 24h 内瞬态 failed 派发单并送达收敛。"""
+        import asyncio
+
+        monkeypatch.setenv("FRAGO_CALLBACK_RECOVERY_INTERVAL_S", "0.05")
+        records = _ready_turn(1)
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records))
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+
+        delivered_prompts: list[str] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_send_prompt",
+            lambda _sid, prompt, _cwd=None: delivered_prompts.append(prompt) or True,
+        )
+
+        now_iso = async_dispatch._utc_now()
+        job = async_dispatch.AsyncDispatchJob(
+            job_id="disp-patrol-e2e-rec",
+            kind="worker",
+            mode="new",
+            caller_session_id=TEST_SID,
+            caller_employee_id=None,
+            caller_cwd="/repo",
+            target_session_id="worker-patrol-e2e",
+            target_name="worker-patrol-e2e",
+            employee_id=None,
+            agent="coreagent",
+            cwd="/repo",
+            prompt="do e2e",
+            task_summary="do e2e",
+            status="failed",
+            exit_code=0,
+            output="final e2e result",
+            delivery_state="failed",
+            delivery_attempts=1,
+            delivery_error="No module named 'fastapi'",
+            created_at=now_iso,
+            updated_at=now_iso,
+            completed_at=now_iso,
+        )
+        async_dispatch.save_dispatch_job(job)
+
+        patrol = WorkbenchQueuePatrolService.get_instance(interval_seconds=0.05)
+
+        async def _run() -> None:
+            await patrol.start()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                cur = async_dispatch.load_dispatch_job("disp-patrol-e2e-rec")
+                if cur is not None and cur.delivery_state == "delivered":
+                    break
+                await asyncio.sleep(0.03)
+            await patrol.stop()
+
+        asyncio.run(_run())
+
+        assert len(delivered_prompts) == 1
+        assert "disp-patrol-e2e-rec" in delivered_prompts[0]
+        final_job = async_dispatch.load_dispatch_job("disp-patrol-e2e-rec")
+        assert final_job is not None
+        assert final_job.delivery_state == "delivered"
+        assert final_job.status == "completed"
+
+
+
