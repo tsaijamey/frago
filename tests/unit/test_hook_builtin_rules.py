@@ -734,3 +734,190 @@ def test_builtin_rules_schedule_unattended_prompt_rules_via_frago_core(tmp_path:
     assert "【定时/无人值守运行守则】" in unattended_ctx
     assert "【要人拍板就出卡片】" not in unattended_ctx
     assert "【展示图片就出网格卡】" not in unattended_ctx
+
+
+CITE_SNIPPET = "【引用网页或本地文件证据时用标准 GFM 脚注 `[^N]`】"
+
+
+def _run_tool_event_via_frago_core_engine(
+    tmp_path: Path,
+    *,
+    event: str,
+    tool_name: str,
+    tool_input: dict | None = None,
+    session_id: str = "cite-test-session",
+    env_overrides: dict[str, str | None] | None = None,
+) -> dict:
+    home_dir = tmp_path / "home"
+    hook_dir = home_dir / ".frago" / "hook"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    (hook_dir / "builtin-rules.json").write_text(
+        BUILTIN_RULES_PATH.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    binary = get_bundled_binary_path()
+    payload = json.dumps(
+        {
+            "session_id": session_id,
+            "hook_event_name": event,
+            "tool_name": tool_name,
+            "tool_input": tool_input or {},
+        },
+        ensure_ascii=False,
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    for k in (
+        "FRAGO_PA",
+        "FRAGO_CONV_KEY",
+        "FRAGO_AGENT_ROLE",
+        "FRAGO_SURFACE",
+        "FRAGO_STOP_CHECK",
+        "FRAGO_HARNESS",
+    ):
+        env.pop(k, None)
+    for k, v in (env_overrides or {}).items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+
+    proc = subprocess.run(
+        [str(binary), "--engine"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
+    )
+    return json.loads(proc.stdout)
+
+
+def test_cite_sources_zero_injection_on_plain_chat_and_non_evidence_tools(tmp_path: Path) -> None:
+    prompt_out = _run_user_prompt_submit_via_frago_core_engine(
+        tmp_path,
+        prompt="你好，帮我解释什么是 TCP 握手",
+        env_overrides={"FRAGO_SURFACE": "webui", "FRAGO_CONV_KEY": "conv-chat"},
+    )
+    prompt_ctx = prompt_out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert CITE_SNIPPET not in prompt_ctx
+    assert "[[[!ref_" not in prompt_ctx
+
+    for tool_name, tool_input in [
+        ("Edit", {"file_path": "/tmp/a.py"}),
+        ("Write", {"file_path": "/tmp/a.py"}),
+        ("Glob", {"pattern": "*.py"}),
+        ("Bash", {"command": "ls -la"}),
+    ]:
+        out = _run_tool_event_via_frago_core_engine(
+            tmp_path,
+            event="PostToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            session_id=f"non-ev-{tool_name}",
+        )
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        assert CITE_SNIPPET not in ctx, f"Unexpected cite injection for {tool_name}"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [
+        ("Read", {"file_path": "/tmp/notes.md"}),
+        ("Grep", {"pattern": "TODO"}),
+        ("WebFetch", {"url": "https://example.com"}),
+        ("WebSearch", {"query": "frago release"}),
+        ("Bash", {"command": "frago browser get-content --group g1"}),
+    ],
+)
+def test_cite_sources_on_demand_evidence_tools_and_session_dedup(
+    tmp_path: Path, tool_name: str, tool_input: dict
+) -> None:
+    sid = f"ev-{tool_name}-{uuid.uuid4().hex[:8]}"
+    first = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PostToolUse",
+        tool_name=tool_name,
+        tool_input=tool_input,
+        session_id=sid,
+    )
+    first_ctx = first.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert CITE_SNIPPET in first_ctx
+    assert "[^N]" in first_ctx
+    assert "[[[!ref_" not in first_ctx
+
+    # Same session second evidence tool call must be deduped (session scope)
+    second = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PostToolUse",
+        tool_name="WebFetch",
+        tool_input={"url": "https://example.com/2"},
+        session_id=sid,
+    )
+    second_ctx = second.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert CITE_SNIPPET not in second_ctx
+
+    # FRAGO_STOP_CHECK=off suppresses injection
+    suppressed = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PostToolUse",
+        tool_name=tool_name,
+        tool_input=tool_input,
+        session_id=f"{sid}-off",
+        env_overrides={"FRAGO_STOP_CHECK": "off"},
+    )
+    suppressed_ctx = suppressed.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert CITE_SNIPPET not in suppressed_ctx
+
+
+def test_cite_sources_five_kernels_agy_and_opencode_alignment(tmp_path: Path) -> None:
+    # OpenCode tool-name-map covers all 5 evidence tools
+    opencode_map_path = REPO_ROOT / "src" / "frago" / "resources" / "opencode" / "tool-name-map.json"
+    tool_map = json.loads(opencode_map_path.read_text(encoding="utf-8"))["map"]
+    for raw, expected in [
+        ("read", "Read"),
+        ("grep", "Grep"),
+        ("webfetch", "WebFetch"),
+        ("websearch", "WebSearch"),
+        ("bash", "Bash"),
+    ]:
+        assert tool_map.get(raw) == expected
+
+    # AGY harness: PreToolUse injects once per session; PostToolUse does not match
+    agy_sid = f"agy-{uuid.uuid4().hex[:8]}"
+    post_agy = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PostToolUse",
+        tool_name="Read",
+        tool_input={"file_path": "/tmp/a.md"},
+        session_id=agy_sid,
+        env_overrides={"FRAGO_HARNESS": "agy"},
+    )
+    assert CITE_SNIPPET not in post_agy.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    pre_agy_1 = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PreToolUse",
+        tool_name="Read",
+        tool_input={"file_path": "/tmp/a.md"},
+        session_id=agy_sid,
+        env_overrides={"FRAGO_HARNESS": "agy"},
+    )
+    assert CITE_SNIPPET in pre_agy_1.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    pre_agy_2 = _run_tool_event_via_frago_core_engine(
+        tmp_path,
+        event="PreToolUse",
+        tool_name="WebSearch",
+        tool_input={"query": "test"},
+        session_id=agy_sid,
+        env_overrides={"FRAGO_HARNESS": "agy"},
+    )
+    assert CITE_SNIPPET not in pre_agy_2.get("hookSpecificOutput", {}).get("additionalContext", "")

@@ -10,6 +10,7 @@
     "glob": "Glob",
     "list": "LS",
     "webfetch": "WebFetch",
+    "websearch": "WebSearch",
     "task": "Task",
     "todowrite": "TodoWrite",
     "todoread": "TodoRead"

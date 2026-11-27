@@ -1422,6 +1422,116 @@ async def _read_text(sid: str, path: str) -> dict[str, Any]:
     return _read_body(await _listed_target(sid, path), path)
 
 
+_SENSITIVE_DIR_NAMES = frozenset(
+    {".ssh", ".gnupg", ".aws", ".kube", ".docker"}
+)
+_SENSITIVE_FILENAMES = frozenset(
+    {
+        ".env",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".git-credentials",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+        "authorized_keys",
+        "known_hosts",
+        "credentials",
+        "secrets.json",
+        "auth.json",
+    }
+)
+_SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks")
+
+
+def _frago_home_root() -> Path:
+    raw = os.environ.get("FRAGO_HOME")
+    base = Path(os.path.expanduser(raw)) if raw else (Path.home() / ".frago")
+    return base.resolve()
+
+
+def _is_sensitive_cited_path(target: Path, raw_path: str) -> bool:
+    """Reject secret/credential files even inside allowed sandbox roots."""
+    candidates = [target]
+    try:
+        candidates.append(Path(os.path.expanduser(raw_path)))
+    except OSError:
+        pass
+    for candidate in candidates:
+        parts_lower = [p.lower() for p in candidate.parts]
+        if any(p in _SENSITIVE_DIR_NAMES for p in parts_lower):
+            return True
+        name_lower = candidate.name.lower()
+        if (
+            name_lower in _SENSITIVE_FILENAMES
+            or name_lower.startswith(".env.")
+            or name_lower.endswith(_SENSITIVE_SUFFIXES)
+        ):
+            return True
+    resolved_str = str(target).lower()
+    if resolved_str in {"/etc/shadow", "/etc/gshadow", "/etc/passwd", "/etc/sudoers"}:
+        return True
+    try:
+        frago_home = _frago_home_root()
+        if target.is_relative_to(frago_home):
+            rel_parts = [p.lower() for p in target.relative_to(frago_home).parts]
+            if rel_parts and (
+                rel_parts[0].startswith("secret")
+                or rel_parts[0].startswith("auth")
+                or rel_parts[0].startswith("token")
+            ):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+async def _cited_target(sid: str, path: str) -> Path:
+    """Sandboxed read-only target resolution for ``scope=cited`` file/citation previews.
+
+    Allowed only if the resolved file:
+    - is NOT a sensitive secret/credential file; AND
+    - belongs to one of: session touched files, session working directory, or ``FRAGO_HOME`` (``~/.frago``).
+    """
+    base = await asyncio.to_thread(_session_root, sid)
+    touched_files = await _touched(sid)
+    resolved, err_reason = _resolve_path(path, base)
+    if resolved is None:
+        raise _path_rejection_error(path, err_reason)
+
+    target = Path(resolved)
+    if _is_sensitive_cited_path(target, path):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Refused: {path} is a sensitive file (sandbox-denied)",
+        )
+
+    allowed_touched = {
+        n for f in touched_files if (n := _resolve_path(f.path, base)[0]) is not None
+    }
+    in_touched = resolved in allowed_touched
+    in_session_root = base is not None and (
+        resolved == base or target.is_relative_to(Path(base))
+    )
+    try:
+        frago_home = _frago_home_root()
+        in_frago_home = target == frago_home or target.is_relative_to(frago_home)
+    except OSError:
+        in_frago_home = False
+
+    if not (in_touched or in_session_root or in_frago_home):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refused: {path} resolves outside the session sandbox "
+                "(not touched, outside session cwd and FRAGO_HOME)"
+            ),
+        )
+    return target
+
+
 class WriteSessionFileRequest(BaseModel):
     """``PUT /workbench/sessions/{sid}/file`` 的请求体：要改的那份文件路径与新正文。"""
 
@@ -1432,9 +1542,17 @@ class WriteSessionFileRequest(BaseModel):
 @router.get("/workbench/sessions/{sid}/file")
 async def read_session_file(
     sid: str,
-    path: str = Query(..., description="要取内容的那一份文件，必须是本会话改过的其中之一"),
+    path: str = Query(..., description="要取内容的那一份文件"),
+    scope: Literal["touched", "cited"] = Query(
+        "touched",
+        description="touched=仅本会话改过的文件（默认）；cited=引用溯源/本地链接沙箱只读预览",
+    ),
 ) -> dict[str, Any]:
-    """取清单里某一份文件的内容，给浮窗预览用。门的规矩见 :func:`_listed_target`。"""
+    """取文件正文，给浮窗/侧栏预览用。默认走 ``touched`` 严格白名单，``scope=cited`` 走沙箱只读预览。"""
+    effective_scope = scope if isinstance(scope, str) else "touched"
+    if effective_scope == "cited":
+        target = await _cited_target(sid, path)
+        return _read_body(target, path)
     return await _read_text(sid, path)
 
 

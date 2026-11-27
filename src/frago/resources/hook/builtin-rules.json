@@ -1062,6 +1062,133 @@
       "priority": 150,
       "created_at": "2026-11-21T00:00:00",
       "description": "why: PM 方案 X（配套 builtin-bash-block-system-open-web）— 非 Worker 会话（主会话、employee）不硬拦截 open/xdg-open，改为 inject_literal 软引导：提醒代理自己读页/抓取/截图/验证必须改用 frago browser，仅当用户明确要求在系统默认浏览器打开给人看时才继续。how: env_ne(FRAGO_AGENT_ROLE, \"worker\") + 与硬拦截规则严格对齐的网页/HTML 目标匹配及 open -R/-t 排除。"
+    },
+    {
+      "id": "builtin-post-tool-cite-sources",
+      "source": "builtin",
+      "event": "PostToolUse",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_STOP_CHECK",
+            "value": "off"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_HARNESS",
+            "value": "agy"
+          },
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "tool_name_eq",
+                "value": "Read"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "Grep"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "WebFetch"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "WebSearch"
+              },
+              {
+                "type": "all_of",
+                "clauses": [
+                  {
+                    "type": "tool_name_eq",
+                    "value": "Bash"
+                  },
+                  {
+                    "type": "bash_contains",
+                    "value": "frago browser"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【引用网页或本地文件证据时用标准 GFM 脚注 `[^N]`】当依据外部网页或本地文件支撑具体论断句段时，在句段末加 `[^N]`，并在回复末尾附 `[^N]: [来源标题](URI \"可选关键摘录\")`（本地文件用 `file:///绝对路径#L起-L终`，空格编码为 `%20`；普通交付物入口链接仍保留正文 `[文件名](file:///...)`）。"
+      },
+      "dedup_scope": "session",
+      "priority": 85,
+      "created_at": "2026-11-26T00:00:00",
+      "description": "PM-RELEASE-20261124-TODO-TOP3-1: On-demand GFM [^N] source citation rule for claude/codex/opencode/coreagent on evidence tools (PostToolUse, session dedup). Ordinary chat and edit/write/unrelated bash receive zero injection."
+    },
+    {
+      "id": "builtin-pre-tool-cite-sources-agy",
+      "source": "builtin",
+      "event": "PreToolUse",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_STOP_CHECK",
+            "value": "off"
+          },
+          {
+            "type": "not",
+            "clause": {
+              "type": "env_ne",
+              "name": "FRAGO_HARNESS",
+              "value": "agy"
+            }
+          },
+          {
+            "type": "any_of",
+            "clauses": [
+              {
+                "type": "tool_name_eq",
+                "value": "Read"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "Grep"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "WebFetch"
+              },
+              {
+                "type": "tool_name_eq",
+                "value": "WebSearch"
+              },
+              {
+                "type": "all_of",
+                "clauses": [
+                  {
+                    "type": "tool_name_eq",
+                    "value": "Bash"
+                  },
+                  {
+                    "type": "bash_contains",
+                    "value": "frago browser"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【引用网页或本地文件证据时用标准 GFM 脚注 `[^N]`】当依据外部网页或本地文件支撑具体论断句段时，在句段末加 `[^N]`，并在回复末尾附 `[^N]: [来源标题](URI \"可选关键摘录\")`（本地文件用 `file:///绝对路径#L起-L终`，空格编码为 `%20`；普通交付物入口链接仍保留正文 `[文件名](file:///...)`）。"
+      },
+      "dedup_scope": "session",
+      "priority": 85,
+      "created_at": "2026-11-26T00:00:00",
+      "description": "PM-RELEASE-20261124-TODO-TOP3-1: AGY counterpart for GFM [^N] source citation rule (PreToolUse when FRAGO_HARNESS=agy, since AGY native PostToolUse has no injection slot). Identical session dedup & text."
     }
   ]
 }
