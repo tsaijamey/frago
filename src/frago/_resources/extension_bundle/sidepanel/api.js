@@ -197,3 +197,12 @@ export function pollPendingWorkbenchSession(cfg, handle) {
         method: "GET",
     });
 }
+
+export function getSessionFileContent(cfg, sid, path, scope = "cited") {
+    const params = new URLSearchParams({ path: String(path || "") });
+    if (scope) params.set("scope", scope);
+    return apiFetch(cfg, `/api/workbench/sessions/${encodeURIComponent(sid)}/file?${params.toString()}`, {
+        method: "GET",
+    });
+}
+

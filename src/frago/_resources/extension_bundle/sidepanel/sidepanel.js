@@ -5,6 +5,7 @@ import {
     checkServerInfo,
     createWorkbenchSession,
     fetchSessionRecords,
+    getSessionFileContent,
     getSystemDirectories,
     listEmployees,
     listWorkbenchAgents,
@@ -88,6 +89,11 @@ const state = {
     expandedContextKeys: new Set(),
     expandedActivityKeys: new Set(),
     decisionDrafts: new Map(),
+
+    activeCiteId: null,
+    citeDrawerReqId: 0,
+    citeExtDef: null,
+    citePopTimer: null,
 };
 
 // ══════════ DOM References ══════════
@@ -147,6 +153,25 @@ const el = {
     attachmentPills: document.getElementById("attachment-pills"),
     instructionInput: document.getElementById("instruction-input"),
     sendBtn: document.getElementById("send-btn"),
+
+    citePopover: document.getElementById("cite-popover"),
+    citePopBadge: document.getElementById("cite-pop-badge"),
+    citePopTitle: document.getElementById("cite-pop-title"),
+    citePopPath: document.getElementById("cite-pop-path"),
+    citePopExcerpt: document.getElementById("cite-pop-excerpt"),
+    citePopHint: document.getElementById("cite-pop-hint"),
+    citePreviewDrawer: document.getElementById("cite-preview-drawer"),
+    citeDrawerTitle: document.getElementById("cite-drawer-title"),
+    citeDrawerPath: document.getElementById("cite-drawer-path"),
+    citeDrawerBanner: document.getElementById("cite-drawer-banner"),
+    citeDrawerBody: document.getElementById("cite-drawer-body"),
+    citeDrawerClose: document.getElementById("cite-drawer-close"),
+    citeExtModal: document.getElementById("cite-ext-modal"),
+    citeExtTitle: document.getElementById("cite-ext-title"),
+    citeExtUrl: document.getElementById("cite-ext-url"),
+    citeExtExcerpt: document.getElementById("cite-ext-excerpt"),
+    citeExtCancel: document.getElementById("cite-ext-cancel"),
+    citeExtOpen: document.getElementById("cite-ext-open"),
 };
 
 // ══════════ SVG Icon Helper ══════════
@@ -681,6 +706,7 @@ async function selectSession(sid, { closeDrawer = true } = {}) {
     await saveBridgeSettings({ selectedSessionId: sid });
 
     if (changed) {
+        closeAllCitations();
         state.records = [];
         state.recordsSid = sid;
         state.recordsError = "";
@@ -1230,7 +1256,218 @@ function renderActivitySegment(seg) {
     return wrap;
 }
 
-function renderAgentSegment(seg) {
+// ══════════ Citation Popover, 8093 Sandbox File Preview & External Modal ══════════
+function syncActiveCiteClasses(citeId) {
+    state.activeCiteId = citeId || null;
+    if (!el.chatStream) return;
+    el.chatStream.querySelectorAll("[data-cite-id]").forEach((node) => {
+        if (citeId && node.getAttribute("data-cite-id") === citeId) {
+            node.classList.add("active");
+        } else {
+            node.classList.remove("active");
+        }
+    });
+}
+
+function hideCitePopover() {
+    if (state.citePopTimer) {
+        clearTimeout(state.citePopTimer);
+        state.citePopTimer = null;
+    }
+    if (el.citePopover) el.citePopover.classList.add("is-hidden");
+}
+
+function scheduleHideCitePopover() {
+    if (state.citePopTimer) clearTimeout(state.citePopTimer);
+    state.citePopTimer = setTimeout(() => {
+        hideCitePopover();
+    }, 120);
+}
+
+function showCitePopover(def, anchorEl) {
+    if (!def || !el.citePopover || !anchorEl) return;
+    if (state.citePopTimer) {
+        clearTimeout(state.citePopTimer);
+        state.citePopTimer = null;
+    }
+    const isWeb = def.kind === "web";
+    el.citePopBadge.textContent = `[${def.label}]`;
+    el.citePopBadge.classList.toggle("web", isWeb);
+    el.citePopTitle.textContent = def.title || def.uri;
+    el.citePopPath.textContent = isWeb
+        ? def.uri
+        : `${def.filePath || ""}${def.line ? `#${def.line}` : ""}`;
+    if (def.excerpt) {
+        el.citePopExcerpt.textContent = def.excerpt;
+        el.citePopExcerpt.classList.remove("is-hidden");
+    } else {
+        el.citePopExcerpt.textContent = "";
+        el.citePopExcerpt.classList.add("is-hidden");
+    }
+    el.citePopHint.textContent = isWeb ? "点击后弹窗确认并打开外部网页 ↗" : "点击通过本机服务预览对应源码";
+
+    el.citePopover.classList.remove("is-hidden");
+    const rect = anchorEl.getBoundingClientRect();
+    const popRect = el.citePopover.getBoundingClientRect();
+    const vw = window.innerWidth || 380;
+    const vh = window.innerHeight || 640;
+    const left = Math.max(8, Math.min(rect.left, vw - popRect.width - 8));
+    const preferBelow = rect.bottom + 8 + popRect.height <= vh - 8;
+    const top = preferBelow ? rect.bottom + 6 : Math.max(8, rect.top - popRect.height - 6);
+    el.citePopover.style.left = `${left}px`;
+    el.citePopover.style.top = `${top}px`;
+}
+
+function closeCiteDrawer() {
+    state.citeDrawerReqId += 1;
+    if (el.citePreviewDrawer) el.citePreviewDrawer.classList.add("is-hidden");
+    syncActiveCiteClasses(null);
+}
+
+function openCiteExtModal(def) {
+    if (!def || !el.citeExtModal) return;
+    hideCitePopover();
+    state.citeExtDef = def;
+    syncActiveCiteClasses(def.id);
+    el.citeExtTitle.textContent = `[${def.label}] ${def.title || "外部来源"}`;
+    el.citeExtUrl.textContent = def.uri;
+    if (def.excerpt) {
+        el.citeExtExcerpt.textContent = def.excerpt;
+        el.citeExtExcerpt.classList.remove("is-hidden");
+    } else {
+        el.citeExtExcerpt.textContent = "";
+        el.citeExtExcerpt.classList.add("is-hidden");
+    }
+    el.citeExtModal.classList.remove("is-hidden");
+}
+
+function closeCiteExtModal() {
+    state.citeExtDef = null;
+    if (el.citeExtModal) el.citeExtModal.classList.add("is-hidden");
+    if (el.citePreviewDrawer?.classList.contains("is-hidden")) {
+        syncActiveCiteClasses(null);
+    }
+}
+
+function closeAllCitations() {
+    hideCitePopover();
+    closeCiteExtModal();
+    closeCiteDrawer();
+}
+
+function renderCiteDrawerError(msg) {
+    el.citeDrawerBody.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "cite-drawer-state is-err";
+    box.textContent = msg;
+    el.citeDrawerBody.appendChild(box);
+}
+
+async function openFilePreviewDrawer({ mode, def = null, path = "", line = "" }) {
+    const sid = state.selectedSid;
+    const targetPath = def ? def.filePath : path;
+    const targetLine = def ? def.line : line;
+    if (!sid || !targetPath) {
+        showToast("当前未选中会话或文件路径无效", "err");
+        return;
+    }
+
+    hideCitePopover();
+    syncActiveCiteClasses(def ? def.id : null);
+
+    const fileName = targetPath.split("/").pop() || targetPath;
+    el.citeDrawerTitle.textContent = def ? `[${def.label}] ${def.title || fileName}` : fileName;
+    el.citeDrawerPath.textContent = targetLine ? `${targetPath}#${targetLine}` : targetPath;
+
+    el.citeDrawerBanner.className = `cite-drawer-banner ${mode === "cite" ? "cite-mode" : "file-mode"}`;
+    if (mode === "cite") {
+        const rangeLabel = targetLine ? `（已定位 ${targetLine}）` : "";
+        const excerptTxt = def?.excerpt ? `：${def.excerpt}` : "";
+        el.citeDrawerBanner.textContent = `句段核实模式${rangeLabel}${excerptTxt}`;
+    } else {
+        el.citeDrawerBanner.textContent = targetLine
+            ? `全文预览模式（目标行 ${targetLine}，未进入句段核实）`
+            : "全文预览模式（经 8093 鉴权沙箱只读加载）";
+    }
+    el.citeDrawerBanner.classList.remove("is-hidden");
+
+    el.citeDrawerBody.innerHTML = "";
+    const loadingBox = document.createElement("div");
+    loadingBox.className = "cite-drawer-state";
+    loadingBox.textContent = "正在通过本机服务加载文件内容…";
+    el.citeDrawerBody.appendChild(loadingBox);
+    el.citePreviewDrawer.classList.remove("is-hidden");
+
+    const reqId = ++state.citeDrawerReqId;
+    try {
+        // Strictly fetch via 8093 authenticated sandbox endpoint; never open file:// directly.
+        const data = await getSessionFileContent(state.serverCfg, sid, targetPath, "cited");
+        if (reqId !== state.citeDrawerReqId || state.selectedSid !== sid) return;
+
+        if (data?.too_large) {
+            renderCiteDrawerError("文件体积超过预览上限，请在 WebUI 或本地编辑器中查看。");
+            return;
+        }
+        if (data?.is_text === false || typeof data?.text !== "string") {
+            renderCiteDrawerError("该文件为二进制或非文本格式，无法在此预览。");
+            return;
+        }
+
+        const range = mode === "cite" ? md.parseLineAnchorRange(targetLine) : null;
+        const lines = data.text.split(/\r\n|\n|\r/);
+        const table = document.createElement("div");
+        table.className = "cite-code-table";
+        let firstHighlightedEl = null;
+
+        for (let idx = 0; idx < lines.length; idx += 1) {
+            const lineNum = idx + 1;
+            const isHl = Boolean(range && lineNum >= range.startLine && lineNum <= range.endLine);
+            const row = document.createElement("div");
+            row.className = `cite-code-line${isHl ? " hl" : ""}`;
+            row.setAttribute("data-line", String(lineNum));
+            if (isHl && !firstHighlightedEl) firstHighlightedEl = row;
+
+            const ln = document.createElement("span");
+            ln.className = "cite-ln";
+            ln.textContent = String(lineNum);
+
+            const lc = document.createElement("span");
+            lc.className = "cite-lc";
+            lc.textContent = lines[idx] || " ";
+
+            row.appendChild(ln);
+            row.appendChild(lc);
+            table.appendChild(row);
+        }
+
+        el.citeDrawerBody.innerHTML = "";
+        el.citeDrawerBody.appendChild(table);
+        if (firstHighlightedEl && typeof firstHighlightedEl.scrollIntoView === "function") {
+            firstHighlightedEl.scrollIntoView({ block: "center" });
+        }
+    } catch (err) {
+        if (reqId !== state.citeDrawerReqId) return;
+        const status = err?.status || 0;
+        if (status === 401 || status === 403) {
+            renderCiteDrawerError(`权限或沙箱校验未通过（${status}）：${err.detail || err.message}`);
+        } else if (status === 404) {
+            renderCiteDrawerError("目标文件不存在或未在本会话上下文中引用。");
+        } else {
+            renderCiteDrawerError(`文件预览失败：${err?.message || "未知错误"}`);
+        }
+    }
+}
+
+function handleCitationClick(def) {
+    if (!def || def.kind === "invalid") return;
+    if (def.kind === "web") {
+        openCiteExtModal(def);
+        return;
+    }
+    openFilePreviewDrawer({ mode: "cite", def });
+}
+
+function renderAgentSegment(seg, { isStreaming = false } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "msg-block msg-agent";
 
@@ -1250,7 +1487,14 @@ function renderAgentSegment(seg) {
     if (seg.bodyText) {
         const mdContainer = document.createElement("div");
         mdContainer.className = "md-body";
-        md.renderMarkdown(seg.bodyText, mdContainer, document);
+        md.renderMarkdown(seg.bodyText, mdContainer, document, {
+            streaming: isStreaming,
+            activeCiteId: state.activeCiteId,
+            onCiteHover: (def, anchor) => showCitePopover(def, anchor),
+            onCiteLeave: () => scheduleHideCitePopover(),
+            onCiteClick: (def) => handleCitationClick(def),
+            onFileLinkClick: ({ path, line }) => openFilePreviewDrawer({ mode: "file", path, line }),
+        });
         bubble.appendChild(mdContainer);
     }
 
@@ -1364,13 +1608,22 @@ function renderChatStream({ force = false } = {}) {
     }
 
     const segments = recLib.buildChatSegments(state.records);
-    for (const seg of segments) {
+    const streamActive = Boolean(state.selectedSid && (runState.isRunning || state.awaitingAgent));
+    let lastAgentIdx = -1;
+    for (let idx = segments.length - 1; idx >= 0; idx -= 1) {
+        if (segments[idx].type === "agent.say") {
+            lastAgentIdx = idx;
+            break;
+        }
+    }
+    for (let idx = 0; idx < segments.length; idx += 1) {
+        const seg = segments[idx];
         if (seg.type === "user.say") {
             stream.appendChild(renderUserBubble(seg, false));
         } else if (seg.type === "activity") {
             stream.appendChild(renderActivitySegment(seg));
         } else if (seg.type === "agent.say") {
-            stream.appendChild(renderAgentSegment(seg));
+            stream.appendChild(renderAgentSegment(seg, { isStreaming: streamActive && idx === lastAgentIdx }));
         } else if (seg.type === "notice") {
             const box = document.createElement("div");
             box.className = "msg-notice";
@@ -2061,6 +2314,38 @@ function bindEvents() {
 
     el.sendBtn.addEventListener("click", () => {
         dispatchSessionMessage().catch((err) => showToast(err.message, "err"));
+    });
+
+    // Citation Preview Drawer & External Confirmation Modal
+    if (el.citeDrawerClose) {
+        el.citeDrawerClose.addEventListener("click", closeCiteDrawer);
+    }
+    if (el.citeExtCancel) {
+        el.citeExtCancel.addEventListener("click", closeCiteExtModal);
+    }
+    if (el.citeExtModal) {
+        el.citeExtModal.addEventListener("click", (e) => {
+            if (e.target === el.citeExtModal) closeCiteExtModal();
+        });
+    }
+    if (el.citeExtOpen) {
+        el.citeExtOpen.addEventListener("click", () => {
+            const targetUri = state.citeExtDef?.uri || "";
+            closeCiteExtModal();
+            if (targetUri && /^https?:\/\//i.test(targetUri)) {
+                window.open(targetUri, "_blank", "noopener,noreferrer");
+            }
+        });
+    }
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (el.citeExtModal && !el.citeExtModal.classList.contains("is-hidden")) {
+            closeCiteExtModal();
+        } else if (el.citePreviewDrawer && !el.citePreviewDrawer.classList.contains("is-hidden")) {
+            closeCiteDrawer();
+        } else if (el.citePopover && !el.citePopover.classList.contains("is-hidden")) {
+            hideCitePopover();
+        }
     });
 
     // Sync selection additions from page floating pill / context menu
