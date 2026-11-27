@@ -1611,6 +1611,10 @@ export default function SessionWorkbenchPage() {
               observer={observer}
               childrenData={sessionChildren.data}
               childrenLoading={sessionChildren.loading}
+              sessionRunning={sessionRunning}
+              fileViewerOpen={viewerIndex !== null}
+              onCloseStackPopover={closeStackPopover}
+              onCloseFileViewer={() => setViewerIndex(null)}
             />
             </DecisionCardContext.Provider>
           )}

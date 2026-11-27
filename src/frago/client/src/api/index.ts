@@ -1607,9 +1607,13 @@ export const getSessionFiles = withMode(
 );
 
 export const getSessionFileContent = withMode(
-  (sessionId: string, path: string): Promise<httpApi.SessionFileContent> =>
-    httpApi.getSessionFileContent(sessionId, path),
-  (_sessionId: string, _path: string): Promise<httpApi.SessionFileContent> =>
+  (sessionId: string, path: string, scope?: 'touched' | 'cited'): Promise<httpApi.SessionFileContent> =>
+    httpApi.getSessionFileContent(sessionId, path, scope),
+  (
+    _sessionId: string,
+    _path: string,
+    _scope?: 'touched' | 'cited'
+  ): Promise<httpApi.SessionFileContent> =>
     Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
 );
 

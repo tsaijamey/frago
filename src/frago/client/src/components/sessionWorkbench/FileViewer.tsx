@@ -66,6 +66,7 @@ import {
 } from './filePaths';
 import { FILE_BADGE } from './fileBadge';
 import MarkdownContent from '@/components/ui/MarkdownContent';
+import { parseLineAnchorRange } from '@/components/ui/citations';
 import {
   MAX_AUTODETECT_CHARS,
   MAX_HIGHLIGHT_CHARS,
@@ -93,6 +94,8 @@ export interface FileViewerProps {
   line?: string;
   /** 指定初始打开的视图 tab（例如从 DeliveryTriad diff 胶囊直接打开 `'changes'` 模式）。 */
   initialMode?: 'preview' | 'file' | 'changes' | 'edit';
+  /** 读取范围：普通会话文件走默认 `'touched'`，只读引用跳转可传 `'cited'`。 */
+  scope?: 'touched' | 'cited';
   onClose: () => void;
   /** ‹ › 翻上一个／下一个，绕圈。 */
   onStep: (delta: number) => void;
@@ -434,6 +437,7 @@ export default function FileViewer({
   index,
   line,
   initialMode,
+  scope,
   onClose,
   onStep,
   onReveal,
@@ -524,8 +528,9 @@ export default function FileViewer({
     return tabs;
   }, [previewKind, canEdit]);
 
+  const lineRange = useMemo(() => parseLineAnchorRange(line), [line]);
   const [mode, setMode] = useState<'preview' | 'file' | 'changes' | 'edit'>(() =>
-    initialMode ?? (previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file')
+    initialMode ?? (lineRange ? 'file' : previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file')
   );
   const [diff, setDiff] = useState<SessionFileDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -677,7 +682,7 @@ export default function FileViewer({
     setDirLoading(false);
     setContent(null);
     setError(null);
-    setMode(initialMode ?? (previewKindOf(path) ? 'preview' : 'file'));
+    setMode(initialMode ?? (lineRange ? 'file' : previewKindOf(path) ? 'preview' : 'file'));
     setDiff(null);
     setDiffError(null);
     setEditText('');
@@ -729,7 +734,11 @@ export default function FileViewer({
           if (await tryLoadAsDirectory(probed.resolved)) return;
         }
       }
-      const body = await getSessionFileContent(sessionId, path).catch(async (err: unknown) => {
+      const body = await (
+        scope
+          ? getSessionFileContent(sessionId, path, scope)
+          : getSessionFileContent(sessionId, path)
+      ).catch(async (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         if (
           typeof fetch === 'function' &&
@@ -785,8 +794,21 @@ export default function FileViewer({
     dirRefreshTick,
     fileRawUrl,
     initialMode,
+    lineRange,
+    scope,
     t,
   ]);
+
+  const codePreRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (loading || mode !== 'file' || !content?.text || !lineRange) return;
+    const container = codePreRef.current;
+    if (!container) return;
+    const row = container.querySelector<HTMLElement>(`[data-line="${lineRange.startLine}"]`);
+    if (row && typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'center' });
+    }
+  }, [loading, mode, content?.text, lineRange]);
 
   useEffect(
     () => () => {
@@ -2040,12 +2062,18 @@ export default function FileViewer({
                   ) : null}
                 </div>
 
-                <pre className="m-0 min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] py-2.5 font-mono text-[12px] leading-[1.65] text-text-secondary">
+                <pre
+                  ref={codePreRef}
+                  className="m-0 min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] py-2.5 font-mono text-[12px] leading-[1.65] text-text-secondary"
+                >
                   <code className="hljs block min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                     {lines.map((lineText, idx) => {
                       const lineNo = idx + 1;
                       const isAnnotated = currentFileAnnotations.some(
                         (a) => lineNo >= a.line_start && lineNo <= a.line_end
+                      );
+                      const isLineHighlighted = Boolean(
+                        lineRange && lineNo >= lineRange.startLine && lineNo <= lineRange.endLine
                       );
                       const endingHere = currentFileAnnotations.filter(
                         (a) => a.line_end === lineNo
@@ -2058,8 +2086,13 @@ export default function FileViewer({
                           <div
                             data-testid="file-viewer-line"
                             data-line={lineNo}
+                            data-highlighted={isLineHighlighted ? 'true' : undefined}
                             className={`group grid grid-cols-[52px_minmax(0,1fr)] items-baseline px-2 ${
-                              isAnnotated ? 'bg-accent-warning-10' : 'hover:bg-bg-hover'
+                              isAnnotated
+                                ? 'bg-accent-warning-10'
+                                : isLineHighlighted
+                                  ? 'bg-accent-info-10 text-text-primary'
+                                  : 'hover:bg-bg-hover'
                             }`}
                           >
                             <button

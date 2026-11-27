@@ -1965,13 +1965,15 @@ export async function getSessionFiles(sessionId: string): Promise<SessionFileRow
   return fetchApi<SessionFileRow[]>(`/workbench/sessions/${encodeURIComponent(sessionId)}/files`);
 }
 
-/** 取清单里某一份文件的内容，给浮窗预览用。清单外的路径服务端回 403。 */
+/** 取清单里某一份文件的内容，给浮窗预览用。`scope='cited'` 允许只读查看会话引用的安全区文件。 */
 export async function getSessionFileContent(
   sessionId: string,
-  path: string
+  path: string,
+  scope?: 'touched' | 'cited'
 ): Promise<SessionFileContent> {
+  const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : '';
   return fetchApi<SessionFileContent>(
-    `/workbench/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(path)}`
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(path)}${scopeParam}`
   );
 }
 
