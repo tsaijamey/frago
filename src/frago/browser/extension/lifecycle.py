@@ -18,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
-import socket
 import subprocess
 import sys
 import time
@@ -31,6 +30,15 @@ from .native_host import (
     SOCK_PATH,
     STABLE_EXTENSION_ID,
     install_manifest,
+)
+from .transport import (
+    cleanup_bridge_endpoint,
+    detached_subprocess_kwargs,
+    ensure_native_host_launcher,
+    is_pid_alive,
+    native_host_launcher_path,
+    probe_bridge_endpoint,
+    read_endpoint_pid,
 )
 
 
@@ -71,27 +79,17 @@ class BridgeStopResult:
 
 def _daemon_alive(sock_path: Path = SOCK_PATH) -> bool:
     """Return True if a daemon is listening and accepting connections."""
-    if not sock_path.exists():
-        return False
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(0.5)
-    try:
-        s.connect(str(sock_path))
-        return True
-    except (FileNotFoundError, ConnectionRefusedError, OSError):
-        return False
-    finally:
-        with contextlib.suppress(OSError):
-            s.close()
+    return probe_bridge_endpoint(sock_path, timeout=0.5)
 
 
 def _wait_socket(sock_path: Path, timeout: float) -> None:
+    """Wait until the daemon endpoint (UDS or loopback TCP) is accepting peers."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if sock_path.exists():
+        if probe_bridge_endpoint(sock_path, timeout=0.25):
             return
         time.sleep(0.1)
-    raise TimeoutError(f"daemon socket {sock_path} not created in {timeout}s")
+    raise TimeoutError(f"daemon endpoint {sock_path} not ready in {timeout}s")
 
 
 def _wait_bridge(timeout: float) -> dict:
@@ -115,10 +113,9 @@ def _wait_bridge(timeout: float) -> dict:
 
 def _spawn_daemon(log_path: Path | None) -> int:
     """Spawn the singleton daemon detached. Returns its PID."""
-    # Stale socket from prior crash blocks bind; remove pre-launch.
-    if SOCK_PATH.exists():
-        with contextlib.suppress(OSError):
-            SOCK_PATH.unlink()
+    # Stale socket/endpoint artifacts from a prior crash can confuse startup;
+    # wipe them before spawning the fresh daemon.
+    cleanup_bridge_endpoint(SOCK_PATH)
     with contextlib.ExitStack() as stack:
         if log_path:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,26 +127,14 @@ def _spawn_daemon(log_path: Path | None) -> int:
             stdin=subprocess.DEVNULL,
             stdout=stdio,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **detached_subprocess_kwargs(),
         )
     return proc.pid
 
 
 def _ensure_native_host_launcher() -> Path:
-    """Write the launcher Chrome will exec for native messaging.
-
-    On Linux/macOS this is a tiny shell script. Windows uses a .bat
-    plus registry — see D2 task.
-    """
-    frago_dir = Path.home() / ".frago" / "chrome"
-    frago_dir.mkdir(parents=True, exist_ok=True)
-    launcher = frago_dir / "native_host_launcher.sh"
-    launcher.write_text(
-        "#!/usr/bin/env bash\n"
-        f"exec {sys.executable} -m frago.cli.main extension native-host\n"
-    )
-    launcher.chmod(0o755)
-    return launcher
+    """Write the platform-appropriate launcher Chrome/CfT spawns for native messaging."""
+    return ensure_native_host_launcher()
 
 
 def _read_profile_lock_pid(profile_dir: Path) -> int | None:
@@ -170,59 +155,84 @@ def _read_profile_lock_pid(profile_dir: Path) -> int | None:
 
 
 def _find_daemon_pid() -> int | None:
-    """Locate the singleton extension daemon by cmdline scan.
+    """Locate the singleton extension daemon PID cross-platform.
 
-    Uses pgrep on Linux/macOS. Returns the first PID found. Multiple
-    daemons would be a bug elsewhere — daemon refuses second extension
-    connection but doesn't refuse second daemon process binding the
-    same socket; in practice the second one fails at bind time anyway.
+    Prefers the PID recorded in the active endpoint descriptor (works on
+    Windows, macOS, and Linux without spawning external utilities). Falls back
+    to POSIX ``pgrep`` for legacy daemons started without a descriptor.
     """
+    pid = read_endpoint_pid(SOCK_PATH)
+    if pid is not None:
+        return pid
+    if sys.platform == "win32":
+        return None
     try:
         proc = subprocess.run(
             ["pgrep", "-f", "frago.cli.main extension daemon"],
             capture_output=True, text=True, check=False,
         )
     except FileNotFoundError:
-        # pgrep not installed (rare). Fall back: no daemon detection.
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
-    # Pick the first pid that isn't us (rare, but defensive).
     import os as _os
     self_pid = _os.getpid()
     for line in proc.stdout.strip().splitlines():
         try:
-            pid = int(line.strip())
+            found_pid = int(line.strip())
         except ValueError:
             continue
-        if pid != self_pid:
-            return pid
+        if found_pid != self_pid:
+            return found_pid
     return None
 
 
 def _kill_with_grace(pid: int, timeout: float = 10.0) -> tuple[bool, bool]:
-    """SIGTERM, wait, SIGKILL. Returns (stopped, force_killed)."""
+    """Terminate ``pid`` with grace wait and escalation. Returns (stopped, force_killed)."""
     import os as _os
     import signal as _sig
+
     try:
         _os.kill(pid, _sig.SIGTERM)
     except ProcessLookupError:
         return (True, False)  # already gone
     except PermissionError:
         return (False, False)  # not ours to kill
+    except OSError:
+        if not is_pid_alive(pid):
+            return (True, False)
+        return (False, False)
+
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            _os.kill(pid, 0)
-        except ProcessLookupError:
+        if not is_pid_alive(pid):
             return (True, False)
         time.sleep(0.1)
+
     # Still alive — escalate
+    sigkill = getattr(_sig, "SIGKILL", None)
+    if sigkill is not None:
+        try:
+            _os.kill(pid, sigkill)
+            return (True, True)
+        except ProcessLookupError:
+            return (True, True)
+        except OSError:
+            return (not is_pid_alive(pid), True)
+
+    # Windows fallback: force terminate process tree via taskkill.
     try:
-        _os.kill(pid, _sig.SIGKILL)
-        return (True, True)
-    except ProcessLookupError:
-        return (True, True)
+        from frago.compat import get_windows_subprocess_kwargs
+
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+            **get_windows_subprocess_kwargs(),
+        )
+    except OSError:
+        pass
+    return (not is_pid_alive(pid), True)
 
 
 def _profile_locked(profile_dir: Path) -> bool:
@@ -240,16 +250,7 @@ def _profile_locked(profile_dir: Path) -> bool:
     pid = _read_profile_lock_pid(profile_dir)
     if pid is None:
         return True  # lock present but unparseable — defensive
-    import os
-    try:
-        os.kill(pid, 0)
-        return True  # pid alive → really locked
-    except ProcessLookupError:
-        return False  # stale lock from a crashed/killed prior browser
-    except PermissionError:
-        return True  # pid exists, owned by another user → racing is unsafe
-    except OSError:
-        return False
+    return is_pid_alive(pid)
 
 
 def _read_bundle_permissions(bundle_dir: Path | None) -> list[str] | None:
@@ -647,6 +648,7 @@ def start_extension_bridge(
     daemon_was_running, daemon_pid, manifest_path = _ensure_bridge_runtime_env(
         profile,
         bundle,
+        brand=brand,
         daemon_log=daemon_log,
         socket_timeout=socket_timeout,
         harden_prefs=True,
@@ -682,6 +684,7 @@ def _ensure_bridge_runtime_env(
     profile: Path,
     bundle: Path | None,
     *,
+    brand: str = "cft",
     daemon_log: Path | None = None,
     socket_timeout: float = 5.0,
     harden_prefs: bool = True,
@@ -702,6 +705,7 @@ def _ensure_bridge_runtime_env(
     manifest_path = install_manifest(
         str(launcher),
         target_dir=profile / "NativeMessagingHosts",
+        brand=brand,
     )
 
     if harden_prefs:
@@ -758,7 +762,7 @@ def initialize_cft_environment(
     return {
         "profile_dir": str(profile),
         "bundle_dir": str(bundle),
-        "launcher_path": str(Path.home() / ".frago" / "chrome" / "native_host_launcher.sh"),
+        "launcher_path": str(native_host_launcher_path()),
         "manifest_path": str(manifest_path),
         "prefs_initialized": not locked,
         "profile_locked": locked,
@@ -935,14 +939,8 @@ def stop_extension_bridge(
         stopped, _force = _kill_with_grace(daemon_pid, timeout=timeout)
         daemon_stopped = stopped
 
-    # 3. Socket cleanup
-    socket_removed = False
-    if SOCK_PATH.exists():
-        try:
-            SOCK_PATH.unlink()
-            socket_removed = True
-        except OSError:
-            pass
+    # 3. Socket / endpoint descriptor cleanup
+    socket_removed = cleanup_bridge_endpoint(SOCK_PATH)
 
     return BridgeStopResult(
         browser_pid=browser_pid,

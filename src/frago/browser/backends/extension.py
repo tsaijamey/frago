@@ -310,10 +310,10 @@ class ExtensionChromeBackend(ChromeBackend):
 
         async def _run() -> dict:
             from ..extension import native_host as nh
-            reader, writer = await asyncio.open_unix_connection(
-                str(self.sock_path))
-            writer.write(nh.encode_frame({"role": "client"}))
-            await writer.drain()
+            from ..extension.transport import open_bridge_connection
+
+            reader, writer = await open_bridge_connection(
+                self.sock_path, role="client")
 
             frames_dir = Path(tempfile.mkdtemp(prefix="frago-rec-"))
             stamps: list[float] = []
@@ -853,8 +853,10 @@ def launch_chrome_with_extension(bundle_dir: Path,
     # a group opening its first page takes a remaining one over
     # (launchPlaceholderTab), so this tab never lingers outside every group.
     args.append(f"--app={app_url}" if app_url else "about:blank")
+    from ..extension.transport import detached_subprocess_kwargs
+
     stdio = subprocess.DEVNULL
     if log_path:
         stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
     return subprocess.Popen(args, stdout=stdio, stderr=stdio,
-                            start_new_session=True)
+                            **detached_subprocess_kwargs())
