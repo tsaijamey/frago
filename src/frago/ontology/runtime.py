@@ -1966,6 +1966,83 @@ def build_finalize_dispatch_job_contract(
     )
 
 
+def build_claim_callback_inbox_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `claim_callback_inbox` contract enforcing physical separation, three-tier priority, and atomic claim."""
+    from frago.ontology.projectors import CALLBACK_DELIVERY_CHANNELS
+
+    insp = introspector if introspector is not None else OntologyIntrospector()
+
+    def _valid_job_ids(args: Mapping[str, Any]) -> bool:
+        raw_ids = args.get("job_ids")
+        if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
+            return False
+        cleaned = [str(j).strip() for j in raw_ids]
+        return all(bool(j) for j in cleaned) and len(set(cleaned)) == len(cleaned)
+
+    def _all_queued(args: Mapping[str, Any]) -> bool:
+        if not _valid_job_ids(args):
+            return False
+        prior_states = args.get("prior_states")
+        if not isinstance(prior_states, Mapping):
+            return False
+        for jid in args["job_ids"]:
+            if str(prior_states.get(str(jid).strip(), "")).strip() != "queued":
+                return False
+        return True
+
+    def _idle_priority_clear(args: Mapping[str, Any]) -> bool:
+        if args.get("delivery_channel") != "idle_batch":
+            return True
+        if args.get("has_human_next_task") is not False:
+            return False
+        if args.get("blocked_by_card") is not False:
+            return False
+        return args.get("is_session_busy") is False
+
+    return insp.build_action_contract(
+        "claim_callback_inbox",
+        preconditions=(
+            ConditionCheck(
+                description="caller_session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("caller_session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="delivery_channel MUST be one of {'idle_batch', 'hook_piggyback'}.",
+                predicate=lambda args: args.get("delivery_channel") in CALLBACK_DELIVERY_CHANNELS,
+            ),
+            ConditionCheck(
+                description="job_ids MUST be a non-empty list of unique non-empty job_id strings.",
+                predicate=_valid_job_ids,
+            ),
+            ConditionCheck(
+                description="Every claimed job_id MUST currently have persisted prior_delivery_state == 'queued'.",
+                predicate=_all_queued,
+            ),
+            ConditionCheck(
+                description="idle_batch MUST satisfy Tier 1 > Tier 2 > Tier 3 gates: has_human_next_task is False, blocked_by_card is False, and is_session_busy is False.",
+                predicate=_idle_priority_clear,
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="CallbackDeliveryProcess is physically separated from Next Task and MUST NEVER be enqueued to workbench-queue.json.",
+                predicate=lambda args: not bool(args.get("enqueue_to_next_task")),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Returned claimed job_ids match the requested job_ids transitioned to delivering.",
+                predicate=lambda ctx: (
+                    isinstance(ctx.get("result"), (list, tuple))
+                    and list(ctx["result"]) == [str(j).strip() for j in ctx.get("job_ids", ())]
+                ),
+            ),
+        ),
+    )
+
+
 # ============================================================================
 # Unified Decision Inbox Action Contracts (Gate 3)
 # ============================================================================

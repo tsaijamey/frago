@@ -594,12 +594,14 @@
         "rigidity": "~R",
         "bearer_type": "CallbackDeliveryProcess",
         "allowed_values": ["queued", "delivering", "delivered", "failed"],
+        "delivery_channels": ["idle_batch", "hook_piggyback"],
         "current_code_locations": [
           "src/frago/session/async_dispatch.py#AsyncDispatchJob",
+          "src/frago/cli/session_commands.py",
           "src/frago/server/services/workbench_queue.py",
           "src/frago/server/services/workbench_queue_patrol_service.py"
         ],
-        "description": "异步回传报文的送达状态（queued 已入队、delivering 送达中、delivered 已落进发起方会话记录、failed 最终送不到），通过 exhibits_state 挂载于 CallbackDeliveryProcess。合法跃迁：queued→delivering→delivered；delivering→queued（本次注入失败放回队首）；delivering→failed、queued→failed。delivered 为终态，且不得绕过 delivering 直接到 delivered。"
+        "description": "异步回传报文的送达状态（queued 已入队 CallbackInbox、delivering 送达中、delivered 已落进发起方会话记录、failed 最终送不到），通过 exhibits_state 挂载于 CallbackDeliveryProcess。合法跃迁：queued→delivering→delivered；delivering→queued（忙态/挂卡/抢占/写入失败回退）；delivering→failed、queued→failed。delivered 为终态，且不得绕过 delivering 直接到 delivered。"
       },
       {
         "class_id": "HarnessLifecycleState",
@@ -645,12 +647,21 @@
         "rigidity": "+R",
         "temporality": "interval",
         "states": ["queued", "delivering", "delivered", "failed"],
+        "delivery_channels": ["idle_batch", "hook_piggyback"],
+        "inbox_projection_states": ["queued", "delivering"],
+        "priority_tiers": [
+          "human_input_or_next_task",
+          "interactive_decision_card_lock",
+          "callback_inbox"
+        ],
+        "physically_separated_from": "workbench-queue.json",
         "current_code_locations": [
           "src/frago/session/async_dispatch.py",
+          "src/frago/cli/session_commands.py",
           "src/frago/server/services/workbench_queue.py",
           "src/frago/server/services/workbench_queue_patrol_service.py"
         ],
-        "description": "一次异步派发结束后，把回传报文送回发起方会话的过程。以派发单号 job_id 为全局稳定身份，引用发起方会话（caller_session_id）与执行方会话（worker_session_id）。派发单记为 completed 的前提是本过程处于 delivered；worker 执行结果（exit_code）与本过程的送达状态是两个独立维度。"
+        "description": "一次异步派发结束后，把回传报文送回发起方会话的过程。以派发单号 job_id 为全局稳定身份，引用发起方会话（caller_session_id）与执行方会话（worker_session_id）。CallbackInbox 是本过程处于 queued/delivering 状态的投影视图与独立信道，物理上彻底脱离人类 Next Task（workbench-queue.json），并严格服从「人类主动输入 / Next Task > 未决交互决策卡锁 > CallbackInbox」三层优先级契约。仅可通过空闲批量合并（idle_batch）或 TurnSubmit Hook 搭便车（hook_piggyback）两条等价通道按 job_id 原子认领消费；worker 执行结果（exit_code）与本过程送达状态正交，派发单记为 completed 的前提是本过程处于 delivered。"
       },
       {
         "class_id": "AgentSessionProcess",
@@ -1626,6 +1637,53 @@
         ],
         "invariants": [
           "A dispatch job is NEVER recorded as completed while its CallbackDeliveryProcess is not delivered."
+        ],
+        "side_effects": {
+          "mutates": ["CallbackDeliveryProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "claim_callback_inbox",
+      "parameters": [
+        "caller_session_id",
+        "delivery_channel",
+        "job_ids",
+        "has_human_next_task",
+        "blocked_by_card",
+        "is_session_busy",
+        "prior_states",
+        "enqueue_to_next_task"
+      ],
+      "signature": {
+        "initiator_domain": "AgentKernel | PrimarySchedulerRole | CallerZoneRole",
+        "target_range": "CallbackDeliveryProcess",
+        "input_types": {
+          "caller_session_id": "str",
+          "delivery_channel": "str",
+          "job_ids": "list[str]",
+          "has_human_next_task": "bool",
+          "blocked_by_card": "bool",
+          "is_session_busy": "bool",
+          "prior_states": "dict[str, str]",
+          "enqueue_to_next_task": "bool"
+        },
+        "return_type": "list[str]",
+        "error_types": ["ActionContractError"]
+      },
+      "contract": {
+        "preconditions": [
+          "caller_session_id MUST be a non-empty string.",
+          "delivery_channel MUST be one of {'idle_batch', 'hook_piggyback'}.",
+          "job_ids MUST be a non-empty list of unique non-empty job_id strings.",
+          "Every claimed job_id MUST currently have persisted prior_delivery_state == 'queued'.",
+          "idle_batch MUST satisfy Tier 1 > Tier 2 > Tier 3 gates: has_human_next_task is False, blocked_by_card is False, and is_session_busy is False."
+        ],
+        "postconditions": [
+          "Returned claimed job_ids match the requested job_ids transitioned to delivering."
+        ],
+        "invariants": [
+          "CallbackDeliveryProcess is physically separated from Next Task and MUST NEVER be enqueued to workbench-queue.json."
         ],
         "side_effects": {
           "mutates": ["CallbackDeliveryProcess"]

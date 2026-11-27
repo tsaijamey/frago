@@ -37,7 +37,7 @@
  */
 
 import { spawn } from "node:child_process"
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -383,6 +383,96 @@ function hookBinaryPath() {
   return path.join(os.homedir(), ".frago", "bin", name)
 }
 
+function stripStaleCallbackPointer(text) {
+  if (typeof text !== "string" || !text) return ""
+  return text.replace(/^[^\n]*`session callback-claim --for-hook`[^\n]*\n?/gm, "").trim()
+}
+
+function hasPendingCallbackCandidate(sessionID) {
+  if (!sessionID) return false
+  const fragoHome = process.env.FRAGO_HOME || path.join(os.homedir(), ".frago")
+  const dispatchesDir = path.join(fragoHome, "sessions", "async_dispatches")
+  const indexPath = path.join(dispatchesDir, ".active-callback-callers.json")
+  if (existsSync(indexPath)) {
+    try {
+      const data = JSON.parse(readFileSync(indexPath, "utf8"))
+      if (data?.seeded === true) {
+        return Array.isArray(data.callers) && data.callers.includes(sessionID)
+      }
+    } catch {
+      return true
+    }
+  }
+  if (!existsSync(dispatchesDir)) return false
+  try {
+    for (const entry of readdirSync(dispatchesDir)) {
+      if (!entry.endsWith(".json") || entry.startsWith(".")) continue
+      try {
+        const job = JSON.parse(readFileSync(path.join(dispatchesDir, entry), "utf8"))
+        const ds = String(job?.delivery_state || "queued").trim().toLowerCase()
+        if (
+          job?.caller_session_id === sessionID &&
+          String(job?.status || "").trim().toLowerCase() === "delivering" &&
+          (ds === "queued" || ds === "delivering")
+        ) {
+          return true
+        }
+      } catch {}
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+/**
+ * Claim pending CallbackInbox items for this opencode session on TurnSubmit when
+ * the local frago-core binary has not already injected `<frago-async-callbacks`.
+ */
+function claimCallbackInbox(sessionID) {
+  if (!sessionID || !hasPendingCallbackCandidate(sessionID)) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(
+        fragoLauncher(),
+        ["session", "callback-claim", "--for-hook", "--session-id", sessionID],
+        {
+          stdio: ["ignore", "pipe", "ignore"],
+          env: { ...process.env, FRAGO_SESSION_ID: sessionID },
+        },
+      )
+    } catch {
+      return resolve(null)
+    }
+
+    let stdout = ""
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {}
+      finish(null)
+    }, HOOK_TIMEOUT_MS)
+
+    child.on("error", () => finish(null))
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.on("close", (code) => {
+      const trimmed = stdout.trim()
+      finish(code === 0 && trimmed ? trimmed : null)
+    })
+  })
+}
+
 /**
  * Run the frago-core binary against one event payload.
  *
@@ -647,7 +737,15 @@ export const FragoHookPlugin = async ({ directory }) => {
         wantsVision ? describeImages(images) : Promise.resolve(null),
       ])
 
-      const contexts = hookResults.map(injectionOf).filter(Boolean)
+      const contexts = hookResults
+        .map(injectionOf)
+        .filter(Boolean)
+        .map(stripStaleCallbackPointer)
+        .filter(Boolean)
+      if (!contexts.some((c) => c.includes("<frago-async-callbacks"))) {
+        const cbText = await claimCallbackInbox(sessionID)
+        if (cbText) contexts.unshift(cbText)
+      }
       if (!contexts.length && !description) return
 
       // opencode validates message parts against a schema on the way in, so

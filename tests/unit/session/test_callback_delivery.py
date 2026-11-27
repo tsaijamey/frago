@@ -14,7 +14,11 @@ from typing import Any
 
 import pytest
 
-from frago.server.services import session_observer, workbench_queue
+from frago.server.services import (
+    callback_inbox_dispatcher,
+    session_observer,
+    workbench_queue,
+)
 from frago.server.services.workbench_queue_patrol_service import (
     WorkbenchQueuePatrolService,
 )
@@ -170,10 +174,10 @@ class TestCallbackDeliverySystemizedFixes:
         finally:
             send_barrier.set()
 
-    def test_watcher_delivery_failure_keeps_dispatch_job_failed_and_not_completed(
+    def test_watcher_delivery_failure_keeps_dispatch_job_queued_in_callback_inbox(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """2 & 3. 回传送达失败时，派发单不得记为 completed；worker_rc 为 0 但 delivery_state 为 failed。"""
+        """2 & 3. 瞬时回传送达失败时，不得伪报 completed，且保持 status=delivering / delivery_state=queued 等待 Hook 或巡检补投。"""
         job = async_dispatch.AsyncDispatchJob(
             job_id="disp-failed-deliv-01",
             kind="worker",
@@ -198,19 +202,20 @@ class TestCallbackDeliverySystemizedFixes:
             lambda _j: (0, "worker finished cleanly", ""),
         )
 
-        # 回传投递模拟失败
+        # 回传投递模拟暂不可达（如原会话忙态或卡锁）
         monkeypatch.setattr(
             async_dispatch,
             "deliver_callback_to_session",
-            lambda _sid, _prompt, cwd_hint=None: False,
+            lambda _sid, _prompt, **_kw: False,
         )
 
         final_job = async_dispatch.execute_dispatch_job(job_file)
         assert final_job is not None
-        # 核心契约验证：两个维度彻底分离
+        # 核心契约验证：worker 完成但未送达 -> 留驻 CallbackInbox queued，绝不进 Next Task 队列，绝不记为 completed
         assert final_job.exit_code == 0
-        assert final_job.delivery_state == "failed"
-        assert final_job.status == "failed"  # 绝不能记为 completed！
+        assert final_job.delivery_state == "queued"
+        assert final_job.status == "delivering"
+        assert workbench_queue.list_queue(TEST_SID) == []
 
     def test_server_autonomous_patrol_injects_ready_sessions_without_frontend_request(
         self, monkeypatch: pytest.MonkeyPatch
@@ -381,12 +386,14 @@ class TestCallbackDeliverySystemizedFixes:
     def test_integrated_retry_cycle_without_mocking_deliver_callback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """P2-1.1: 不 Mock deliver_callback_to_session，真实跑通 execute_dispatch_job 首次注入失败退回队首，
-        经历 queued -> delivering -> queued，再由服务端巡检成功送达收敛为 delivered / completed。
+        """P2-1.1 & Option A：不 Mock deliver_callback_to_session，真实跑通 execute_dispatch_job 首次投递失败
+        经历 queued -> delivering -> queued（不写入 workbench-queue.json），随后服务端 CallbackInbox 巡检成功送达
+        以 <frago-async-callbacks delivery="idle-batch"> 收敛为 delivered / completed。
         """
         records = _ready_turn(1)
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records))
         monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+        monkeypatch.setattr(async_dispatch, "_local_server_wakeup_port", lambda: None)
 
         job = async_dispatch.AsyncDispatchJob(
             job_id="disp-real-retry-01",
@@ -413,55 +420,50 @@ class TestCallbackDeliverySystemizedFixes:
         )
 
         failing = True
+        sent_batches: list[str] = []
 
-        def flaky_send(_sid: str, _prompt: str, _cwd: str | None = None) -> bool:
+        def flaky_send(_sid: str, prompt: str, _cwd: str | None = None) -> bool:
             if failing:
                 raise RuntimeError("Transient driver socket busy")
+            sent_batches.append(prompt)
             return True
 
         monkeypatch.setattr(workbench_queue, "_send_prompt", flaky_send)
 
-        # 真实运行 execute_dispatch_job（通过 monkeypatch 短轮询窗口 0.15s 快速结束）
-        orig_deliver = async_dispatch.deliver_callback_to_session
-
-        def _quick_deliver(sid: str, prompt: str, **kwargs: Any) -> bool:
-            kwargs["max_wait_s"] = 0.15
-            kwargs["poll_interval_s"] = 0.05
-            return orig_deliver(sid, prompt, **kwargs)
-
-        monkeypatch.setattr(async_dispatch, "deliver_callback_to_session", _quick_deliver)
-
         first_run_job = async_dispatch.execute_dispatch_job(job_file)
         assert first_run_job is not None
 
-        # 磁盘上的派发单真实经历跃迁：退回 queued，delivery_attempts 记录增加，且绝对不能被记为 completed！
+        # 磁盘上的派发单真实经历跃迁：回退为 queued，delivery_attempts 记录增加，status != completed
         disk_job = async_dispatch.load_dispatch_job("disp-real-retry-01")
         assert disk_job is not None
         assert disk_job.delivery_state == "queued"
         assert disk_job.delivery_attempts >= 1
-        assert disk_job.status != "completed"
-        # 消息安全退回队首，未丢失
-        q = workbench_queue.list_queue(TEST_SID)
-        assert len(q) == 1
-        assert "disp-real-retry-01" in q[0].get("text", "") or q[0].get("job_id") == "disp-real-retry-01"
+        assert disk_job.status == "delivering"
+        # Option A 硬约束：绝对没有写入 Next Task 人类队列
+        assert workbench_queue.list_queue(TEST_SID) == []
+        assert TEST_SID in async_dispatch.list_active_callback_callers()
 
-        # 随后底层恢复正常，服务端自驱巡检介入，成功送达
+        # 随后底层恢复正常，服务端 CallbackInbox 巡检介入并送达
         failing = False
-        injected = workbench_queue.patrol_active_queues(sync=True)
-        assert TEST_SID in injected
+        patrol_res = callback_inbox_dispatcher.patrol_callback_inboxes(debounce_ms=0)
+        assert TEST_SID in patrol_res
+        assert len(sent_batches) == 1
+        assert '<frago-async-callbacks count="1" delivery="idle-batch"' in sent_batches[0]
+        assert "disp-real-retry-01" in sent_batches[0]
         assert workbench_queue.list_queue(TEST_SID) == []
 
-        # 派发单自动收敛为 delivered / completed！
+        # 派发单自动收敛为 delivered / completed，且从活跃调用方索引移出
         final_disk_job = async_dispatch.load_dispatch_job("disp-real-retry-01")
         assert final_disk_job is not None
         assert final_disk_job.delivery_state == "delivered"
         assert final_disk_job.status == "completed"
+        assert TEST_SID not in async_dispatch.list_active_callback_callers()
 
     def test_concurrency_inflight_not_misjudged_as_delivered(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """P2-1.2: 并发竞态测试：巡检线程弹出消息正在执行耗时发送并最终失败退回队首期间，
-        并发轮询的 watcher 绝不能仅凭 list_queue 暂时看不到条目就误判为 delivered。
+        """P2-1.2 & Option A：并发竞态测试：CallbackInbox dispatcher 认领条目进入 delivering
+        执行耗时发送期间，并发认领绝不能重复认领或误判为 delivered；发送失败后回退 queued，再重试成功。
         """
         records = _ready_turn(1)
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records))
@@ -481,13 +483,12 @@ class TestCallbackDeliverySystemizedFixes:
             cwd="/repo",
             prompt="do race task",
             task_summary="task",
+            status="delivering",
+            delivery_state="queued",
+            worker_finished_at="2026-11-27T00:00:00+00:00",
         )
         async_dispatch.save_dispatch_job(job)
-
-        # 构造一条带 job_id 的回传报文
-        cb_prompt = f'<frago-async-callback job_id="{job.job_id}">result</frago-async-callback>'
-        item = workbench_queue.enqueue(TEST_SID, text=cb_prompt, prompt=cb_prompt, job_id=job.job_id)
-        item_id = item["id"]
+        async_dispatch.register_active_callback_caller(TEST_SID)
 
         in_flight_barrier = threading.Event()
         finish_failing_send = threading.Event()
@@ -499,46 +500,52 @@ class TestCallbackDeliverySystemizedFixes:
 
         monkeypatch.setattr(workbench_queue, "_send_prompt", slow_failing_send)
 
-        # 启动后台线程执行 try_auto_inject 模拟巡检弹出条目并进入耗时发送
+        res_holder: dict[str, Any] = {}
         patrol_thread = threading.Thread(
-            target=lambda: workbench_queue.try_auto_inject(TEST_SID, records=records, sync=True),
+            target=lambda: res_holder.update(
+                callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
+            ),
             daemon=True,
         )
         patrol_thread.start()
 
-        # 等待巡检线程已弹出 item 并在发送中
         assert in_flight_barrier.wait(timeout=1.0) is True
+        # 正在发送中的条目在磁盘上处于 delivering，绝不会被第二个认领者重复抢领
+        inflight_disk = async_dispatch.load_dispatch_job(job.job_id)
+        assert inflight_disk is not None
+        assert inflight_disk.delivery_state == "delivering"
+        assert (
+            async_dispatch.claim_ready_callbacks_for_session(
+                TEST_SID,
+                delivery_channel="idle_batch",
+                debounce_ms=0,
+            )
+            == []
+        )
 
-        # 验证此时队列中已看不到 item_id
-        assert not any(it["id"] == item_id for it in workbench_queue.list_queue(TEST_SID))
-
-        # 此时 watcher 进行轮询：断言 watcher 绝不误判为 delivered！
-        receipt = workbench_queue.get_queue_delivery_receipt(TEST_SID)
-        assert receipt.get("inflight_item_id") == item_id
-        assert item_id not in (receipt.get("delivered_items") or [])
-
-        # 让巡检发送失败并退回队首
         finish_failing_send.set()
         patrol_thread.join(timeout=1.0)
+        assert res_holder.get("delivered") is False
 
-        # 验证消息已安全放回队首
-        q_after = workbench_queue.list_queue(TEST_SID)
-        assert len(q_after) == 1
-        assert q_after[0]["id"] == item_id
+        # 发送失败后已安全回退为 queued
+        rolled_back = async_dispatch.load_dispatch_job(job.job_id)
+        assert rolled_back is not None
+        assert rolled_back.delivery_state == "queued"
 
-        # 之后恢复正常发送，watcher 最终能真正送达并返回 True
+        # 恢复正常发送后重投成功
         monkeypatch.setattr(workbench_queue, "_send_prompt", lambda _sid, _p, _c: True)
-        delivered_ok = async_dispatch.deliver_callback_to_session(
-            TEST_SID, cb_prompt, job_id=job.job_id, max_wait_s=1.0, poll_interval_s=0.05
-        )
-        assert delivered_ok is True
+        ok_res = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
+        assert ok_res["delivered"] is True
+        final = async_dispatch.load_dispatch_job(job.job_id)
+        assert final is not None
+        assert final.delivery_state == "delivered"
+        assert final.status == "completed"
 
     def test_long_turn_no_timeout_and_historical_dedup(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """P2-1.3:
-        1. 投喂确认秒级返回，不等待目标代理后续数分钟的长回合思考，绝不把消息重塞回队首；
-        2. 历史幂等去重：当目标会话历史记录中已存在同 job_id 回传时，直接出队消纳，底层发送调用为 0，派发单同步收敛为 delivered。
+        """P2-1.3 & Option A：CallbackInbox 历史幂等去重：当会话历史 user.say / context.inject 中已存在
+        该 job_id 时，直接收敛为 delivered 且底层发送调用为 0。
         """
         records = _ready_turn(1)
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records))
@@ -549,20 +556,10 @@ class TestCallbackDeliverySystemizedFixes:
         def instant_submit_ok(_sid: str, _prompt: str, _cwd: str | None = None) -> bool:
             nonlocal send_called
             send_called += 1
-            # 立即返回成功，代表输入已被空闲终端接收并落盘
             return True
 
         monkeypatch.setattr(workbench_queue, "_send_prompt", instant_submit_ok)
 
-        # 1. 验证正常投递秒级确认且出队
-        workbench_queue.enqueue(TEST_SID, text="一次性长任务", prompt="一次性长任务")
-        res1 = workbench_queue.try_auto_inject(TEST_SID, records=records, sync=True)
-        assert res1["injected"] is True
-        assert res1["delivered"] is True
-        assert workbench_queue.list_queue(TEST_SID) == []
-        assert send_called == 1
-
-        # 2. 幂等防重测试：创建包含该 job_id 的已有历史会话记录
         dedup_job_id = "disp-dedup-99"
         dedup_job = async_dispatch.AsyncDispatchJob(
             job_id=dedup_job_id,
@@ -579,9 +576,11 @@ class TestCallbackDeliverySystemizedFixes:
             prompt="dedup task",
             task_summary="task",
             delivery_state="queued",
-            status="running",
+            status="delivering",
+            worker_finished_at="2026-11-27T00:00:00+00:00",
         )
         async_dispatch.save_dispatch_job(dedup_job)
+        async_dispatch.register_active_callback_caller(TEST_SID)
 
         historical_records = list(records) + [
             _make_record(
@@ -599,31 +598,18 @@ class TestCallbackDeliverySystemizedFixes:
         ]
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(historical_records))
 
-        # 入队一条带有相同 job_id 的滞留条目（模拟历史死循环 bug 遗留在队列里的条目）
-        workbench_queue.enqueue(
-            TEST_SID,
-            text=f'<frago-async-callback job_id="{dedup_job_id}">cached</frago-async-callback>',
-            prompt=f'<frago-async-callback job_id="{dedup_job_id}">cached</frago-async-callback>',
-            job_id=dedup_job_id,
-        )
-        assert len(workbench_queue.list_queue(TEST_SID)) == 1
-
-        # 重置底层发送调用计数
-        send_called = 0
-        res2 = workbench_queue.try_auto_inject(TEST_SID, records=historical_records, sync=True)
-
-        # 命中幂等防重：直接消费出队，底层发送次数为 0，派发单同步收敛为 delivered！
-        assert res2["injected"] is True
+        res2 = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
         assert res2["delivered"] is True
-        assert res2.get("deduped") is True
         assert res2.get("reason") == "deduped_already_present"
-        assert send_called == 0  # 绝对未向终端二次灌水！
+        assert res2.get("deduped") is True
+        assert res2.get("delivered_job_ids") == [dedup_job_id]
+        assert send_called == 0  # 绝未向终端二次灌水！
         assert workbench_queue.list_queue(TEST_SID) == []
 
-        # 验证派发单在磁盘上已被安全收敛为 delivered
         reloaded_dedup = async_dispatch.load_dispatch_job(dedup_job_id)
         assert reloaded_dedup is not None
         assert reloaded_dedup.delivery_state == "delivered"
+        assert reloaded_dedup.status == "completed"
 
     def test_active_queue_index_zero_full_disk_scan(
         self, monkeypatch: pytest.MonkeyPatch
@@ -666,7 +652,7 @@ class TestCallbackDeliverySystemizedFixes:
     def test_idempotent_dedup_deep_history_and_role_strictness(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """测试历史去重深度窗口（limit=500）与严格限定 user.say 角色。"""
+        """测试 CallbackInbox 历史去重深度窗口（limit=500）与严格限定 user.say / context.inject 角色。"""
         monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
         send_count = 0
 
@@ -679,6 +665,26 @@ class TestCallbackDeliverySystemizedFixes:
 
         # 场景 1：user.say 位于倒数第 120 条，后面跟 119 条 agent.say / tool.result
         deep_job_id = "disp-deep-120"
+        async_dispatch.save_dispatch_job(
+            async_dispatch.AsyncDispatchJob(
+                job_id=deep_job_id,
+                kind="worker",
+                mode="new",
+                caller_session_id=TEST_SID,
+                caller_employee_id=None,
+                caller_cwd="/repo",
+                target_session_id="w-deep",
+                target_name="w-deep",
+                employee_id=None,
+                agent="claude",
+                cwd="/repo",
+                prompt="deep",
+                task_summary="deep",
+                status="delivering",
+                delivery_state="queued",
+                worker_finished_at="2026-11-27T00:00:00+00:00",
+            )
+        )
         records_deep: list[UnifiedRecord] = [
             _make_record(
                 1,
@@ -700,25 +706,33 @@ class TestCallbackDeliverySystemizedFixes:
         assert len(records_deep) == 120
 
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records_deep))
-        cb_text_deep = f'<frago-async-callback job_id="{deep_job_id}">cached</frago-async-callback>'
-        workbench_queue.enqueue(
-            TEST_SID,
-            text=cb_text_deep,
-            prompt=cb_text_deep,
-            job_id=deep_job_id,
-        )
-        assert len(workbench_queue.list_queue(TEST_SID)) == 1
-
-        res1 = workbench_queue.try_auto_inject(TEST_SID, records=records_deep, sync=True)
-        assert res1["injected"] is True
+        res1 = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
         assert res1["delivered"] is True
-        assert res1.get("deduped") is True
         assert res1.get("reason") == "deduped_already_present"
         assert send_count == 0  # 命中深度去重，0 次发送
-        assert workbench_queue.list_queue(TEST_SID) == []
 
-        # 场景 2：会话记录中仅有 agent.say 与 tool.result 提及 callback（无 user.say 包含）
+        # 场景 2：会话记录中仅有 agent.say 与 tool.result 提及 callback（无 user.say / context.inject 包含）
         agent_mention_job_id = "disp-agent-mention"
+        async_dispatch.save_dispatch_job(
+            async_dispatch.AsyncDispatchJob(
+                job_id=agent_mention_job_id,
+                kind="worker",
+                mode="new",
+                caller_session_id=TEST_SID,
+                caller_employee_id=None,
+                caller_cwd="/repo",
+                target_session_id="w-mention",
+                target_name="w-mention",
+                employee_id=None,
+                agent="claude",
+                cwd="/repo",
+                prompt="mention",
+                task_summary="mention",
+                status="delivering",
+                delivery_state="queued",
+                worker_finished_at="2026-11-27T00:00:00+00:00",
+            )
+        )
         records_agent_only: list[UnifiedRecord] = [
             _make_record(
                 1,
@@ -740,19 +754,8 @@ class TestCallbackDeliverySystemizedFixes:
             ),
         ]
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(records_agent_only))
-        cb_text_agent = f'<frago-async-callback job_id="{agent_mention_job_id}">real result</frago-async-callback>'
-        workbench_queue.enqueue(
-            TEST_SID,
-            text=cb_text_agent,
-            prompt=cb_text_agent,
-            job_id=agent_mention_job_id,
-        )
-        assert len(workbench_queue.list_queue(TEST_SID)) == 1
-
-        res2 = workbench_queue.try_auto_inject(TEST_SID, records=records_agent_only, sync=True)
-        assert res2["injected"] is True
+        res2 = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
         assert res2["delivered"] is True
-        assert not res2.get("deduped")
         assert send_count == 1  # 绝未误判为已送达，正常调用发送！
         assert workbench_queue.list_queue(TEST_SID) == []
 
@@ -830,26 +833,29 @@ class TestCallbackDeliverySystemizedFixes:
             workbench_queue.patrol_active_queues(sync=True)
         assert scan_count == 1
 
-    def test_deliver_callback_to_session_does_not_return_early_on_earlier_queue_item(
+    def test_callback_inbox_coalescing_and_three_tier_priority_gates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """回归（ca04af51 现场）：同会话多条回传排队时，后发 watcher 调 try_auto_inject 弹出并送达
-        队首更早条目（job_1）时，绝不能误判自身（job_2）已送达而提前退出收口。
+        """Option A 核心门控：
+        1. 交互决策卡锁 > 人类 Next Task > 后台异步回执（被卡锁或人类队列非空时 CallbackInbox 零投递）；
+        2. 400ms 防抖窗口内多条就绪回执合并为单条 `<frago-async-callbacks count="2" delivery="idle-batch">` 一次性投递，
+           且绝不污染 `workbench-queue.json`。
         """
         turn_records = list(_ready_turn(1))
         monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(turn_records))
         monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
 
         sent_prompts: list[str] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_send_prompt",
+            lambda _sid, prompt, _cwd=None: sent_prompts.append(prompt) or True,
+        )
 
-        def fake_send(_sid: str, prompt: str, _cwd: str | None = None) -> bool:
-            sent_prompts.append(prompt)
-            return True
-
-        monkeypatch.setattr(workbench_queue, "_send_prompt", fake_send)
-
+        # 构造两条同时就绪的回执（间隔 10ms < 400ms 防抖窗口，等待防抖满足后一起合并送出）
+        now_iso = "2026-11-27T00:00:00+00:00"
         job1 = async_dispatch.AsyncDispatchJob(
-            job_id="disp-ca04-first",
+            job_id="disp-coal-first",
             kind="worker",
             mode="new",
             caller_session_id=TEST_SID,
@@ -858,13 +864,17 @@ class TestCallbackDeliverySystemizedFixes:
             target_session_id="worker-1",
             target_name="worker-1",
             employee_id=None,
-            agent="coreagent",
+            agent="claude",
             cwd="/repo",
             prompt="p1",
             task_summary="t1",
+            status="delivering",
+            delivery_state="queued",
+            worker_finished_at=now_iso,
+            output="result one",
         )
         job2 = async_dispatch.AsyncDispatchJob(
-            job_id="disp-ca04-second",
+            job_id="disp-coal-second",
             kind="worker",
             mode="new",
             caller_session_id=TEST_SID,
@@ -873,65 +883,193 @@ class TestCallbackDeliverySystemizedFixes:
             target_session_id="worker-2",
             target_name="worker-2",
             employee_id=None,
-            agent="coreagent",
+            agent="claude",
             cwd="/repo",
             prompt="p2",
             task_summary="t2",
+            status="delivering",
+            delivery_state="queued",
+            worker_finished_at=now_iso,
+            output="result two",
         )
         async_dispatch.save_dispatch_job(job1)
         async_dispatch.save_dispatch_job(job2)
+        async_dispatch.register_active_callback_caller(TEST_SID)
 
-        cb1 = '<frago-async-callback job_id="disp-ca04-first">first</frago-async-callback>'
-        cb2 = '<frago-async-callback job_id="disp-ca04-second">second</frago-async-callback>'
-        workbench_queue.enqueue(
-            TEST_SID, text=cb1, prompt=cb1, job_id="disp-ca04-first", auto_schedule=False
-        )
+        # 闸门 A（Tier 2）：交互决策卡锁死时，CallbackInbox 必须零投递
+        card_records = list(turn_records) + [
+            _make_record(3, "agent.say", {"text": "```answer-needed-by-human\ntype: single-choice\n```"}, group_id="turn-card"),
+        ]
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(card_records))
+        res_card = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
+        assert res_card["delivered"] is False
+        assert res_card["reason"] == "blocked_by_card"
+        assert sent_prompts == []
 
-        # 1. 新一轮尚未出现（停留在 turn-01），仅够消化队首 disp-ca04-first，不足以消化 disp-ca04-second：
-        #    job2 的 watcher 绝不可因为 try_auto_inject 送出了 job1 而误返回 True！
-        ok_early = async_dispatch.deliver_callback_to_session(
-            TEST_SID, cb2, job_id="disp-ca04-second", max_wait_s=0.18, poll_interval_s=0.05
+        # 闸门 B（Tier 1）：恢复无卡后，若人类 Next Task 队列非空，CallbackInbox 必须让路（零抢跑）
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(turn_records))
+        human_item = workbench_queue.enqueue(
+            TEST_SID, text="先处理主人这条指令", prompt="先处理主人这条指令", auto_schedule=False
         )
-        assert ok_early is False
-        assert any("disp-ca04-first" in p for p in sent_prompts)
-        assert not any("disp-ca04-second" in p for p in sent_prompts)
-        remaining = workbench_queue.list_queue(TEST_SID)
-        assert len(remaining) == 1
-        assert remaining[0].get("job_id") == "disp-ca04-second"
+        res_human = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
+        assert res_human["delivered"] is False
+        assert res_human["reason"] == "human_queue_pending"
+        assert sent_prompts == []
 
-        # 2. 移除刚刚入队的重复 item 后，模拟下一轮 stop（turn-02）出现，重新验证 job2 本身送达才返回 True
-        workbench_queue.remove_item(TEST_SID, remaining[0]["id"])
-        # 重新入队两条，且在首轮送出 job1 后于后台推进 turn-02
-        workbench_queue.enqueue(
-            TEST_SID, text=cb1, prompt=cb1, job_id="disp-ca04-first-b", auto_schedule=False
-        )
-        turn_records.extend(
-            [
-                _make_record(3, "user.say", {"text": "next"}, group_id="turn-02"),
-                _make_record(4, "agent.say", {"text": "ready"}, group_id="turn-02"),
-            ]
-        )
+        # 人类队列消化完，且处于 400ms 防抖窗内（用刚创建的新鲜 finished_at 测试防抖等待）
+        workbench_queue.remove_item(TEST_SID, human_item["id"])
+        from datetime import UTC, datetime
 
-        def _advance_turn() -> None:
-            time.sleep(0.12)
-            turn_records.extend(
-                [
-                    _make_record(5, "user.say", {"text": "next2"}, group_id="turn-03"),
-                    _make_record(6, "agent.say", {"text": "ready2"}, group_id="turn-03"),
-                ]
+        fresh_iso = datetime.now(UTC).isoformat()
+        j1 = async_dispatch.load_dispatch_job("disp-coal-first")
+        j2 = async_dispatch.load_dispatch_job("disp-coal-second")
+        assert j1 is not None and j2 is not None
+        j1.worker_finished_at = fresh_iso
+        j2.worker_finished_at = fresh_iso
+        async_dispatch.save_dispatch_job(j1)
+        async_dispatch.save_dispatch_job(j2)
+
+        res_debounced = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=10_000)
+        assert res_debounced["delivered"] is False
+        assert res_debounced["reason"] == "debouncing"
+        assert sent_prompts == []
+
+        # 防抖到期后一次性合并投递两条回执为单批
+        res_ok = callback_inbox_dispatcher.try_deliver_callback_inbox(TEST_SID, debounce_ms=0)
+        assert res_ok["delivered"] is True
+        assert len(sent_prompts) == 1
+        assert '<frago-async-callbacks count="2" delivery="idle-batch"' in sent_prompts[0]
+        assert "disp-coal-first" in sent_prompts[0]
+        assert "disp-coal-second" in sent_prompts[0]
+        assert workbench_queue.list_queue(TEST_SID) == []
+        assert async_dispatch.load_dispatch_job("disp-coal-first").delivery_state == "delivered"
+        assert async_dispatch.load_dispatch_job("disp-coal-second").delivery_state == "delivered"
+
+    def test_narrow_budget_unquoted_job_id_history_confirmation(self) -> None:
+        """P1-2：极窄预算降级生成的无引号 `- job_id=disp-...` 索引行必须被历史幂等确认正则识别且防前缀误伤。"""
+        narrow_job = async_dispatch.AsyncDispatchJob(
+            job_id="disp-narrow-01",
+            kind="worker",
+            mode="new",
+            caller_session_id=TEST_SID,
+            caller_employee_id=None,
+            caller_cwd="/repo",
+            target_session_id="worker-narrow-1",
+            target_name="worker-narrow",
+            employee_id=None,
+            agent="claude",
+            cwd="/repo",
+            prompt="p",
+            task_summary="t",
+            status="delivering",
+            delivery_state="queued",
+            exit_code=0,
+            output="long output " * 50,
+            report_file="/tmp/report.md",
+        )
+        narrow_prompt = async_dispatch.format_callback_batch_prompt(
+            [narrow_job],
+            delivery="idle-batch",
+            max_chars=180,
+        )
+        assert "- job_id=disp-narrow-01 " in narrow_prompt
+        records = [_make_record(1, "user.say", {"text": narrow_prompt})]
+        assert callback_inbox_dispatcher._is_callback_already_in_history(
+            TEST_SID, "disp-narrow-01", records=records
+        ) is True
+        # 前缀与超串不可误判命中
+        assert callback_inbox_dispatcher._is_callback_already_in_history(
+            TEST_SID, "disp-narrow-0", records=records
+        ) is False
+        extra_records = [
+            _make_record(
+                2,
+                "user.say",
+                {
+                    "text": '<frago-async-callbacks count="1" delivery="idle-batch">\n'
+                    "- job_id=disp-narrow-01-extra status=completed report=-\n"
+                    "</frago-async-callbacks>"
+                },
             )
+        ]
+        assert callback_inbox_dispatcher._is_callback_already_in_history(
+            TEST_SID, "disp-narrow-01", records=extra_records
+        ) is False
 
-        adv = threading.Thread(target=_advance_turn, daemon=True)
-        adv.start()
-        ok_second = async_dispatch.deliver_callback_to_session(
-            TEST_SID,
-            '<frago-async-callback job_id="disp-ca04-second-b">second-b</frago-async-callback>',
-            job_id="disp-ca04-second-b",
-            max_wait_s=0.8,
-            poll_interval_s=0.04,
-        )
-        adv.join(timeout=1.0)
-        assert ok_second is True
-        receipt = workbench_queue.get_queue_delivery_receipt(TEST_SID)
-        assert "disp-ca04-second-b" in (receipt.get("delivered_job_ids") or [])
+    def test_concurrent_standalone_deliver_coalesces_within_debounce_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P1-1：3 个并发完成的子任务在防抖窗口内调用 deliver_callback_to_session 时合批为单次投递。"""
+        import threading
+
+        turn_records = _ready_turn(1)
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(turn_records))
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+        monkeypatch.setattr(async_dispatch, "_local_server_wakeup_port", lambda: None)
+        # 用 200ms 紧凑防抖窗验证并发合批（仍遵守 >0ms 的真实防抖逻辑，同时保持单测快速稳定）
+        monkeypatch.setattr(async_dispatch, "CALLBACK_INBOX_DEBOUNCE_MS", 200)
+
+        sent_prompts: list[str] = []
+        send_lock = threading.Lock()
+
+        def fake_send(_sid: str, prompt: str, _cwd: str | None = None) -> bool:
+            with send_lock:
+                sent_prompts.append(prompt)
+            return True
+
+        monkeypatch.setattr(workbench_queue, "_send_prompt", fake_send)
+
+        from datetime import UTC, datetime
+
+        results: list[bool] = []
+
+        def worker_finish(idx: int, delay_s: float) -> None:
+            if delay_s > 0:
+                time.sleep(delay_s)
+            jid = f"disp-burst-{idx}"
+            job = async_dispatch.AsyncDispatchJob(
+                job_id=jid,
+                kind="worker",
+                mode="new",
+                caller_session_id=TEST_SID,
+                caller_employee_id=None,
+                caller_cwd="/repo",
+                target_session_id=f"worker-burst-{idx}",
+                target_name=f"worker-{idx}",
+                employee_id=None,
+                agent="claude",
+                cwd="/repo",
+                prompt="p",
+                task_summary=f"task-{idx}",
+                status="delivering",
+                delivery_state="queued",
+                worker_finished_at=datetime.now(UTC).isoformat(),
+                exit_code=0,
+                output=f"burst-output-{idx}",
+            )
+            async_dispatch.save_dispatch_job(job)
+            ok = async_dispatch.deliver_callback_to_session(
+                TEST_SID,
+                f'<frago-async-callback job_id="{jid}">burst-output-{idx}</frago-async-callback>',
+                job_id=jid,
+            )
+            results.append(ok)
+
+        threads = [
+            threading.Thread(target=worker_finish, args=(1, 0.0)),
+            threading.Thread(target=worker_finish, args=(2, 0.05)),
+            threading.Thread(target=worker_finish, args=(3, 0.10)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+
+        assert any(results)
+        assert len(sent_prompts) == 1
+        assert '<frago-async-callbacks count="3" delivery="idle-batch"' in sent_prompts[0]
+        for idx in (1, 2, 3):
+            assert f"disp-burst-{idx}" in sent_prompts[0]
+            reloaded = async_dispatch.load_dispatch_job(f"disp-burst-{idx}")
+            assert reloaded is not None and reloaded.delivery_state == "delivered"
 

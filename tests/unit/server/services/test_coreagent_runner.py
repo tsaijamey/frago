@@ -721,11 +721,10 @@ class TestEnqueueStateAndModelRecycle:
                 "session_id": "core_interject",
             }
         )
-        time.sleep(0.1)
+        assert sess_b.turn_done.wait(timeout=2.0)
         with sess_b.lock:
             assert sess_b.in_flight == 0
             assert sess_b.state == "idle"
-        assert sess_b.turn_done.is_set()
         assert auto_inject_calls == ["core_interject"]
         step_out_b.close()
         tb.join(timeout=2)

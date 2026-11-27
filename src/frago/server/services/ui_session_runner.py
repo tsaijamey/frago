@@ -166,6 +166,12 @@ class UiSessionRunner:
                     )
             raise RuntimeError(detail)
         if timeout_s > 0 and result.status == "timeout":
+            logger.warning(
+                "ui session send timed out (session=%s, agent=%s, timeout_s=%s)",
+                session_id,
+                agent_type or self._agent_type,
+                timeout_s,
+            )
             raise TimeoutError(f"等待会话响应超时（{int(timeout_s)}s），请确认终端状态后重试")
         # 「接管」也是零冷启动：tmux 里那场本来就活着，池只是重新拿到了它的把手。
         # 报成 activating 等于凭空宣称付了十几秒重建的代价，而实际上一秒都没付。

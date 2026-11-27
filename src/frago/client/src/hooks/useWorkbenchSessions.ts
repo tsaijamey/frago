@@ -15,6 +15,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import i18n from '@/i18n';
+import type { CallbackInboxSummary } from '@/types/api';
 import { pageCache } from './pageCache';
 import { useAutoRefresh } from './useAutoRefresh';
 
@@ -141,6 +142,8 @@ export interface WorkbenchSession {
   employee_color?: string | null;
   /** 该会话存在尚未送达或投递中的异步回调（服务端下发）。 */
   callback_queued?: boolean;
+  /** 该会话待消化的异步回执收件箱摘要（服务端下发，只读聚合）。 */
+  callback_inbox?: CallbackInboxSummary | null;
   /** 该会话派发了后台 Worker 且仍有子任务处于 pending / running。 */
   has_running_worker?: boolean;
   /** 该会话此刻是否真正存在需要人类拍板的未决事项（服务端收敛判定）。 */

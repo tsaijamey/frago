@@ -259,11 +259,7 @@ export function sessionLifecycleOf(
   ) {
     return { key: 'error', label: 'Error' };
   }
-  // 3. 排队等待投递的异步回调 → Callback queued
-  if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
-    return { key: 'callback', label: 'Callback queued' };
-  }
-  // 4. 等待人类决策 → Waiting decision
+  // 3. 等待人类决策（Tier 2）→ Waiting decision（严格高于 Tier 3 异步回调回执）
   if (
     opts.hasDecisionCard ||
     meta.need ||
@@ -271,6 +267,15 @@ export function sessionLifecycleOf(
     (meta.need_decision === undefined && Boolean(opts.forYou))
   ) {
     return { key: 'waiting', label: 'Waiting decision' };
+  }
+  // 4. 排队等待投递的异步回调（Tier 3）→ Callback queued
+  if (
+    opts.callbackQueued ||
+    meta.callback_queued ||
+    (session.callback_inbox?.count ?? 0) > 0 ||
+    meta.lifecycle === 'callback'
+  ) {
+    return { key: 'callback', label: 'Callback queued' };
   }
   if (session.status === 'done') return { key: 'completed', label: 'Completed' };
   return { key: 'idle', label: 'Idle' };
@@ -329,6 +334,7 @@ export default function SessionItem({
   inTmux = false,
   card = null,
   callbackQueued = false,
+  callbackCount = 0,
   hasRunningWorker = false,
   busyTurn = false,
   nested = false,
@@ -371,6 +377,8 @@ export default function SessionItem({
   card?: string | null;
   /** 存在待回传 / 积压的异步回调。 */
   callbackQueued?: boolean;
+  /** 未消化的异步回执条数（来自 callback_inbox.count）。 */
+  callbackCount?: number;
   /** 存在正在后台运行的子 Worker 会话。 */
   hasRunningWorker?: boolean;
   /** 本页刚发出的一句还没答完：菜单里关 tmux 先问。 */
@@ -501,12 +509,13 @@ export default function SessionItem({
    * 词表（`workbench.status.*`，左栏状态行与时间线用的是同一份），不另造一套说法。
    */
   const originKey = sessionOriginOf(session);
+  const effectiveCallbackCount = callbackCount > 0 ? callbackCount : (session.callback_inbox?.count ?? 0);
   const life = sessionLifecycleOf(session, {
     forYou,
     sending,
     agentOnIt,
     hasDecisionCard: Boolean(card),
-    callbackQueued,
+    callbackQueued: callbackQueued || effectiveCallbackCount > 0,
     hasRunningWorker,
   });
   const signal: 'pending' | 'running' | 'done' =
@@ -523,21 +532,25 @@ export default function SessionItem({
         : 'workbench.status.done'
   );
   const lifeColorCls =
-    life.key === 'waiting' || life.key === 'callback'
-      ? 'text-accent-warning'
-      : life.key === 'error'
-        ? 'text-accent-error'
-        : life.key === 'running'
-          ? 'text-accent-primary'
-          : 'text-text-muted';
+    life.key === 'waiting'
+      ? 'text-accent-warning font-semibold'
+      : life.key === 'callback'
+        ? 'text-text-muted font-normal rounded-[4px] border border-[var(--border-subtle)] bg-bg-hover px-[5px] py-[0.5px]'
+        : life.key === 'error'
+          ? 'text-accent-error'
+          : life.key === 'running'
+            ? 'text-accent-primary'
+            : 'text-text-muted';
   const lifeDotCls =
-    life.key === 'waiting' || life.key === 'callback'
+    life.key === 'waiting'
       ? 'bg-accent-warning'
-      : life.key === 'error'
-        ? 'bg-accent-error'
-        : life.key === 'running'
-          ? 'bg-accent-primary'
-          : 'bg-text-muted';
+      : life.key === 'callback'
+        ? 'bg-text-muted'
+        : life.key === 'error'
+          ? 'bg-accent-error'
+          : life.key === 'running'
+            ? 'bg-accent-primary'
+            : 'bg-text-muted';
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
@@ -635,7 +648,9 @@ export default function SessionItem({
                 life.key === 'callback' ||
                 life.key === 'running' ||
                 life.key === 'error');
-            if (!showOriginChip && !showLifeChip) return null;
+            const showExtraCallbackChip =
+              !nested && effectiveCallbackCount > 0 && life.key !== 'callback';
+            if (!showOriginChip && !showLifeChip && !showExtraCallbackChip) return null;
             return (
               <div
                 data-testid="session-badges"
@@ -654,13 +669,37 @@ export default function SessionItem({
                   <span
                     data-testid="session-lifecycle"
                     data-lifecycle={life.key}
-                    className={`si-life ${life.key} inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium ${lifeColorCls}`}
+                    data-callback-count={
+                      life.key === 'callback' && effectiveCallbackCount > 0
+                        ? effectiveCallbackCount
+                        : undefined
+                    }
+                    className={`si-life ${life.key} inline-flex items-center gap-1 whitespace-nowrap text-[11px] ${
+                      life.key === 'callback' ? '' : 'font-medium '
+                    }${lifeColorCls}`}
                   >
                     <i
                       aria-hidden="true"
                       className={`dot inline-block h-[6px] w-[6px] shrink-0 rounded-full ${lifeDotCls}`}
                     />
-                    <span>{life.label}</span>
+                    <span>
+                      {life.key === 'callback' && effectiveCallbackCount > 0
+                        ? t('workbench.rail.callbackBadge', { n: effectiveCallbackCount })
+                        : life.label}
+                    </span>
+                  </span>
+                ) : null}
+                {showExtraCallbackChip ? (
+                  <span
+                    data-testid="session-callback-badge"
+                    data-callback-count={effectiveCallbackCount}
+                    className="si-life callback inline-flex items-center gap-1 whitespace-nowrap rounded-[4px] border border-[var(--border-subtle)] bg-bg-hover px-[5px] py-[0.5px] text-[11px] font-normal text-text-muted"
+                  >
+                    <i
+                      aria-hidden="true"
+                      className="dot inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-text-muted"
+                    />
+                    <span>{t('workbench.rail.callbackBadge', { n: effectiveCallbackCount })}</span>
                   </span>
                 ) : null}
               </div>

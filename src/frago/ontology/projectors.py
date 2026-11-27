@@ -656,6 +656,8 @@ def project_session_process_dict(
 # ============================================================================
 
 CALLBACK_DELIVERY_STATES: tuple[str, ...] = ("queued", "delivering", "delivered", "failed")
+CALLBACK_DELIVERY_CHANNELS: tuple[str, ...] = ("idle_batch", "hook_piggyback")
+CALLBACK_INBOX_PENDING_STATES: frozenset[str] = frozenset({"queued", "delivering"})
 CALLBACK_DELIVERY_TRANSITIONS: Mapping[str, frozenset[str]] = {
     "queued": frozenset({"delivering", "failed"}),
     "delivering": frozenset({"delivered", "queued", "failed"}),
@@ -715,6 +717,7 @@ class CallbackDeliveryProjection:
     state: QualityState
     worker_succeeded: bool | None
     graph: OntologyGraph
+    delivery_channel: str | None = None
 
 
 def project_callback_delivery_dict(
@@ -795,6 +798,16 @@ def project_callback_delivery_dict(
             assert isinstance(worker_proc, Process)
         g.link(process, "dispatched_from_worker", worker_proc)
 
+    raw_channel = raw_job.get("delivery_channel")
+    delivery_channel: str | None = None
+    if raw_channel is not None and str(raw_channel).strip():
+        ch = str(raw_channel).strip()
+        if ch not in CALLBACK_DELIVERY_CHANNELS:
+            raise ProjectionValidationError(
+                f"Unknown callback delivery_channel '{ch}'. Allowed: {list(CALLBACK_DELIVERY_CHANNELS)}."
+            )
+        delivery_channel = ch
+
     return CallbackDeliveryProjection(
         job_id=job_id,
         caller_session_id=caller,
@@ -803,6 +816,7 @@ def project_callback_delivery_dict(
         state=state,
         worker_succeeded=worker_succeeded,
         graph=g,
+        delivery_channel=delivery_channel,
     )
 
 

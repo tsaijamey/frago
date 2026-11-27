@@ -2168,11 +2168,24 @@ export type {
   ResolveDecisionRequest,
 } from '@/types/api';
 import type {
+  CallbackInboxBlockedReason,
+  CallbackInboxItem,
+  CallbackInboxResponse,
+  CallbackInboxSummary,
   DecisionInboxListResponse,
   DecisionInboxMutationResponse,
+  DrainCallbackInboxResponse,
   RejectDecisionRequest,
   ResolveDecisionRequest,
 } from '@/types/api';
+
+export type {
+  CallbackInboxBlockedReason,
+  CallbackInboxItem,
+  CallbackInboxResponse,
+  CallbackInboxSummary,
+  DrainCallbackInboxResponse,
+};
 
 /** 拉取统一待拍板收件箱列表与同源聚合计数。 */
 export async function getDecisionInbox(params?: {
@@ -2233,6 +2246,28 @@ export async function undoDecisionItem(proposalId: string): Promise<DecisionInbo
     { method: 'POST', body: JSON.stringify({}) }
   );
 }
+
+/** 读取指定会话的异步回执收件箱摘要（只读，不改变状态）。 */
+export async function fetchSessionCallbackInbox(
+  sessionId: string
+): Promise<CallbackInboxResponse> {
+  return fetchApi<CallbackInboxResponse>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/callback-inbox`
+  );
+}
+
+/** 受控触发指定会话的异步回执摘要并入（人工触发默认 immediate=true，后台唤醒传 immediate=false）。 */
+export async function drainSessionCallbackInbox(
+  sessionId: string,
+  opts?: { immediate?: boolean }
+): Promise<DrainCallbackInboxResponse> {
+  const immediate = opts?.immediate ?? true;
+  return fetchApi<DrainCallbackInboxResponse>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/callback-inbox/drain?immediate=${immediate ? 'true' : 'false'}`,
+    { method: 'POST', body: JSON.stringify({ immediate }) }
+  );
+}
+
 
 
 

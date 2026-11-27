@@ -67,6 +67,7 @@ import { splitAttachedImages } from '@/utils/attachedImages';
 import {
   dedupeAsyncCallbacks,
   splitAllLeadingBlocks,
+  splitAsyncCallbackBlocks,
   type AsyncCallbackBlockItem,
 } from '@/utils/asyncCallbackBlocks';
 import { type EmployeeBlockItem } from '@/utils/employeeBlocks';
@@ -1003,9 +1004,17 @@ function AsyncCallbackCard({
           >
             <Rich text={callback.resultBody} />
           </div>
+          {callback.batchNotice ? (
+            <div
+              data-testid="async-callback-batch-notice"
+              className="border-t border-border-color px-[14px] py-1.5 text-[11px] text-text-muted"
+            >
+              {callback.batchNotice}
+            </div>
+          ) : null}
           {reminders?.length ? (
             <div className="px-[14px] pb-2">
-              <Reminders items={reminders} />
+              <Reminders items={reminders} record={record} />
             </div>
           ) : null}
         </div>
@@ -1174,7 +1183,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
         </p>
       ) : null}
       <AttachedImages images={attached} />
-      {reminders.length ? <Reminders items={reminders} /> : null}
+      {reminders.length ? <Reminders items={reminders} record={record} /> : null}
     </TextShell>
   );
 
@@ -1229,7 +1238,7 @@ const INPUT_MODE_LABEL_KEY: Record<string, string> = {
  * 它跟人写的那段话之间在档案里没有任何分隔，照原样铺开会读成人自己说的——那些"记得
  * 用 uv run"之类的句子，人从来没打过。所以剥出来折起来，要看再点开。
  */
-function Reminders({ items }: { items: string[] }) {
+function Reminders({ items, record }: { items: string[]; record?: WorkbenchRecord }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
@@ -1249,14 +1258,29 @@ function Reminders({ items }: { items: string[] }) {
       </button>
       {open ? (
         <div className="mt-1.5 space-y-1.5">
-          {items.map((text, i) => (
-            <div
-              key={i}
-              className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
-            >
-              {text}
-            </div>
-          ))}
+          {items.map((text, i) => {
+            const parsed = splitAsyncCallbackBlocks(text);
+            if (parsed.callbacks.length > 0 && record) {
+              return (
+                <div key={i} className="min-w-0 space-y-1.5">
+                  <AsyncCallbackCards record={record} callbacks={parsed.callbacks} />
+                  {parsed.text.trim() ? (
+                    <div className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted">
+                      {parsed.text}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={i}
+                className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
+              >
+                {text}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -1993,7 +2017,19 @@ function ContextInject({ record }: { record: WorkbenchRecord }) {
               ))}
             </ul>
           ) : (
-            <Mono text={str(p, 'body') || str(p, 'stdout')} />
+            (() => {
+              const rawBody = str(p, 'body') || str(p, 'stdout');
+              const parsed = splitAsyncCallbackBlocks(rawBody);
+              if (parsed.callbacks.length > 0) {
+                return (
+                  <div className="min-w-0 space-y-2">
+                    <AsyncCallbackCards record={record} callbacks={parsed.callbacks} />
+                    {parsed.text.trim() ? <Mono text={parsed.text} /> : null}
+                  </div>
+                );
+              }
+              return <Mono text={rawBody} />;
+            })()
           )}
         </div>
       ) : null}

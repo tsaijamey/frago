@@ -87,25 +87,227 @@ function hasUiDecisionCard(text: string): boolean {
   }
 }
 
-/** 独立的 `frago ask` / `frago app ask` 调用：命令名之前只允许路径与空白。 */
-const STANDALONE_ASK_CMD_RE = /^\s*(?:[A-Za-z0-9_./-]*\/)?frago(?:\.exe)?\s+(?:app\s+)?ask\b/;
-/** 帮助类选项：只是在查用法，不会真的产出待人回答的卡片。 */
-const ASK_HELP_FLAG_RE = /(?:^|\s)(?:-h|--help)\b/;
-/** shell 命令分隔符：出现即说明这不是一条独立命令，而是复合脚本的一部分。 */
-const SHELL_CHAIN_RE = /(?:&&|\|\||;|\||\n)/;
+/** 环境变量赋值 token，如 `VAR=1`。 */
+const ENV_ASSIGN_TOKEN_RE = /^[A-Za-z_][A-Za-z0-9_]*=.*$/;
+/** `frago` 可执行文件 token（允许路径前缀与 `.exe` 后缀）。 */
+const FRAGO_EXEC_TOKEN_RE = /^(?:[A-Za-z0-9_./-]*\/)?frago(?:\.exe)?$/;
+/** 纯前置环境设置命令：在判断 `frago [app] ask` 之前可安全跳过。 */
+const SETUP_ONLY_CMDS = new Set(['cd', 'pushd', 'popd', 'export', 'unset', 'set', 'true', ':']);
+/** 回显/校验/测试脚手架命令：与 `frago ask` 混排在同一条复合命令里时视为命令回显，不当作真挂卡。 */
+const NON_ASK_ECHO_OR_TEST_CMDS = new Set([
+  'echo',
+  'printf',
+  'cat',
+  'head',
+  'tail',
+  'sed',
+  'awk',
+  'grep',
+  'rg',
+  'python',
+  'python3',
+  'node',
+  'pytest',
+  'bash',
+  'sh',
+  'zsh',
+  'ls',
+  'ps',
+]);
+const UV_RUN_VALUE_FLAGS = new Set([
+  '--project',
+  '--directory',
+  '-C',
+  '--python',
+  '-p',
+  '--with',
+  '--with-editable',
+  '--group',
+  '--extra',
+]);
+
+/** 按顶层 `&&` / `||` / `;` / `\n` 安全切分命令（忽略引号内运算符；出现顶层管道 `|` 返回空数组）。 */
+function splitTopLevelShellSegments(cmd: string): string[] {
+  const segments: string[] = [];
+  let buf = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  for (let i = 0; i < cmd.length; i += 1) {
+    const ch = cmd[i];
+    if (escaped) {
+      buf += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      buf += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      buf += ch;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      buf += ch;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      const pair = cmd.slice(i, i + 2);
+      if (pair === '&&' || pair === '||') {
+        const seg = buf.trim();
+        if (seg) segments.push(seg);
+        buf = '';
+        i += 1;
+        continue;
+      }
+      if (ch === ';' || ch === '\n') {
+        const seg = buf.trim();
+        if (seg) segments.push(seg);
+        buf = '';
+        continue;
+      }
+      if (ch === '|') {
+        // 顶层管道（如 `frago ask ... | jq`）不是独立挂卡命令
+        return [];
+      }
+    }
+    buf += ch;
+  }
+  const tail = buf.trim();
+  if (tail) segments.push(tail);
+  return segments;
+}
+
+/** 轻量引号感知 shell 分词（与 Python `shlex.split` 语义对齐，剥离外层引号）。 */
+function tokenizeShellSegment(segment: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let hasToken = false;
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i];
+    if (escaped) {
+      current += ch;
+      hasToken = true;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      escaped = true;
+      hasToken = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      hasToken = true;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      hasToken = true;
+      continue;
+    }
+    if (!inSingle && !inDouble && /\s/.test(ch)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = '';
+        hasToken = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasToken = true;
+  }
+  if (hasToken) tokens.push(current);
+  return tokens;
+}
+
+function isSetupOnlySegment(tokens: string[]): boolean {
+  if (tokens.length === 0) return true;
+  if (tokens.every((tok) => ENV_ASSIGN_TOKEN_RE.test(tok))) return true;
+  let idx = 0;
+  while (idx < tokens.length && ENV_ASSIGN_TOKEN_RE.test(tokens[idx])) idx += 1;
+  if (idx >= tokens.length) return true;
+  return SETUP_ONLY_CMDS.has(tokens[idx]);
+}
+
+function unwrapSegmentCommand(tokens: string[]): string[] {
+  let idx = 0;
+  while (idx < tokens.length && (ENV_ASSIGN_TOKEN_RE.test(tokens[idx]) || tokens[idx] === 'env')) {
+    idx += 1;
+  }
+  if (idx >= tokens.length) return [];
+  if (tokens[idx] === 'uv' && idx + 1 < tokens.length && tokens[idx + 1] === 'run') {
+    idx += 2;
+    while (idx < tokens.length && tokens[idx].startsWith('-')) {
+      const flag = tokens[idx];
+      idx += 1;
+      if (
+        UV_RUN_VALUE_FLAGS.has(flag) &&
+        idx < tokens.length &&
+        !tokens[idx].startsWith('-')
+      ) {
+        idx += 1;
+      }
+    }
+    if (idx >= tokens.length) return [];
+  }
+  return tokens.slice(idx);
+}
+
+function executableBasename(token: string): string {
+  const slashIdx = Math.max(token.lastIndexOf('/'), token.lastIndexOf('\\'));
+  const base = (slashIdx >= 0 ? token.slice(slashIdx + 1) : token).toLowerCase();
+  return base.endsWith('.exe') ? base.slice(0, -4) : base;
+}
+
+function segmentIsEchoOrTestWrapper(tokens: string[]): boolean {
+  const unwrapped = unwrapSegmentCommand(tokens);
+  if (unwrapped.length === 0) return false;
+  return NON_ASK_ECHO_OR_TEST_CMDS.has(executableBasename(unwrapped[0]));
+}
+
+function segmentIsStandaloneAsk(tokens: string[]): boolean {
+  const unwrapped = unwrapSegmentCommand(tokens);
+  if (unwrapped.length === 0) return false;
+  const exe = unwrapped[0];
+  if (!FRAGO_EXEC_TOKEN_RE.test(exe)) return false;
+  const rest = unwrapped.slice(1);
+  if (rest.length === 0) return false;
+  if (rest.some((tok) => tok === '-h' || tok === '--help' || tok === '--version')) return false;
+  if (rest[0] === 'ask') return true;
+  return rest.length >= 2 && rest[0] === 'app' && rest[1] === 'ask';
+}
 
 /**
- * 这段命令行是不是**独立**的 `frago ask` 调用。
+ * 判断这段命令行是不是真实的 `frago ask` / `frago app ask` 挂卡调用（与后端 `workbench_queue._is_standalone_ask_command` 严格同构）。
  *
- * 只有独立调用才可能产出「等着人点选」的卡片。复合脚本（`a && b`）里的 `frago ask`
- * 往往是校验用例或演示，它打印出来的卡片 JSON 是**命令输出内容**，不是挂给人类的卡。
+ * 按顶层 `&&` / `||` / `;` / `\n` 安全切分（忽略引号内运算符、拒绝顶层管道 `|`）：
+ * - 允许 `cd /repo && frago app ask ...`、`VAR=1 "frago" app ask ... || true`、
+ *   `uv run frago ask ...`、`frago agent attach ... && frago app ask ...` 等真实复合交付写法；
+ * - 若任一段命中 `echo` / `printf` / `cat` / `grep` / `rg` / `python` / `node` 等回显/校验包装，返回 `false`；
+ * - 其余情形只要任一可执行段为合法 `frago [app] ask`（且无 `-h` / `--help` / `--version`），返回 `true`。
  */
 export function isStandaloneAskCommand(command: string): boolean {
   const cmd = (command || '').trim();
   if (!cmd) return false;
-  if (ASK_HELP_FLAG_RE.test(cmd)) return false;
-  const head = cmd.split(SHELL_CHAIN_RE)[0] ?? '';
-  return STANDALONE_ASK_CMD_RE.test(head);
+  const segments = splitTopLevelShellSegments(cmd);
+  if (segments.length === 0) return false;
+  let foundAsk = false;
+  for (const seg of segments) {
+    const tokens = tokenizeShellSegment(seg);
+    if (isSetupOnlySegment(tokens)) continue;
+    if (segmentIsEchoOrTestWrapper(tokens)) return false;
+    if (segmentIsStandaloneAsk(tokens)) foundAsk = true;
+  }
+  return foundAsk;
 }
 
 /** 取出 `tool.call` 里的命令行原文（各家内核字段名不一，逐个兜）。 */
@@ -209,7 +411,7 @@ function toolResultIsLiveCard(
       const call = pairedToolCall(records, index);
       if (call) {
         const verdict = toolCallAskVerdict(call);
-        if (verdict !== null) return verdict;
+        if (verdict !== null) return verdict && hasUiDecisionCard(body);
       }
     }
   }

@@ -365,7 +365,10 @@ export default function SessionRail({
         sending: sendingId === s.session_id,
         agentOnIt: busyId === s.session_id && sendingId !== s.session_id,
         hasDecisionCard: Boolean(decisionCardOf?.(s.session_id)),
-        callbackQueued: Boolean(s.callback_queued) || (callbackSessionIds?.has(s.session_id) ?? false),
+        callbackQueued:
+          Boolean(s.callback_queued) ||
+          (s.callback_inbox?.count ?? 0) > 0 ||
+          (callbackSessionIds?.has(s.session_id) ?? false),
         hasRunningWorker: Boolean(s.has_running_worker) || runningWorkerParentIds.has(s.session_id),
       }),
     [forYou, sendingId, busyId, decisionCardOf, callbackSessionIds, runningWorkerParentIds]
@@ -1867,8 +1870,10 @@ export default function SessionRail({
                               card={decisionCardOf?.(session.session_id) ?? null}
                               callbackQueued={
                                 Boolean(session.callback_queued) ||
+                                (session.callback_inbox?.count ?? 0) > 0 ||
                                 (callbackSessionIds?.has(session.session_id) ?? false)
                               }
+                              callbackCount={session.callback_inbox?.count ?? 0}
                               hasRunningWorker={
                                 Boolean(session.has_running_worker) ||
                                 runningWorkerParentIds.has(session.session_id)

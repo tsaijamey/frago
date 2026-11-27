@@ -144,6 +144,7 @@ class TestSessionList:
             # 异步派发聚合态：是否有运行中子 Worker、是否有排队/投递中回调、是否真有待拍板事项。
             "has_running_worker",
             "callback_queued",
+            "callback_inbox",
             "need_decision",
         }
 

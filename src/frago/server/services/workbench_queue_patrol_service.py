@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 
-from frago.server.services import workbench_queue
+from frago.server.services import callback_inbox_dispatcher, workbench_queue
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,10 @@ class WorkbenchQueuePatrolService:
                 await asyncio.to_thread(workbench_queue.patrol_active_queues, sync=True)
             except Exception:
                 logger.debug("Error during autonomous queue patrol tick", exc_info=True)
+            try:
+                await asyncio.to_thread(callback_inbox_dispatcher.patrol_callback_inboxes)
+            except Exception:
+                logger.debug("Error during CallbackInbox patrol tick", exc_info=True)
 
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(

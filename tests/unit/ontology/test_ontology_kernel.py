@@ -4500,7 +4500,161 @@ class TestCallbackDeliveryOntologyGate1AndGate2:
                 assert (repo_root / loc.split("#", 1)[0]).exists(), loc
 
         action_ids = {a["action_id"] for a in introspector.schema["kinetic_action_contracts"]}
-        assert {"record_callback_delivery_outcome", "finalize_dispatch_job"} <= action_ids
+        assert {
+            "record_callback_delivery_outcome",
+            "finalize_dispatch_job",
+            "claim_callback_inbox",
+        } <= action_ids
+        assert set(proc.get("delivery_channels", [])) == {"idle_batch", "hook_piggyback"}
+        assert proc.get("physically_separated_from") == "workbench-queue.json"
+        assert proc.get("priority_tiers") == [
+            "human_input_or_next_task",
+            "interactive_decision_card_lock",
+            "callback_inbox",
+        ]
+
+    def test_gate_2_delivery_channel_projection_and_validation(self) -> None:
+        from frago.ontology import (
+            CALLBACK_DELIVERY_CHANNELS,
+            ProjectionValidationError,
+            project_callback_delivery_dict,
+        )
+
+        assert set(CALLBACK_DELIVERY_CHANNELS) == {"idle_batch", "hook_piggyback"}
+        proj = project_callback_delivery_dict(
+            {
+                "job_id": "disp-ch-1",
+                "caller_session_id": "caller-1",
+                "delivery_state": "delivered",
+                "status": "completed",
+                "exit_code": 0,
+                "delivery_channel": "hook_piggyback",
+            }
+        )
+        assert proj.delivery_channel == "hook_piggyback"
+        with pytest.raises(ProjectionValidationError):
+            project_callback_delivery_dict(
+                {
+                    "job_id": "disp-ch-bad",
+                    "caller_session_id": "caller-1",
+                    "delivery_state": "queued",
+                    "delivery_channel": "post_tool_use",
+                }
+            )
+
+    def test_gate_3_claim_callback_inbox_contract_enforces_priority_and_separation(self) -> None:
+        from frago.ontology import (
+            InvariantViolationError,
+            PreconditionViolationError,
+            build_claim_callback_inbox_contract,
+            ontological_action,
+        )
+
+        contract = build_claim_callback_inbox_contract()
+
+        @ontological_action(contract)
+        def _fake_claim(
+            *,
+            caller_session_id: str,
+            delivery_channel: str,
+            job_ids: list[str],
+            has_human_next_task: bool,
+            blocked_by_card: bool,
+            is_session_busy: bool,
+            prior_states: dict[str, str],
+            enqueue_to_next_task: bool = False,
+        ) -> list[str]:
+            return list(job_ids)
+
+        # idle_batch succeeds only when all three gates are clear and all jobs are queued
+        assert (
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="idle_batch",
+                job_ids=["j1", "j2"],
+                has_human_next_task=False,
+                blocked_by_card=False,
+                is_session_busy=False,
+                prior_states={"j1": "queued", "j2": "queued"},
+                enqueue_to_next_task=False,
+            )
+            == ["j1", "j2"]
+        )
+
+        # Tier 1: human Next Task blocks idle_batch
+        with pytest.raises(PreconditionViolationError):
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="idle_batch",
+                job_ids=["j1"],
+                has_human_next_task=True,
+                blocked_by_card=False,
+                is_session_busy=False,
+                prior_states={"j1": "queued"},
+            )
+
+        # Tier 2: interactive decision card lock blocks idle_batch
+        with pytest.raises(PreconditionViolationError):
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="idle_batch",
+                job_ids=["j1"],
+                has_human_next_task=False,
+                blocked_by_card=True,
+                is_session_busy=False,
+                prior_states={"j1": "queued"},
+            )
+
+        # Session busy blocks idle_batch
+        with pytest.raises(PreconditionViolationError):
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="idle_batch",
+                job_ids=["j1"],
+                has_human_next_task=False,
+                blocked_by_card=False,
+                is_session_busy=True,
+                prior_states={"j1": "queued"},
+            )
+
+        # Physical separation invariant: NEVER enqueue into Next Task
+        with pytest.raises(InvariantViolationError):
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="idle_batch",
+                job_ids=["j1"],
+                has_human_next_task=False,
+                blocked_by_card=False,
+                is_session_busy=False,
+                prior_states={"j1": "queued"},
+                enqueue_to_next_task=True,
+            )
+
+        # hook_piggyback requires queued prior state & valid channel, allows hitchhiking on TurnSubmit
+        assert (
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="hook_piggyback",
+                job_ids=["j1"],
+                has_human_next_task=False,
+                blocked_by_card=True,
+                is_session_busy=False,
+                prior_states={"j1": "queued"},
+            )
+            == ["j1"]
+        )
+
+        # Non-queued (already delivering/delivered) rejected
+        with pytest.raises(PreconditionViolationError):
+            _fake_claim(
+                caller_session_id="caller-1",
+                delivery_channel="hook_piggyback",
+                job_ids=["j1"],
+                has_human_next_task=False,
+                blocked_by_card=False,
+                is_session_busy=False,
+                prior_states={"j1": "delivering"},
+            )
 
     def test_gate_2_transition_table_is_narrower_than_registry_mesh(self) -> None:
         from frago.ontology.projectors import (
