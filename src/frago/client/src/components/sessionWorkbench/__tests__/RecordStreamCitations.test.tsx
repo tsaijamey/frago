@@ -327,5 +327,9 @@ describe('RecordStream — 句段引用溯源交互、零预拉取与蓝虚线/�
       expect(css, `workbench.css 不应残留旧缩写选择器 ${selector}`).not.toContain(selector);
     }
     expect(css).toMatch(/\.cite-code-line\s+\.cite-lt\s*\{[^}]*white-space:\s*pre-wrap/s);
+    const citeSectionStart = css.indexOf('.cite-pill');
+    const citeSectionEnd = css.indexOf('.sp-used-list', citeSectionStart);
+    const citeSection = css.slice(citeSectionStart, citeSectionEnd > citeSectionStart ? citeSectionEnd : undefined);
+    expect(citeSection, '引用样式段不应出现硬编码十六进制色值').not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });

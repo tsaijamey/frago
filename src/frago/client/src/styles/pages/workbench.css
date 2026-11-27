@@ -5893,9 +5893,9 @@
 }
 
 [data-theme='light'] .cite-src-chip {
-  background: #ffffff;
-  border-color: rgba(0, 0, 0, 0.15);
-  color: rgba(0, 0, 0, 0.78);
+  background: var(--bg-card);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
 }
 
 [data-theme='light'] .cite-src-chip.invalid {
@@ -6114,7 +6114,7 @@
 .cite-drawer-banner {
   padding: 7px 14px;
   background: var(--accent-info-10);
-  border-bottom: 1px dashed var(--accent-info-border);
+  border-bottom: 1px solid var(--border-subtle);
   color: var(--accent-info);
   font-size: 12px;
   display: flex;
@@ -6126,7 +6126,7 @@
 
 .cite-drawer-banner.file-mode {
   background: var(--accent-primary-10);
-  border-bottom: 1px solid var(--accent-primary-border);
+  border-bottom: 1px solid var(--border-subtle);
   color: var(--accent-primary);
 }
 
