@@ -270,4 +270,62 @@ describe('RecordStream — 句段引用溯源交互、零预拉取与蓝虚线/�
     );
     expect(screen.queryByTestId('cite-preview-drawer')).toBeNull();
   });
+
+  it('workbench.css 与 React 组件的全部 .cite-* 样式类名完全一致（含 .cite-lt 缩进保留）', async () => {
+    const fsMod = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as {
+      readFileSync: (path: string, encoding: string) => string;
+    };
+    const pathMod = (await import(/* @vite-ignore */ ['node', 'path'].join(':'))) as {
+      resolve: (...segments: string[]) => string;
+    };
+    const proc = (globalThis as unknown as { process: { cwd: () => string } }).process;
+    const css = fsMod.readFileSync(
+      pathMod.resolve(proc.cwd(), 'src/styles/pages/workbench.css'),
+      'utf8'
+    );
+    const requiredSelectors = [
+      '.cite-sources-label',
+      '.cite-src-num',
+      '.cite-src-name',
+      '.cite-src-loc',
+      '.cite-pop-head',
+      '.cite-pop-num',
+      '.cite-pop-title',
+      '.cite-pop-kind',
+      '.cite-pop-path',
+      '.cite-pop-foot',
+      '.cite-pop-open',
+      '.cite-drawer-head',
+      '.cite-drawer-file',
+      '.cite-drawer-name',
+      '.cite-drawer-sub',
+      '.cite-drawer-actions',
+      '.cite-code-line .cite-ln',
+      '.cite-code-line .cite-lt',
+      '.cite-code-line.hl .cite-ln',
+      '.cite-ext-head',
+      '.cite-ext-body',
+      '.cite-ext-foot',
+    ];
+    for (const selector of requiredSelectors) {
+      expect(css, `workbench.css 缺失选择器 ${selector}`).toContain(selector);
+    }
+    const deprecatedSelectors = [
+      '.cite-sources-lbl',
+      '.cite-pop-top',
+      '.cite-pop-badge',
+      '.cite-pop-loc',
+      '.cite-pop-hint',
+      '.cite-drawer-hd',
+      '.cite-drawer-path',
+      '.cite-code-line .ln',
+      '.cite-code-line .txt',
+      '.cite-ext-hd',
+      '.cite-ext-bd',
+    ];
+    for (const selector of deprecatedSelectors) {
+      expect(css, `workbench.css 不应残留旧缩写选择器 ${selector}`).not.toContain(selector);
+    }
+    expect(css).toMatch(/\.cite-code-line\s+\.cite-lt\s*\{[^}]*white-space:\s*pre-wrap/s);
+  });
 });

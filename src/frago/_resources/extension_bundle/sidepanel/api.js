@@ -206,3 +206,24 @@ export function getSessionFileContent(cfg, sid, path, scope = "cited") {
     });
 }
 
+/**
+ * Map `/api/workbench/sessions/{sid}/file` response payload (`{ path, size, text, reason }`)
+ * to a user-facing preview error message, or `null` when previewable text is present.
+ */
+export function resolveFilePreviewError(data) {
+    const reason = data?.reason ?? null;
+    if (reason === "too-large") {
+        return "文件体积超过预览上限，请在 WebUI 或本地编辑器中查看。";
+    }
+    if (reason === "not-text") {
+        return "该文件为二进制或非文本格式，无法在此预览。";
+    }
+    if (reason === "unreadable") {
+        return "该文件当前不可读或权限不足，无法在此预览。";
+    }
+    if (typeof data?.text !== "string") {
+        return "该文件无法以文本形式预览。";
+    }
+    return null;
+}
+

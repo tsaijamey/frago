@@ -1838,10 +1838,10 @@ export default function RecordStream({
   }, [sessionId, closeCitations]);
 
   useEffect(() => {
-    if (stackPopover || fileViewerOpen || filesOpen || terminalOpen || watcherOpen) {
+    if (stackPopover || fileViewerOpen || filesOpen || terminalOpen || watcherOpen || peek) {
       closeCitations();
     }
-  }, [stackPopover, fileViewerOpen, filesOpen, terminalOpen, watcherOpen, closeCitations]);
+  }, [stackPopover, fileViewerOpen, filesOpen, terminalOpen, watcherOpen, peek, closeCitations]);
 
   useEffect(() => {
     return () => clearCiteHoverTimer();

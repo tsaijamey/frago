@@ -588,7 +588,6 @@ const SKIP_CONTAINER_TYPES = new Set([
   'code',
   'inlineCode',
   'link',
-  'heading',
   'footnoteDefinition',
   'fragoCiteSpan',
   'fragoCitePill',

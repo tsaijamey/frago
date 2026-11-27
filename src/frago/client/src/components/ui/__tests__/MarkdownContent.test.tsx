@@ -334,6 +334,21 @@ describe('MarkdownContent — 标准 GFM 脚注句段引用溯源（[^N]）', ()
     expect(container.querySelectorAll('.cite-span').length).toBe(0);
     expect(container.textContent).toContain('[[[!ref_1]]]');
   });
+
+  it('标题中的 [^1] 正常转为引用胶囊，绝不残留指向失效 #user-content-fn-1 的死锚点', () => {
+    const md = [
+      '## 核心发现[^1]',
+      '',
+      '[^1]: [summary.md](file:///tmp/summary.md#L12 "标题来源说明")',
+    ].join('\n');
+    const { container } = render(<MarkdownContent content={md} />);
+    expect(container.querySelector('a[href*="user-content-fn"]')).toBeNull();
+    const heading = container.querySelector('h2');
+    expect(heading).not.toBeNull();
+    const pill = heading?.querySelector('.cite-pill');
+    expect(pill).not.toBeNull();
+    expect(pill?.textContent).toBe('1');
+  });
 });
 
 

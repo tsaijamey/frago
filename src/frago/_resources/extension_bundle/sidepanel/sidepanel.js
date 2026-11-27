@@ -13,6 +13,7 @@ import {
     loadServerConfig,
     normalizeServerUrl,
     pollPendingWorkbenchSession,
+    resolveFilePreviewError,
     saveServerConfig,
     sendToWorkbenchSession,
     stopWorkbenchSession,
@@ -1404,28 +1405,27 @@ async function openFilePreviewDrawer({ mode, def = null, path = "", line = "" })
         const data = await getSessionFileContent(state.serverCfg, sid, targetPath, "cited");
         if (reqId !== state.citeDrawerReqId || state.selectedSid !== sid) return;
 
-        if (data?.too_large) {
-            renderCiteDrawerError("文件体积超过预览上限，请在 WebUI 或本地编辑器中查看。");
-            return;
-        }
-        if (data?.is_text === false || typeof data?.text !== "string") {
-            renderCiteDrawerError("该文件为二进制或非文本格式，无法在此预览。");
+        const previewErr = resolveFilePreviewError(data);
+        if (previewErr) {
+            renderCiteDrawerError(previewErr);
             return;
         }
 
-        const range = mode === "cite" ? md.parseLineAnchorRange(targetLine) : null;
+        const range = md.parseLineAnchorRange(targetLine);
         const lines = data.text.split(/\r\n|\n|\r/);
         const table = document.createElement("div");
         table.className = "cite-code-table";
-        let firstHighlightedEl = null;
+        let scrollTargetEl = null;
 
         for (let idx = 0; idx < lines.length; idx += 1) {
             const lineNum = idx + 1;
-            const isHl = Boolean(range && lineNum >= range.startLine && lineNum <= range.endLine);
+            const isHl = mode === "cite" && Boolean(range && lineNum >= range.startLine && lineNum <= range.endLine);
             const row = document.createElement("div");
             row.className = `cite-code-line${isHl ? " hl" : ""}`;
             row.setAttribute("data-line", String(lineNum));
-            if (isHl && !firstHighlightedEl) firstHighlightedEl = row;
+            if (range && lineNum === range.startLine && !scrollTargetEl) {
+                scrollTargetEl = row;
+            }
 
             const ln = document.createElement("span");
             ln.className = "cite-ln";
@@ -1442,8 +1442,8 @@ async function openFilePreviewDrawer({ mode, def = null, path = "", line = "" })
 
         el.citeDrawerBody.innerHTML = "";
         el.citeDrawerBody.appendChild(table);
-        if (firstHighlightedEl && typeof firstHighlightedEl.scrollIntoView === "function") {
-            firstHighlightedEl.scrollIntoView({ block: "center" });
+        if (scrollTargetEl && typeof scrollTargetEl.scrollIntoView === "function") {
+            scrollTargetEl.scrollIntoView({ block: "center" });
         }
     } catch (err) {
         if (reqId !== state.citeDrawerReqId) return;

@@ -1455,10 +1455,8 @@ def _frago_home_root() -> Path:
 def _is_sensitive_cited_path(target: Path, raw_path: str) -> bool:
     """Reject secret/credential files even inside allowed sandbox roots."""
     candidates = [target]
-    try:
+    with contextlib.suppress(OSError):
         candidates.append(Path(os.path.expanduser(raw_path)))
-    except OSError:
-        pass
     for candidate in candidates:
         parts_lower = [p.lower() for p in candidate.parts]
         if any(p in _SENSITIVE_DIR_NAMES for p in parts_lower):

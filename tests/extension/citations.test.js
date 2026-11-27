@@ -243,7 +243,12 @@ test("extension markdown intercepts file:// links via callback and api.js loads 
             ok: true,
             status: 200,
             async text() {
-                return JSON.stringify({ path: "/Users/demo/config.py", text: "line1\nline2", is_text: true });
+                return JSON.stringify({
+                    path: "/Users/demo/config.py",
+                    size: 11,
+                    text: "line1\nline2",
+                    reason: null,
+                });
             },
         };
     };
@@ -259,7 +264,9 @@ test("extension markdown intercepts file:// links via callback and api.js loads 
             "/Users/demo/config.py",
             "cited"
         );
-        assert.equal(res.is_text, true);
+        assert.equal(res.reason, null);
+        assert.equal(res.text, "line1\nline2");
+        assert.equal(apiMod.resolveFilePreviewError(res), null);
         assert.equal(calls.length, 1);
         assert.equal(
             calls[0].url,
@@ -269,4 +276,64 @@ test("extension markdown intercepts file:// links via callback and api.js loads 
     } finally {
         globalThis.fetch = prevFetch;
     }
+});
+
+test("extension sidepanel preview error mapping aligns with backend reason contract (too-large / not-text / unreadable)", async () => {
+    const apiMod = await import(
+        pathToFileURL(
+            path.resolve(__dirname, "../../src/frago/_resources/extension_bundle/sidepanel/api.js")
+        ).href
+    );
+
+    const tooLargeErr = apiMod.resolveFilePreviewError({
+        path: "/Users/demo/huge.log",
+        size: 5_000_000,
+        text: null,
+        reason: "too-large",
+    });
+    assert.match(tooLargeErr, /预览上限/);
+
+    const notTextErr = apiMod.resolveFilePreviewError({
+        path: "/Users/demo/image.png",
+        size: 4096,
+        text: null,
+        reason: "not-text",
+    });
+    assert.match(notTextErr, /二进制或非文本/);
+
+    const unreadableErr = apiMod.resolveFilePreviewError({
+        path: "/Users/demo/locked.txt",
+        size: 128,
+        text: null,
+        reason: "unreadable",
+    });
+    assert.match(unreadableErr, /不可读|权限/);
+
+    const fallbackErr = apiMod.resolveFilePreviewError({
+        path: "/Users/demo/unknown.bin",
+        size: 12,
+        text: null,
+        reason: null,
+    });
+    assert.match(fallbackErr, /无法以文本形式预览/);
+
+    assert.equal(
+        apiMod.resolveFilePreviewError({
+            path: "/Users/demo/ok.txt",
+            size: 5,
+            text: "hello",
+            reason: null,
+        }),
+        null
+    );
+
+    // 静态回归检查：sidepanel.js 不再读取废弃的 too_large / is_text 字段，且统一调用 resolveFilePreviewError
+    const fs = require("node:fs");
+    const sidepanelSrc = fs.readFileSync(
+        path.resolve(__dirname, "../../src/frago/_resources/extension_bundle/sidepanel/sidepanel.js"),
+        "utf8"
+    );
+    assert.equal(sidepanelSrc.includes("data?.too_large"), false);
+    assert.equal(sidepanelSrc.includes("data?.is_text"), false);
+    assert.equal(sidepanelSrc.includes("resolveFilePreviewError(data)"), true);
 });
