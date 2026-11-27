@@ -580,11 +580,9 @@ class SessionOntologyService:
             if observed_terminal_state
             else None
         )
-        zombie_states = (
-            {"running", "queued", "awaiting_input"}
-            if float(stale_after_seconds) >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
-            else {"running", "queued"}
-        )
+        # awaiting_input 绝不纳入僵尸自动结案集合：无论等待多久都保持 awaiting_input，
+        # 绝不能被 6 小时超时洗白为 completed。
+        zombie_states = {"running", "queued"}
 
         if observed_active and not clean_error:
             # Active turn observed (e.g., new user prompt / tool call / live runner) supersedes
@@ -821,6 +819,7 @@ class EvaluatedSessionState:
     heal_target: str | None = None
     heal_summary: str | None = None
     heal_waiting_reason: str | None = None
+    tool_aborted: bool = False
 
 
 _AGENT_PROCESS_NAMES: frozenset[str] = frozenset(
@@ -1109,7 +1108,8 @@ def evaluate_session_liveness_and_state(
     4. Settled evidence (``agent.say``/``done``/``idle``/``error`` or settled dispatch job) vs
        mid-turn crash (``IN_PROGRESS_TRANSCRIPT_KINDS`` waits 300s then heals to ``error``).
     5. Error fidelity (error signals MUST become ``error``, ``needs_input`` -> ``awaiting_input``).
-    6. 21600s (6h) ultimate fallback for stale ``awaiting_input`` and unmanaged remnants.
+    6. 21600s (6h) ultimate fallback for zombie ``running``/``queued`` (collapsing mid-turn tool aborts
+       to ``error``; ``awaiting_input`` NEVER washes out to ``completed``).
     """
     now = float(now_s if now_s is not None else time.time())
     norm_kind = _normalize_transcript_kind(last_kind)
@@ -1230,34 +1230,36 @@ def evaluate_session_liveness_and_state(
             and onto_state != "error"
             and not (liveness_flag is None and has_fresh_onto_turn)
         )
+        is_mid_turn_abort = norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS or (
+            onto_rec is not None
+            and str(getattr(onto_rec, "summary", "") or "").strip() == "process_terminated_mid_turn"
+        )
         return EvaluatedSessionState(
             ui_status="error",
             lifecycle_state="error",
             physically_alive=physically_alive,
             actively_running=actively_running,
             heal_target="error" if should_heal_error else None,
-            heal_summary=(digest_stuck or "session_error") if should_heal_error else None,
+            heal_summary=(
+                ("process_terminated_mid_turn" if is_mid_turn_abort else (digest_stuck or "session_error"))
+                if should_heal_error
+                else None
+            ),
+            tool_aborted=is_mid_turn_abort,
         )
 
     if onto_state == "error":
+        onto_summary = str(getattr(onto_rec, "summary", "") or "").strip()
+        is_mid_turn_abort = (
+            norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS
+            or onto_summary == "process_terminated_mid_turn"
+        )
         return EvaluatedSessionState(
             ui_status="error",
             lifecycle_state="error",
             physically_alive=physically_alive,
             actively_running=actively_running,
-        )
-
-    if onto_state in {"completed", "cancelled"}:
-        ui = (
-            ("done" if norm_kind == "agent.say" else "idle")
-            if norm_card_status == "running"
-            else norm_card_status
-        )
-        return EvaluatedSessionState(
-            ui_status=ui,
-            lifecycle_state=onto_state,
-            physically_alive=physically_alive,
-            actively_running=False,
+            tool_aborted=is_mid_turn_abort,
         )
 
     ref_ts = (
@@ -1275,6 +1277,54 @@ def evaluate_session_liveness_and_state(
     job_settled = job_status in {"completed", "failed", "superseded", "cancelled"}
     job_exit_code = int(getattr(latest_job, "exit_code", 0) or 0) if job_matches else 0
     job_error = str(getattr(latest_job, "error", "") or "").strip() if job_matches else ""
+
+    if onto_state in {"completed", "cancelled"}:
+        # 存量自愈（仅针对 completed，绝不覆盖人工 cancelled）：
+        # 1. 存量工具/中间态中途退场被旧 90s/6h 逻辑误写成 completed：末帧停在未闭合中间态、
+        #    进程已离线、其后无更新的 agent.say 结案回复且无已成功派发单，纠偏为 error。
+        if (
+            onto_state == "completed"
+            and not physically_alive
+            and norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS
+            and not (job_settled and job_status == "completed")
+            and (last_reply_s is None or last_active_s > last_reply_s + 1.0)
+            and (liveness_flag is False or activity_age_s >= DISCONNECT_CRASH_GRACE_SECONDS)
+        ):
+            return EvaluatedSessionState(
+                ui_status="error",
+                lifecycle_state="error",
+                physically_alive=False,
+                actively_running=False,
+                heal_target="error",
+                heal_summary="process_terminated_mid_turn",
+                tool_aborted=True,
+            )
+        # 2. 存量 awaiting_input 被旧 6h 逻辑误洗白成 completed：底层仍为 awaiting_input
+        #    且其后无更新的完成回复时安全恢复为 awaiting_input（绝不误伤后续已结案会话）。
+        if (
+            onto_state == "completed"
+            and not physically_alive
+            and norm_card_status == "awaiting_input"
+            and (last_reply_s is None or last_reply_s <= onto_updated_s + 5.0)
+        ):
+            return EvaluatedSessionState(
+                ui_status="idle",
+                lifecycle_state="awaiting_input",
+                physically_alive=False,
+                actively_running=False,
+                heal_target="awaiting_input",
+            )
+        ui = (
+            ("done" if norm_kind == "agent.say" else "idle")
+            if norm_card_status == "running"
+            else norm_card_status
+        )
+        return EvaluatedSessionState(
+            ui_status=ui,
+            lifecycle_state=onto_state,
+            physically_alive=physically_alive,
+            actively_running=False,
+        )
 
     transcript_settled = (norm_kind not in IN_PROGRESS_TRANSCRIPT_KINDS) and (
         norm_kind in ("agent.say", "error")
@@ -1320,6 +1370,7 @@ def evaluate_session_liveness_and_state(
                         heal_summary=(job_error or "dispatch_failed")[:500]
                         if onto_rec is not None
                         else None,
+                        tool_aborted=norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS,
                     )
                 return EvaluatedSessionState(
                     ui_status="done" if norm_kind == "agent.say" else "idle",
@@ -1338,9 +1389,20 @@ def evaluate_session_liveness_and_state(
                     actively_running=False,
                     heal_target="error" if onto_rec is not None else None,
                     heal_summary="process_terminated_mid_turn" if onto_rec is not None else None,
+                    tool_aborted=True,
                 )
 
             if activity_age_s >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS):
+                if in_progress_crashed or norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS:
+                    return EvaluatedSessionState(
+                        ui_status="error",
+                        lifecycle_state="error",
+                        physically_alive=False,
+                        actively_running=False,
+                        heal_target="error" if onto_rec is not None else None,
+                        heal_summary="process_terminated_mid_turn" if onto_rec is not None else None,
+                        tool_aborted=True,
+                    )
                 return EvaluatedSessionState(
                     ui_status="done" if norm_kind == "agent.say" else "idle",
                     lifecycle_state="completed",
@@ -1351,6 +1413,14 @@ def evaluate_session_liveness_and_state(
 
             # Unmanaged dead running cards in workbench/usage (when collapse_unmanaged_dead is True)
             if onto_rec is None and collapse_unmanaged_dead and norm_card_status == "running":
+                if norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS:
+                    return EvaluatedSessionState(
+                        ui_status="error",
+                        lifecycle_state="error",
+                        physically_alive=False,
+                        actively_running=False,
+                        tool_aborted=True,
+                    )
                 return EvaluatedSessionState(
                     ui_status="done" if norm_kind == "agent.say" else "idle",
                     lifecycle_state="completed",
@@ -1379,21 +1449,13 @@ def evaluate_session_liveness_and_state(
             actively_running=actively_running,
         )
 
-    # Case B: onto in awaiting_input (NEVER self-heal below 21600s)
+    # Case B: onto in awaiting_input (NEVER self-heal or wash out to completed regardless of age)
     if onto_state == "awaiting_input":
         ui = (
             ("done" if norm_kind == "agent.say" else "idle")
             if norm_card_status == "running"
             else norm_card_status
         )
-        if not physically_alive and activity_age_s >= float(ZOMBIE_IDLE_TIMEOUT_SECONDS):
-            return EvaluatedSessionState(
-                ui_status=ui,
-                lifecycle_state="completed",
-                physically_alive=False,
-                actively_running=False,
-                heal_target="completed",
-            )
         return EvaluatedSessionState(
             ui_status=ui,
             lifecycle_state="awaiting_input",
@@ -1403,6 +1465,14 @@ def evaluate_session_liveness_and_state(
 
     # Case C: unmanaged non-running card
     if not physically_alive and norm_card_status == "running" and collapse_unmanaged_dead:
+        if norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS:
+            return EvaluatedSessionState(
+                ui_status="error",
+                lifecycle_state="error",
+                physically_alive=False,
+                actively_running=False,
+                tool_aborted=True,
+            )
         return EvaluatedSessionState(
             ui_status="done" if norm_kind == "agent.say" else "idle",
             lifecycle_state="completed",
@@ -1410,10 +1480,42 @@ def evaluate_session_liveness_and_state(
             actively_running=False,
         )
 
+    # Unmanaged dead mid-turn abort (e.g., card_status=idle with last_kind=tool.call) MUST NOT
+    # fall back to lifecycle_state="completed".
+    if (
+        onto_rec is None
+        and not physically_alive
+        and norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS
+        and not (job_settled and job_status == "completed")
+        and (liveness_flag is False or activity_age_s >= DISCONNECT_CRASH_GRACE_SECONDS)
+    ):
+        return EvaluatedSessionState(
+            ui_status="error",
+            lifecycle_state="error",
+            physically_alive=False,
+            actively_running=False,
+            tool_aborted=True,
+        )
+
+    if norm_card_status == "awaiting_input":
+        return EvaluatedSessionState(
+            ui_status="idle",
+            lifecycle_state="awaiting_input",
+            physically_alive=physically_alive,
+            actively_running=actively_running,
+        )
+
+    fallback_lifecycle = (
+        onto_state
+        or (
+            norm_card_status
+            if norm_card_status in {"running", "queued", "cancelled", "error"}
+            else "completed"
+        )
+    )
     return EvaluatedSessionState(
         ui_status=norm_card_status,
-        lifecycle_state=onto_state
-        or ("running" if norm_card_status == "running" else "completed"),
+        lifecycle_state=fallback_lifecycle,
         physically_alive=physically_alive,
         actively_running=actively_running,
     )

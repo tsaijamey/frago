@@ -354,17 +354,26 @@ def inspect_session_file(
 
     # 判定状态与 ended_at：
     # 1. 末轮以异常/空答/API错误收尾 → error（绝不折叠为 completed）；
-    # 2. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账 → 已结束；
-    # 3. 末尾对话停在纯文本 assistant 回复（无待执行 tool_use）→ 已结束；
-    # 4. 停在中间态但最后活动距今已超过 COREAGENT_RUNNING_WINDOW_SECONDS（90s）→ 已结束；
-    # 5. 其余（刚写入中间态且在 90s 活跃窗口内）→ running。
+    # 2. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账，或纯文本 assistant 回复 → completed；
+    # 3. 末尾停在中间态（assistant_tool / assistant_think / user）且超过 90s 活跃窗口 → error
+    #    （工具调用/轮次中途退场绝不能被 90s 超时折叠为 completed）；
+    # 4. 其余非中间态记录（如纯系统元信息/空壳）超过 90s 活跃窗口 → completed；
+    # 5. 90s 活跃窗口内 → running。
+    in_progress_events = ("assistant_tool", "assistant_think", "user")
     if last_event_kind == "error" or last_turn_error:
         status = SessionStatus.ERROR
         ended_at = last_dt or mtime_dt
-    elif (
-        last_event_kind in ("turn_end", "assistant_text")
-        or idle > COREAGENT_RUNNING_WINDOW_SECONDS
-    ):
+    elif last_event_kind in ("turn_end", "assistant_text"):
+        status = SessionStatus.COMPLETED
+        ended_at = last_dt or mtime_dt
+    elif last_event_kind in in_progress_events:
+        if idle > COREAGENT_RUNNING_WINDOW_SECONDS:
+            status = SessionStatus.ERROR
+            ended_at = last_dt or mtime_dt
+        else:
+            status = SessionStatus.RUNNING
+            ended_at = None
+    elif idle > COREAGENT_RUNNING_WINDOW_SECONDS:
         status = SessionStatus.COMPLETED
         ended_at = last_dt or mtime_dt
     else:

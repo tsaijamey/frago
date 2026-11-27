@@ -233,7 +233,7 @@ export function sessionLifecycleOf(
     callbackQueued?: boolean;
     hasRunningWorker?: boolean;
   } = {}
-): { key: SessionLifecycleKey; label: string } {
+): { key: SessionLifecycleKey; label: string; aborted?: boolean } {
   const meta = session as SessionMetaExtra;
   const ontoState =
     typeof meta.lifecycle_state === 'string' ? meta.lifecycle_state.toLowerCase() : '';
@@ -248,14 +248,19 @@ export function sessionLifecycleOf(
     ((ontoState === 'running' || ontoState === 'queued') &&
       session.status !== 'done' &&
       session.status !== 'idle' &&
-      meta.status !== 'error')
+      meta.status !== 'error' &&
+      meta.tool_aborted !== true)
   ) {
     return { key: 'running', label: 'Running' };
   }
-  // 2. 明确以错误收场且当前未在跑 → Error
+  // 2a. 工具调用中途异常中断（未返回结果）→ 显式 error + aborted，严禁被 done/idle 掩盖
+  if (meta.tool_aborted === true) {
+    return { key: 'error', label: 'Aborted (incomplete)', aborted: true };
+  }
+  // 2b. 明确以错误收场且当前未在跑 → Error
   if (
     meta.status === 'error' ||
-    (ontoState === 'error' && session.status !== 'done' && session.status !== 'idle')
+    (ontoState === 'error' && session.status !== 'done')
   ) {
     return { key: 'error', label: 'Error' };
   }
@@ -272,7 +277,13 @@ export function sessionLifecycleOf(
   ) {
     return { key: 'waiting', label: 'Waiting decision' };
   }
-  if (session.status === 'done') return { key: 'completed', label: 'Completed' };
+  // 5. 本体 awaiting_input（无决策卡但正在等待人类输入）→ 严禁折叠为 Completed / Idle
+  if (ontoState === 'awaiting_input') {
+    return { key: 'waiting', label: 'Awaiting input' };
+  }
+  if (session.status === 'done' || ontoState === 'completed') {
+    return { key: 'completed', label: 'Completed' };
+  }
   return { key: 'idle', label: 'Idle' };
 }
 
@@ -654,13 +665,20 @@ export default function SessionItem({
                   <span
                     data-testid="session-lifecycle"
                     data-lifecycle={life.key}
-                    className={`si-life ${life.key} inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium ${lifeColorCls}`}
+                    data-tool-aborted={life.aborted ? 'true' : undefined}
+                    className={`si-life ${life.key}${life.aborted ? ' aborted' : ''} inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium ${lifeColorCls}`}
                   >
                     <i
                       aria-hidden="true"
                       className={`dot inline-block h-[6px] w-[6px] shrink-0 rounded-full ${lifeDotCls}`}
                     />
-                    <span>{life.label}</span>
+                    <span>
+                      {life.aborted
+                        ? t('workbench.status.toolAborted')
+                        : life.key === 'waiting' && life.label === 'Awaiting input'
+                          ? t('workbench.status.awaitingInput')
+                          : life.label}
+                    </span>
                   </span>
                 ) : null}
               </div>

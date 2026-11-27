@@ -118,6 +118,10 @@ class TestSessionList:
             "agent_paths",
             "status",
             "lifecycle_state",
+            # 只读派生字段：末帧事件类型、工具中途异常中止标志及中止原因（不新增本体终态）。
+            "last_kind",
+            "tool_aborted",
+            "abort_reason",
             "digest_done",
             "digest_stuck",
             # 这场是人开的还是 frago 派出去的 worker、以及谁派的。左栏据此把清单摆成

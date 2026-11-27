@@ -1935,8 +1935,23 @@
     "status": {
       "running": "Running",
       "error": "Error",
+      "toolAborted": "Aborted (incomplete)",
+      "awaitingInput": "Awaiting input",
+      "awaitingInputDetail": "Awaiting input · Needs action",
       "done": "Done",
       "idle": "Idle"
+    },
+    "abort": {
+      "bannerTitle": "Aborted (incomplete) · Exited mid-tool, never marked Completed",
+      "bannerDescDefault": "The last tool call exited without returning a result; this session is preserved as aborted rather than Completed.",
+      "bannerDescTool": "Tool {{tool}} exited without returning a result; this session is preserved as aborted rather than Completed.",
+      "locate": "Locate abort",
+      "resume": "Resume from abort",
+      "resumeDraft": "The previous turn aborted during tool {{tool}} without returning a result. Please check the current state and resume from there.",
+      "resumeDraftGeneric": "The previous turn aborted mid-tool without completing. Please check the current state and resume from there.",
+      "resumeReady": "Resume prompt prefilled in composer — review and send.",
+      "toolBadge": "Aborted · No result",
+      "toolPill": "1 aborted"
     },
     "family": {
       "claude-code": "Claude Code",

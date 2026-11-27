@@ -1333,7 +1333,7 @@ def list_sessions(
                     if (
                         onto_rec is not None
                         and str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
-                        in {"running", "queued", "awaiting_input"}
+                        in {"running", "queued"}
                         and not physically_up
                     ):
                         stale_onto_heals.append((entry.name, "completed", None))
