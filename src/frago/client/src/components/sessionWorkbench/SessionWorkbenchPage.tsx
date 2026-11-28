@@ -20,8 +20,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, Loader2, Star } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Loader2, Pencil, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import EmployeeAvatar from '@/components/employees/EmployeeAvatar';
+import EmployeeAvatarModal, {
+  type EmployeeAvatarTarget,
+} from '@/components/employees/EmployeeAvatarModal';
+import { useDataStore } from '@/stores/dataStore';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
@@ -171,6 +176,8 @@ export default function SessionWorkbenchPage() {
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 顶栏点击数字员工头像或岗位芯片时打开自定义头像弹窗。 */
+  const [avatarTarget, setAvatarTarget] = useState<EmployeeAvatarTarget | null>(null);
   /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
   const [creatingNew, setCreatingNew] = useState(false);
   useEffect(() => {
@@ -1322,6 +1329,38 @@ export default function SessionWorkbenchPage() {
               <ChevronLeft size={16} />
             </button>
           ) : null}
+          {selected?.employee_id ? (() => {
+            const empId = selected.employee_id;
+            const empName = selected.employee_title || empId;
+            const openHeaderAvatar = () => {
+              const storeEmp = useDataStore
+                .getState()
+                .employees?.find((e) => e.member_post_id === empId);
+              setAvatarTarget({
+                member_post_id: empId,
+                title: storeEmp?.title || empName,
+                avatar_resolved: storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+              });
+            };
+            return (
+              <EmployeeAvatar
+                asButton
+                employeeId={empId}
+                avatar={selected.employee_avatar}
+                size={28}
+                className="ch-av-btn"
+                testId="session-header-avatar"
+                title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                ariaLabel={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                onClick={openHeaderAvatar}
+                overlay={
+                  <span className="ch-av-tip" aria-hidden="true">
+                    <Pencil size={8} strokeWidth={2.2} />
+                  </span>
+                }
+              />
+            );
+          })() : null}
           <div className="flex min-w-0 flex-1 flex-col justify-center">
             {selected ? (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -1393,6 +1432,34 @@ export default function SessionWorkbenchPage() {
             )}
             {selected ? (
               <div data-testid="head-meta" className="wb-meta">
+                {selected.employee_id ? (() => {
+                  const empId = selected.employee_id;
+                  const empName = selected.employee_title || empId;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="ch-emp-chip"
+                        data-testid="session-header-emp-chip"
+                        title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                        onClick={() => {
+                          const storeEmp = useDataStore
+                            .getState()
+                            .employees?.find((e) => e.member_post_id === empId);
+                          setAvatarTarget({
+                            member_post_id: empId,
+                            title: storeEmp?.title || empName,
+                            avatar_resolved:
+                              storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+                          });
+                        }}
+                      >
+                        {empName}
+                      </button>
+                      <span aria-hidden className="wb-meta-sep">·</span>
+                    </>
+                  );
+                })() : null}
                 {headStatus ? (
                   // 状态字放得下就全写，放不下自己截断——它原先是不收缩的，长了就把右边
                   // 目录整段挤没；目录截断还看得出是哪一层，状态截断靠 title 补全。
@@ -1778,6 +1845,14 @@ export default function SessionWorkbenchPage() {
           onClose={() => setTimelineOpen(false)}
         />
       ) : null}
+
+      <EmployeeAvatarModal
+        employee={avatarTarget}
+        onClose={() => setAvatarTarget(null)}
+        onSaved={() => {
+          void sessions.reload();
+        }}
+      />
     </div>
   );
 }

@@ -30,6 +30,10 @@ from typing import Any
 
 import yaml
 
+from frago.employee.avatar import (
+    cleanup_avatar_file,
+    normalize_avatar_spec,
+)
 from frago.file_guard import (
     ProtectedFileReadError,
     atomic_write_text,
@@ -198,6 +202,16 @@ EMPLOYEE_POST_SCHEMA: dict[str, Any] = {
             "description": "Dual-theme appearance color key for employee cards and session header bars.",
         },
         {
+            "name": "avatar",
+            "type": "object",
+            "default": {"kind": "default"},
+            "rigidity": "~R",
+            "description": (
+                "Visual avatar spec stored directly on the employee post: deterministic Micah default, "
+                "built-in Micah selection (seed + architectural backdrop bg_color), or safe uploaded raster file reference."
+            ),
+        },
+        {
             "name": "created_at",
             "type": "iso-datetime",
             "auto": True,
@@ -281,6 +295,7 @@ class EmployeePostRecord:
     allowed_commands: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     color: str = ""
+    avatar: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
 
@@ -303,6 +318,7 @@ class EmployeePostRecord:
             raise ValueError(
                 f"Invalid employee color '{self.color}'; must be one of {VALID_EMPLOYEE_COLORS}."
             )
+        self.avatar = normalize_avatar_spec(self.avatar, self.member_post_id)
         self.knowledge_domains = _dedup_preserve_order(self.knowledge_domains)
         self.recipes = _dedup_preserve_order(self.recipes)
         self.data_slots = _dedup_preserve_order(self.data_slots)
@@ -324,11 +340,13 @@ class EmployeePostRecord:
             "data_slots": list(self.data_slots),
             "schedule_ids": list(self.schedule_ids),
             "active_session_ids": list(self.active_session_ids),
+            "avatar": dict(self.avatar),
         }
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> EmployeePostRecord:
         raw_color = str(raw.get("color", "") or "").strip().lower()
+        raw_avatar = raw.get("avatar")
         return cls(
             member_post_id=str(raw.get("member_post_id", "")),
             title=str(raw.get("title", "") or raw.get("member_post_id", "")),
@@ -344,6 +362,7 @@ class EmployeePostRecord:
             allowed_commands=list(raw.get("allowed_commands", [])),
             skills=list(raw.get("skills", [])),
             color=raw_color if raw_color in VALID_EMPLOYEE_COLORS else "",
+            avatar=dict(raw_avatar) if isinstance(raw_avatar, dict) else {},
             created_at=str(raw.get("created_at", "") or _now_iso()),
             updated_at=str(raw.get("updated_at", "") or _now_iso()),
         )
@@ -428,21 +447,41 @@ def delete_post(
     *,
     base_dir: Path | None = None,
 ) -> bool:
-    """Delete an employee post JSON file and its companion ledger file. Returns `True` if removed, `False` if not found."""
+    """Delete an employee post JSON file, its companion ledger file, and unreferenced uploaded avatar. Returns `True` if removed, `False` if not found."""
     post_id = validate_post_id(member_post_id)
-    target_path = employees_dir(base_dir) / f"{post_id}.json"
+    target_dir = employees_dir(base_dir)
+    target_path = target_dir / f"{post_id}.json"
     ledger_path = employee_ledger_path(post_id, base_dir)
+    old_avatar_file: str | None = None
     with locked_file(target_path):
         if not target_path.is_file():
             ledger_path.unlink(missing_ok=True)
             lkg_path_for(target_path).unlink(missing_ok=True)
             lkg_path_for(ledger_path).unlink(missing_ok=True)
             return False
+        try:
+            existing_raw = _read_post_json_with_lkg(target_path)
+            raw_avatar = existing_raw.get("avatar")
+            if isinstance(raw_avatar, dict) and isinstance(raw_avatar.get("file_name"), str):
+                old_avatar_file = raw_avatar["file_name"]
+        except Exception:
+            old_avatar_file = None
         target_path.unlink()
         lkg_path_for(target_path).unlink(missing_ok=True)
         ledger_path.unlink(missing_ok=True)
         lkg_path_for(ledger_path).unlink(missing_ok=True)
-        return True
+    if old_avatar_file:
+        referenced: set[str] = set()
+        for other in list_posts(base_dir=base_dir):
+            fname = other.avatar.get("file_name")
+            if isinstance(fname, str) and fname:
+                referenced.add(fname)
+        cleanup_avatar_file(
+            old_avatar_file,
+            employees_base_dir=target_dir,
+            referenced_file_names=referenced,
+        )
+    return True
 
 
 # --- DataSlot territory: reading and archiving what an employee owns under ~/.frago/data ---

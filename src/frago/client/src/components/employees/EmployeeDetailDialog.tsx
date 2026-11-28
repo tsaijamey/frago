@@ -33,8 +33,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronDown, ChevronRight, FolderPlus, Loader2, RefreshCw, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FolderPlus, Image, Loader2, RefreshCw, X } from 'lucide-react';
 import DialogShell from './DialogShell';
+import EmployeeAvatar from './EmployeeAvatar';
 import {
   EMPLOYEE_COLORS,
   getEmployeeColorMeta,
@@ -61,6 +62,8 @@ interface EmployeeDetailDialogProps {
   onClose: () => void;
   /** 存完、登记完或巡检完，让页面重取清单。 */
   onSaved: () => void;
+  /** 可选：点击编辑态头像行「更换头像」时打开自定义头像弹窗。 */
+  onChangeAvatar?: (post: EmployeePost) => void;
   /**
    * 新建成功、服务端已跑完首次巡检时把那份编制交出去，由页面切到它的详情态。
    *
@@ -120,6 +123,7 @@ export default function EmployeeDetailDialog({
   creating = false,
   onClose,
   onSaved,
+  onChangeAvatar,
   onCreated,
 }: EmployeeDetailDialogProps) {
   const { t } = useTranslation();
@@ -511,6 +515,36 @@ export default function EmployeeDetailDialog({
           onChange={(e) => setTitle(e.target.value)}
         />
       </div>
+
+      {!isCreate && activePost ? (
+        <div className="fgrp">
+          <label>{t('employees.avatar.detailLabel')}</label>
+          <div className="emp-detail-avrow" data-testid="employee-detail-avatar-row">
+            <EmployeeAvatar
+              employeeId={activePost.member_post_id}
+              avatar={detail?.employee?.avatar_resolved ?? activePost.avatar_resolved}
+              size={48}
+              testId="employee-detail-avatar"
+              ariaLabel={activePost.title}
+            />
+            <div className="emp-detail-avinfo">
+              <div className="t">{activePost.title}</div>
+              <div className="d">{t('employees.avatar.detailHint')}</div>
+            </div>
+            {onChangeAvatar ? (
+              <button
+                type="button"
+                className="emp-btn shrink-0"
+                data-testid="employee-detail-change-avatar-btn"
+                onClick={() => onChangeAvatar(detail?.employee ?? activePost)}
+              >
+                <Image size={13} strokeWidth={1.5} />
+                {t('employees.avatar.changeBtn')}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* 外观颜色配置：模仿 Chrome/Edge 外观主题选色，深浅主题分别给两套色彩体系但建立 1:1 映射关系 */}
       <div className="fgrp" data-testid="employee-color-picker">

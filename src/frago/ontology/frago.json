@@ -393,10 +393,11 @@
         "identity": "member_post_id",
         "current_code_locations": [
           "src/frago/employee/store.py",
+          "src/frago/employee/avatar.py",
           "src/frago/employee/service.py",
           "src/frago/cli/employee_commands.py"
         ],
-        "description": "主动型固定员工的持久岗位编制与领地资源（#teams 工牌）：跨会话恒定保存员工画像、专属管理的 KnowledgeDomain 列表、专属管理的 RecipeModule 与 DataSlot 底账路径及允许调用的命令范围。"
+        "description": "主动型固定员工的持久岗位编制与领地资源（#teams 工牌）：跨会话恒定保存员工画像、视觉外观配置（color 与 avatar：默认确定性 Micah / 内置 Micah 选定 / 受控本地栅格图引用，作为反刚性 ~R 属性随岗位单文件落盘、无旁路文件）、专属管理的 KnowledgeDomain 列表、专属管理的 RecipeModule 与 DataSlot 底账路径及允许调用的命令范围。"
       },
       {
         "class_id": "DecisionInboxItem",
