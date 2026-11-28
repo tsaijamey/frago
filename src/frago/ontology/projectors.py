@@ -1533,6 +1533,59 @@ def project_employee_post_dict(
         g.link(emp_role, "governed_by", sched_spec)
         schedules.append(sched_spec)
 
+    # Optional anti-rigid (~R) visual avatar configuration on EmployeePostResource
+    raw_avatar = raw_post.get("avatar")
+    if raw_avatar is not None:
+        if not isinstance(raw_avatar, Mapping):
+            raise ProjectionValidationError(
+                "EmployeePost 'avatar' must be a mapping when provided."
+            )
+        avatar_kind = str(raw_avatar.get("kind", "default") or "default").strip().lower()
+        if avatar_kind not in ("default", "micah", "upload"):
+            raise ProjectionValidationError(
+                f"EmployeePost 'avatar.kind' must be one of ('default', 'micah', 'upload'), got '{avatar_kind}'."
+            )
+        raw_bg = raw_avatar.get("bg_color")
+        if raw_bg not in (None, ""):
+            bg_str = str(raw_bg).strip()
+            if (
+                len(bg_str) != 7
+                or not bg_str.startswith("#")
+                or any(ch not in "0123456789abcdefABCDEF" for ch in bg_str[1:])
+            ):
+                raise ProjectionValidationError(
+                    f"EmployeePost 'avatar.bg_color' must be a #RRGGBB hex color, got '{bg_str}'."
+                )
+        if avatar_kind == "micah":
+            seed_str = str(raw_avatar.get("seed", "") or "").strip()
+            if not seed_str:
+                raise ProjectionValidationError(
+                    "EmployeePost 'avatar.seed' must be non-empty when avatar.kind is 'micah'."
+                )
+        elif avatar_kind == "upload":
+            fname = raw_avatar.get("file_name")
+            if (
+                not isinstance(fname, str)
+                or not fname
+                or "/" in fname
+                or "\\" in fname
+                or ".." in fname
+                or "\x00" in fname
+                or not fname.lower().endswith((".png", ".jpg", ".webp"))
+            ):
+                raise ProjectionValidationError(
+                    "EmployeePost 'avatar.file_name' must be a safe single raster filename (.png/.jpg/.webp) when avatar.kind is 'upload'."
+                )
+            mime_val = raw_avatar.get("mime_type")
+            if mime_val not in (None, "") and str(mime_val).strip().lower() not in (
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+            ):
+                raise ProjectionValidationError(
+                    f"EmployeePost 'avatar.mime_type' must be PNG/JPEG/WebP, got '{mime_val}'."
+                )
+
     return EmployeePostProjection(
         post=post_res,
         employee_role=emp_role,

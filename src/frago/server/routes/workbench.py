@@ -37,8 +37,10 @@ from frago.agent_driver.tmux_session import TmuxSendError
 from frago.employee import (
     EmployeeOntologyService,
     default_employee_color,
+    employees_dir,
     get_post,
     list_posts,
+    resolve_avatar_state,
     resolve_session_employee_id,
     save_post,
 )
@@ -558,6 +560,15 @@ async def collect_workbench_session_rows(
                 if matched_post is not None
                 else (default_employee_color(employee_id) if employee_id else None)
             )
+            employee_avatar = (
+                resolve_avatar_state(
+                    employee_id,
+                    matched_post.avatar if matched_post is not None else None,
+                    employees_base_dir=employees_dir(),
+                )
+                if employee_id
+                else None
+            )
             row = {
                 **card_data,
                 "origin": effective_origin,
@@ -571,6 +582,7 @@ async def collect_workbench_session_rows(
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,
+                "employee_avatar": employee_avatar,
                 "raw_title": card.title,
                 "custom_title": titles.get(card.session_id),
                 "in_tmux": alive,
