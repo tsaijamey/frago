@@ -385,14 +385,26 @@ function summarizeReplyConclusion(rawText: string): string {
   return firstLine.length > 180 ? `${firstLine.slice(0, 177)}...` : firstLine;
 }
 
+/** 暂存隐藏态的决策卡有界兜底时长：防止断连漏 `SESSION_TURN_DONE` 或后端 90s 活跃窗口滞后导致末尾无尾文卡片永久卡死。 */
+export const STAGED_DECISION_CARD_FALLBACK_MS = 15_000;
+
+/** 决策卡释放渐显动画（var(--transition-normal) = 0.2s）播完后的消费清理时长，避免切镜头或折叠展开重播淡入。 */
+const REVEAL_ANIMATION_SETTLE_MS = 400;
+
+const EMPTY_STRING_SET: ReadonlySet<string> = new Set();
+
 export interface TurnDecisionCardOptions {
   /**
    * 为 true 时表示当前会话的末尾回合仍在运行中：
    * 若该回合中 `frago app ask` 工具结果之后尚未出现主会话 Stop 消息（`agent.say`），
-   * 且之后尚未出现生命周期停止或中断记录，则将该卡片暂存隐藏（不提前闪现，也不挂到更早的过程 `agent.say`）；
-   * 一旦 Stop 到达或 `deferUnfinishedTurn` 转为 false（回合结束/停止），立即释放显现。
+   * 且之后尚未出现生命周期停止、中断或错误记录，则将该卡片暂存隐藏（不提前闪现，也不挂到更早的过程 `agent.say`）；
+   * 一旦 Stop 到达、出现终态信号或 `deferUnfinishedTurn` 转为 false，立即释放显现。
    */
   deferUnfinishedTurn?: boolean;
+  /**
+   * 已触发有界兜底超时的暂存卡片来源记录 ID 集合：命中时强制解除该轮暂存，避免无限期隐藏。
+   */
+  forceReleaseRecordIds?: ReadonlySet<string>;
 }
 
 export function withTurnDecisionCards(
@@ -400,11 +412,13 @@ export function withTurnDecisionCards(
   options?: TurnDecisionCardOptions
 ): WorkbenchRecord[] {
   const deferUnfinishedTurn = options?.deferUnfinishedTurn === true;
+  const forceReleaseRecordIds = options?.forceReleaseRecordIds;
   const delegateToolIndices = new Set<number>();
   const stagedToolIndices = new Set<number>();
   const markBrokenToolIndices = new Set<number>();
   const attachToAgentSay = new Map<number, string>();
   const attachSourceIdToAgentSay = new Map<number, string>();
+  const attachAfterToolToAgentSay = new Set<number>();
   const attachImagesToAgentSay = new Map<number, string[]>();
   const attachContextToAgentSay = new Map<number, number>();
   const attachTriadToAgentSay = new Map<number, DeliveryTriadData>();
@@ -431,16 +445,28 @@ export function withTurnDecisionCards(
     if (turnToolIndices.length) {
       const lastToolIdx = turnToolIndices[turnToolIndices.length - 1];
       const sourceId = records[lastToolIdx].id;
+      const forceReleased = Boolean(forceReleaseRecordIds?.has(sourceId));
       const shouldStage =
-        deferFinal && lastAgentSayIdx < lastToolIdx && lastTurnStopSignalIdx < lastToolIdx;
+        deferFinal &&
+        !forceReleased &&
+        lastAgentSayIdx < lastToolIdx &&
+        lastTurnStopSignalIdx < lastToolIdx;
       for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
       if (shouldStage) {
-        for (const idx of turnToolIndices) delegateToolIndices.add(idx);
-        stagedToolIndices.add(lastToolIdx);
+        for (const idx of turnToolIndices) {
+          delegateToolIndices.add(idx);
+          stagedToolIndices.add(idx);
+        }
+        for (const idx of turnBrokenToolIndices) {
+          stagedToolIndices.add(idx);
+        }
       } else if (lastAgentSayIdx >= 0) {
         for (const idx of turnToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
         attachSourceIdToAgentSay.set(lastAgentSayIdx, sourceId);
+        if (lastAgentSayIdx > lastToolIdx) {
+          attachAfterToolToAgentSay.add(lastAgentSayIdx);
+        }
         for (const idx of turnInlineCardAgentIndices) {
           if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
         }
@@ -452,15 +478,24 @@ export function withTurnDecisionCards(
     } else if (turnBrokenToolIndices.length) {
       const lastBrokenIdx = turnBrokenToolIndices[turnBrokenToolIndices.length - 1];
       const sourceId = records[lastBrokenIdx].id;
+      const forceReleased = Boolean(forceReleaseRecordIds?.has(sourceId));
       const shouldStage =
-        deferFinal && lastAgentSayIdx < lastBrokenIdx && lastTurnStopSignalIdx < lastBrokenIdx;
+        deferFinal &&
+        !forceReleased &&
+        lastAgentSayIdx < lastBrokenIdx &&
+        lastTurnStopSignalIdx < lastBrokenIdx;
       if (shouldStage) {
-        for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
-        stagedToolIndices.add(lastBrokenIdx);
+        for (const idx of turnBrokenToolIndices) {
+          delegateToolIndices.add(idx);
+          stagedToolIndices.add(idx);
+        }
       } else if (lastAgentSayIdx >= 0) {
         for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnBrokenToolBody);
         attachSourceIdToAgentSay.set(lastAgentSayIdx, sourceId);
+        if (lastAgentSayIdx > lastBrokenIdx) {
+          attachAfterToolToAgentSay.add(lastAgentSayIdx);
+        }
         for (const idx of turnInlineCardAgentIndices) {
           if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
         }
@@ -538,7 +573,7 @@ export function withTurnDecisionCards(
         flushTurn(false);
         continue;
       }
-      if (isLifecycleStopRecord(r) || r.kind === 'interrupt') {
+      if (isLifecycleStopRecord(r) || r.kind === 'interrupt' || r.kind === 'error') {
         lastTurnStopSignalIdx = i;
         continue;
       }
@@ -628,6 +663,8 @@ export function withTurnDecisionCards(
           if (r.payload.ui_component_staged === true) {
             delegateToolIndices.add(i);
             stagedToolIndices.add(i);
+          } else if (r.payload.ui_component_delegated === true) {
+            delegateToolIndices.add(i);
           } else {
             const isFailedAskCall = Boolean(
               callId && turnAskCallIds.has(callId) && status === 'error'
@@ -707,6 +744,9 @@ export function withTurnDecisionCards(
         nextPayload.ui_component = attached;
         if (attachedSourceId) {
           nextPayload.ui_component_source_id = attachedSourceId;
+        }
+        if (attachAfterToolToAgentSay.has(idx)) {
+          nextPayload.ui_component_after_tool = true;
         }
       }
       if (attachedImages !== undefined) {
@@ -1791,7 +1831,7 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
-  sessionRunning = false,
+  sessionRunning,
   trails = [],
   scrollTarget = null,
   onQuote,
@@ -1900,29 +1940,96 @@ export default function RecordStream({
     return null;
   }, [trails, records]);
 
+  // 按会话隔离记录已触发有界兜底释放的暂存卡片 ID，防止断连丢 `SESSION_TURN_DONE`
+  // 或后端 90 秒文件活跃窗口滞后导致末尾无尾文卡片永久隐藏。
+  const [forcedReleaseState, setForcedReleaseState] = useState<{
+    sessionId: string | null;
+    ids: ReadonlySet<string>;
+  }>(() => ({ sessionId, ids: EMPTY_STRING_SET }));
+  const forceReleaseRecordIds =
+    forcedReleaseState.sessionId === sessionId ? forcedReleaseState.ids : EMPTY_STRING_SET;
+
+  // 若外层已明确传入 `sessionRunning === false` 且非 `awaitingAgent`，不再让残留的孤儿 `activeTrail` 永久锁死卡片暂存。
+  const hasLiveTrail = activeTrail !== null && sessionRunning !== false;
   /** 当前末尾回合是否仍在运行中：用于判断 `frago app ask` 卡片是否需暂存等待 Stop 消息到达。 */
-  const turnRunning = Boolean(sessionRunning || awaitingAgent || activeTrail !== null);
+  const turnRunning = Boolean(sessionRunning || awaitingAgent || hasLiveTrail);
   const turnCardOptions = useMemo<TurnDecisionCardOptions>(
-    () => ({ deferUnfinishedTurn: turnRunning }),
-    [turnRunning]
+    () => ({
+      deferUnfinishedTurn: turnRunning,
+      forceReleaseRecordIds: forceReleaseRecordIds.size > 0 ? forceReleaseRecordIds : undefined,
+    }),
+    [turnRunning, forceReleaseRecordIds]
   );
 
   // 按会话记录曾经处于暂存隐藏态的 `tool.result` 卡片 ID：当该卡片随后随 Stop 消息或回合终态释放时，
-  // 精准附加渐显过渡类；历史已完结会话首次打开时集合为空，直接立即显示无动画抖动。
+  // 精准附加渐显过渡类；一旦切镜头/开关 Watcher 或动画播完即记为已消费，避免重挂载反复重播淡入动画。
   const stagedCardSessionRef = useRef<string | null>(sessionId);
   const stagedCardIdsRef = useRef<Set<string>>(new Set());
+  const revealedInViewRef = useRef<Map<string, { lens: StreamLens; watcherOpen: boolean }>>(
+    new Map()
+  );
+  const [consumedRevealState, setConsumedRevealState] = useState<{
+    sessionId: string | null;
+    ids: ReadonlySet<string>;
+  }>(() => ({ sessionId, ids: EMPTY_STRING_SET }));
+  const consumedRevealIds =
+    consumedRevealState.sessionId === sessionId ? consumedRevealState.ids : EMPTY_STRING_SET;
+
+  const normalizedBase = useMemo(
+    () => withQueueOutcomes(records, turnCardOptions),
+    [records, turnCardOptions]
+  );
+
+  const stagedIdsKey = useMemo(() => {
+    const ids: string[] = [];
+    for (const r of normalizedBase) {
+      if (r.payload.ui_component_staged === true) ids.push(r.id);
+    }
+    return ids.join('\0');
+  }, [normalizedBase]);
+
+  useEffect(() => {
+    if (!stagedIdsKey) return;
+    const ids = stagedIdsKey.split('\0');
+    const timer = setTimeout(() => {
+      setForcedReleaseState((prev) => {
+        const next = prev.sessionId === sessionId ? new Set(prev.ids) : new Set<string>();
+        for (const id of ids) next.add(id);
+        return { sessionId, ids: next };
+      });
+    }, STAGED_DECISION_CARD_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [stagedIdsKey, sessionId]);
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
   const resolved = useMemo(() => {
     if (stagedCardSessionRef.current !== sessionId) {
       stagedCardSessionRef.current = sessionId;
       stagedCardIdsRef.current = new Set();
+      revealedInViewRef.current = new Map();
     }
-    const base = withQueueOutcomes(records, turnCardOptions);
     const stagedIds = stagedCardIdsRef.current;
+    const revealedInView = revealedInViewRef.current;
     const revealIndices = new Set<number>();
-    for (let i = 0; i < base.length; i += 1) {
-      const r = base[i];
+
+    const shouldRevealCard = (srcId: string): boolean => {
+      if (!srcId || !stagedIds.has(srcId) || consumedRevealIds.has(srcId)) return false;
+      const firstView = revealedInView.get(srcId);
+      if (!firstView) {
+        revealedInView.set(srcId, { lens, watcherOpen });
+        return true;
+      }
+      if (firstView.lens === lens && firstView.watcherOpen === watcherOpen) {
+        return true;
+      }
+      // 卡片释放后用户已切镜头或开关 Progress 面板：立即消费，避免重新挂载时重播淡入动画。
+      stagedIds.delete(srcId);
+      revealedInView.delete(srcId);
+      return false;
+    };
+
+    for (let i = 0; i < normalizedBase.length; i += 1) {
+      const r = normalizedBase[i];
       if (r.payload.ui_component_staged === true) {
         stagedIds.add(r.id);
         continue;
@@ -1932,23 +2039,55 @@ export default function RecordStream({
           typeof r.payload.ui_component_source_id === 'string'
             ? r.payload.ui_component_source_id
             : '';
-        if (srcId && stagedIds.has(srcId)) {
+        if (shouldRevealCard(srcId)) {
           revealIndices.add(i);
         }
       } else if (
         r.kind === 'tool.result' &&
         !r.agent_path.length &&
         r.payload.ui_component_delegated !== true &&
-        stagedIds.has(r.id)
+        shouldRevealCard(r.id)
       ) {
         revealIndices.add(i);
       }
     }
-    if (!revealIndices.size) return base;
-    return base.map((r, i) =>
+    if (!revealIndices.size) return normalizedBase;
+    return normalizedBase.map((r, i) =>
       revealIndices.has(i) ? { ...r, payload: { ...r.payload, ui_component_reveal: true } } : r
     );
-  }, [records, turnCardOptions, sessionId]);
+  }, [normalizedBase, sessionId, lens, watcherOpen, consumedRevealIds]);
+
+  const revealingIdsKey = useMemo(() => {
+    const ids: string[] = [];
+    for (const r of resolved) {
+      if (r.payload.ui_component_reveal !== true) continue;
+      const srcId =
+        r.kind === 'agent.say' && typeof r.payload.ui_component_source_id === 'string'
+          ? r.payload.ui_component_source_id
+          : r.id;
+      if (srcId) ids.push(srcId);
+    }
+    return ids.join('\0');
+  }, [resolved]);
+
+  useEffect(() => {
+    if (!revealingIdsKey) return;
+    const ids = revealingIdsKey.split('\0');
+    const timer = setTimeout(() => {
+      const stagedIds = stagedCardIdsRef.current;
+      const revealedInView = revealedInViewRef.current;
+      for (const id of ids) {
+        stagedIds.delete(id);
+        revealedInView.delete(id);
+      }
+      setConsumedRevealState((prev) => {
+        const next = prev.sessionId === sessionId ? new Set(prev.ids) : new Set<string>();
+        for (const id of ids) next.add(id);
+        return { sessionId, ids: next };
+      });
+    }, REVEAL_ANIMATION_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [revealingIdsKey, sessionId]);
   /** 基于未聚合的原始记录判定最终回复 ID，供缩略滚动条过滤过程旁白。 */
   const finalAgentSayIds = useMemo(() => computeFinalAgentSayIds(resolved), [resolved]);
 
@@ -2046,7 +2185,12 @@ export default function RecordStream({
         // 严格只包裹本次总结真实读过的已发生闭区间 [cursor_from, cursor_to)，
         // 绝不把 cursor_to 之后才发生的记录塞进旧总结槽位里。
         const sliceRecords = resolved.filter((r) => r.seq >= fromSeq && r.seq < toSeq);
-        const sliceCards = extractSliceDecisionCards(sliceRecords);
+        const includesSessionTail =
+          resolved.length > 0 && toSeq > resolved[resolved.length - 1].seq;
+        const sliceCards = extractSliceDecisionCards(
+          sliceRecords,
+          includesSessionTail ? turnCardOptions : undefined
+        );
         const lastSliceCard = sliceCards.length > 0 ? sliceCards[sliceCards.length - 1].block : null;
         const cardFallbackDecision = lastSliceCard
           ? lastSliceCard.why
@@ -2136,7 +2280,7 @@ export default function RecordStream({
             decision: fallbackThree.decision,
             summary: fallbackParts.join('\n'),
             records: resolved,
-            decisionCards: extractSliceDecisionCards(resolved),
+            decisionCards: extractSliceDecisionCards(resolved, turnCardOptions),
           },
         ],
         unsummarizedTailRecords: [],
@@ -2148,7 +2292,7 @@ export default function RecordStream({
       unsummarizedTailRecords: resolved,
       firstHumanGoal: humanGoal,
     };
-  }, [watcherOpen, resolved, observer?.state, t]);
+  }, [watcherOpen, resolved, observer?.state, turnCardOptions, t]);
 
   /**
    * Progress 视图下自动向前补齐覆盖全部里程碑（`runs`）所需的早期历史记录。
@@ -2302,7 +2446,9 @@ export default function RecordStream({
     const trail = trailOf.get(record.id);
     const bare = <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} />;
     const decisionReveal =
-      record.kind === 'agent.say' && record.payload.ui_component_reveal === true;
+      record.kind === 'agent.say' &&
+      record.payload.ui_component_reveal === true &&
+      record.payload.ui_component_after_tool === true;
     // 正文类记录外面多一层只装这张卡的壳：标注的锚点、着色、跳回原处都认这一层，
     // 缩略滚动条也按它量高度、分颜色。挂着进度的那几条外层另有一个 data-record-id
     // （输入区「Show」认它），这一层套在里面，只包卡、不包进度。
@@ -3511,7 +3657,7 @@ export default function RecordStream({
               if (pendingCard) break;
             }
             if (!pendingCard && unsummarizedTailRecords.length > 0) {
-              const tailCards = extractSliceDecisionCards(unsummarizedTailRecords);
+              const tailCards = extractSliceDecisionCards(unsummarizedTailRecords, turnCardOptions);
               for (const dc of tailCards) {
                 if (!decisionCardHost?.answerOf(dc.recordId)) {
                   pendingCard = {

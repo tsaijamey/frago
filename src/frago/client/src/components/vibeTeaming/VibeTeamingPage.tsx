@@ -835,7 +835,10 @@ function MySide({
   const session = sessions.sessions.find((s) => s.session_id === sessionId) ?? null;
   const familyKey = session?.family ? FAMILY_LABEL_KEY[session.family] : undefined;
   const family = familyKey ? t(familyKey) : '';
-  const records = useMemo(() => maskCodes(mine.records, codes), [mine.records, codes]);
+  const records = useMemo(
+    () => (mine.recordsSessionId === sessionId ? maskCodes(mine.records, codes) : []),
+    [mine.records, mine.recordsSessionId, sessionId, codes],
+  );
   const voice = useMemo(
     () => ({ user: t('team.voice.mineUser'), agent: t('team.voice.mineAgent') }),
     [t],

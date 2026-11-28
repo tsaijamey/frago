@@ -81,6 +81,7 @@ vi.mock('@/hooks/useWorkbenchRecords', async (importOriginal) => {
     ...actual,
     useWorkbenchRecords: () => ({
       records: mineRecords,
+      recordsSessionId: 'sess-1',
       loading: false,
       loadingOlder: false,
       hasOlder: false,
