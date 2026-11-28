@@ -8,6 +8,7 @@ import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import {
   detectStopTurnId,
   hasInteractiveCardInTailTurns,
+  isStandaloneAskCommand,
   recordHasInteractiveCard,
   segmentMainTurns,
   useSessionQueue,
@@ -189,6 +190,52 @@ describe('命令回显里的卡片 JSON 不算待答卡片', () => {
     ];
     expect(recordHasInteractiveCard(records[2], records)).toBe(true);
     expect(hasInteractiveCardInTailTurns(records)).toBe(true);
+  });
+
+  it('P0-3：cd / env / uv run / frago agent attach && frago app ask 复合命令与前置 stdout 均判定为真挂卡，回显脚本仍排除', () => {
+    const validCompoundCommands = [
+      'cd /repo && frago app ask single-choice -q "选一项" -o "A|继续|执行"',
+      'export FOO=bar; VAR=1 "frago" app ask single-choice -q "确认?" -o "A|是|确认" || true',
+      "uv run frago ask -q '下一步?' -o 'A|好|继续'",
+      "uv run --project /Users/frago/Repos/frago frago app ask single-choice -q 'ok?' -o 'A|好|继续'",
+      'frago agent attach --files \'["/tmp/a.md"]\' && frago app ask single-choice "Q?" "A|a|x" "B|b|y"',
+    ];
+    for (const cmd of validCompoundCommands) {
+      expect(isStandaloneAskCommand(cmd), cmd).toBe(true);
+      const records: WorkbenchRecord[] = [
+        makeRecord(1, 'user.say', { text: '请执行并挂卡' }),
+        makeRecord(
+          2,
+          'tool.call',
+          { tool_name: 'run_command', call_id: 'c-comp', args: { CommandLine: cmd } },
+          'g-comp'
+        ),
+        makeRecord(
+          3,
+          'tool.result',
+          { status: 'ok', call_id: 'c-comp', body: `Attached 1 file: /tmp/a.md\n${ASK_JSON}` },
+          'g-comp'
+        ),
+        makeRecord(4, 'agent.say', { text: '请点选上方卡片' }, 'g-comp'),
+      ];
+      expect(recordHasInteractiveCard(records[2], records), cmd).toBe(true);
+      expect(hasInteractiveCardInTailTurns(records), cmd).toBe(true);
+    }
+
+    const rejectedEchoCommands = [
+      'frago app ask single-choice -q x | cat',
+      'echo "demo" && frago app ask -q "test"',
+      'printf "hdr\\n" && frago app ask -q "test"',
+      'python3 -c "print(1)" && frago app ask -q "test"',
+      'node -e "console.log(1)" && frago app ask -q "test"',
+      'rg foo /tmp && frago app ask -q "test"',
+      'cat /tmp/a.txt && frago app ask -q "test"',
+      'frago app ask --help',
+      'frago app ask --version',
+    ];
+    for (const cmd of rejectedEchoCommands) {
+      expect(isStandaloneAskCommand(cmd), cmd).toBe(false);
+    }
   });
 
   it('带 --help 的 ask 调用不算挂卡', () => {

@@ -42,6 +42,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -66,12 +67,15 @@ import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import PromptComposerBox, { directiveQuery, mentionQuery, slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
+import type { CallbackInboxSummary } from '@/types/api';
+import { splitAllLeadingBlocks } from '@/utils/asyncCallbackBlocks';
 import {
   parseTextQuoteBlocks,
   serializeQuotesWithPrompt,
   stripTextQuoteBlocks,
   type ComposerQuoteItem,
 } from '@/utils/textQuoteBlocks';
+import CallbackInboxSlot from './CallbackInboxSlot';
 import SendProgress, { resolveStepLabel } from './SendProgress';
 import { TextQuoteBlocksView } from './TextQuote';
 
@@ -186,6 +190,10 @@ export interface ComposerProps {
   onRemoveQueueItem?: (itemId: string) => void | Promise<void>;
   /** 调整会话自有消息队列中的顺序。 */
   onMoveQueueItem?: (itemId: string, direction: 'up' | 'down') => void | Promise<void>;
+  /** 输入区上方的异步回执只读收件箱摘要（与 Next Task 人类队列物理分轨）。 */
+  callbackInbox?: CallbackInboxSummary | null;
+  /** 当存在待拍板决策卡时置为 true，收件箱收拢为卡外低扰动单行提示。 */
+  callbackHolding?: boolean;
   /**
    * 布局模式：
    * - 'floating'（默认）：用于会话详情页底部，移除实体分割线并带顶部 Scrim 渐变遮罩
@@ -346,6 +354,8 @@ export default function Composer({
   onEnqueue,
   onRemoveQueueItem,
   onMoveQueueItem,
+  callbackInbox = null,
+  callbackHolding = false,
   layout = 'floating',
 }: ComposerProps) {
   const { t, i18n } = useTranslation();
@@ -354,6 +364,18 @@ export default function Composer({
   const [enqueueing, setEnqueueing] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const humanQueueItems = useMemo(
+    () =>
+      queueItems.filter((item) => {
+        const raw = item.text ?? '';
+        if (!raw) return true;
+        const { text: stripped, callbacks } = splitAllLeadingBlocks(raw);
+        if (callbacks.length > 0 && !stripped.trim()) return false;
+        if (/^\s*<frago-async-callbacks?\b/i.test(raw)) return false;
+        return true;
+      }),
+    [queueItems]
+  );
   const {
     text,
     setText,
@@ -730,11 +752,13 @@ export default function Composer({
         ) : null}
 
         {/* 会话自有消息队列：不在 agent 执行时发进其原生运行队列，堆积在此，
-            当且仅当会话 stop 且 [end, end-5] 轮无交互卡时自动注入最早一条并从队列移除。 */}
-        {queueItems.length > 0 ? (
+            当且仅当会话 stop 且 [end, end-5] 轮无交互卡时自动注入最早一条并从队列移除。
+            物理隔离纯异步回执块，确保 Next Task 排队栏仅呈现人类指令。 */}
+        {humanQueueItems.length > 0 ? (
           <div
             data-testid="session-message-queue"
             data-blocked-by-card={queueBlockedByCard ? 'yes' : 'no'}
+            data-system-callback-count="0"
             className="flex min-w-0 flex-col gap-1.5 rounded-[10px] border border-border-color bg-bg-subtle px-3 py-2"
           >
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -747,7 +771,7 @@ export default function Composer({
                   data-testid="session-queue-count"
                   className="shrink-0 rounded-full bg-bg-secondary px-2 py-[1px] text-[11px] font-medium text-text-secondary"
                 >
-                  {t('workbench.queue.count', { n: queueItems.length })}
+                  {t('workbench.queue.count', { n: humanQueueItems.length })}
                 </span>
               </div>
               <span
@@ -772,10 +796,11 @@ export default function Composer({
             </div>
 
             <div className="flex flex-col gap-1">
-              {queueItems.map((item, idx) => (
+              {humanQueueItems.map((item, idx) => (
                 <div
                   key={item.id}
                   data-testid="session-queue-item"
+                  data-task-kind="human"
                   data-earliest={idx === 0 ? 'yes' : 'no'}
                   className="flex min-w-0 items-center gap-2 rounded-[7px] border border-border-color bg-bg-primary px-2.5 py-1.5"
                 >
@@ -807,7 +832,7 @@ export default function Composer({
                       {t('workbench.composer.outboundAttachments', { n: item.attachments })}
                     </span>
                   ) : null}
-                  {onMoveQueueItem && queueItems.length > 1 ? (
+                  {onMoveQueueItem && humanQueueItems.length > 1 ? (
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -823,7 +848,7 @@ export default function Composer({
                       <button
                         type="button"
                         data-testid={`session-queue-down-${idx}`}
-                        disabled={idx === queueItems.length - 1}
+                        disabled={idx === humanQueueItems.length - 1}
                         title={t('workbench.queue.moveDown')}
                         aria-label={t('workbench.queue.moveDown')}
                         onClick={() => void onMoveQueueItem(item.id, 'down')}
@@ -998,6 +1023,11 @@ export default function Composer({
             ) : null}
           </p>
         ) : null}
+
+        <CallbackInboxSlot
+          inbox={callbackInbox}
+          holdingByCard={Boolean(callbackHolding || queueBlockedByCard)}
+        />
 
         <PromptComposerBox
           variant="compact"

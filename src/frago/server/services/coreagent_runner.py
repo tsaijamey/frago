@@ -493,6 +493,7 @@ def _spawn(sess: _Session) -> None:
             profile_id=sess.profile_id,
         )
     env = get_utf8_env()
+    env["FRAGO_SESSION_ID"] = sess.session_id
     if sess.surface:
         env["FRAGO_SURFACE"] = sess.surface
     if sess.unattended:

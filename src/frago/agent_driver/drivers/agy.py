@@ -67,7 +67,7 @@ from frago.agent_driver.driver import (
     PaneMatcher,
     register_driver,
 )
-from frago.agent_driver.tmux_session import TmuxAgentSession
+from frago.agent_driver.tmux_session import TmuxAgentSession, TmuxSendError
 from frago.agent_driver.transcript_source import JsonlTranscriptSource
 from frago.compat import find_agy_cli
 from frago.session import agy_store
@@ -99,6 +99,10 @@ _BASE_FLAGS = "--dangerously-skip-permissions"
 # （``esc to cancel`` 或首字母大写的 ``Generating...`` / ``Generating response``）。
 _CONTROL_TAIL_LINES = 6
 _FOOTER_READY = PaneMatcher(name="agy-footer-ready", pattern=r"(?m)^.*\?\s+for\s+shortcuts")
+_LIVE_SPINNER = re.compile(
+    r"(?m:^(?!\s*○\s+Thought\b|\s*\|)[^\n]*\bGenerating(?:\.\.\.|…|\s+response\b))"
+)
+_ESC_CANCEL = re.compile(r"(?i:\besc\s+to\s+cancel\b)")
 _BUSY = re.compile(
     r"(?i:\besc\s+to\s+cancel\b)"
     r"|(?m:^(?!\s*○\s+Thought\b|\s*\|)[^\n]*\bGenerating(?:\.\.\.|…|\s+response\b))"
@@ -132,7 +136,7 @@ class _AgyReady:
 
     def matches(self, text: str) -> bool:
         tail = _control_tail(text)
-        return _FOOTER_READY.matches(tail) and _BUSY.search(tail) is None
+        return _FOOTER_READY.matches(tail) and not is_terminal_busy(text)
 
 
 _READY = _AgyReady()
@@ -564,17 +568,23 @@ def _transcript_size(session: TmuxAgentSession) -> int | None:
 
 
 def is_terminal_busy(pane: str) -> bool:
-    """agy 专属终端忙碌探针契约：仅在底部控制区匹配真实生成态（``Generating...`` 或 ``esc to cancel``）。
+    """agy 专属终端忙碌探针契约：区分「真有前台生成」与「仅常驻后台 cron」。
 
     1. 空间收敛：只检查底部控制区（``_control_tail``），隔离上方历史正文与 ``○ Thought`` 摘要；
-    2. 信号收敛：坚决剔除 Claude 专属的括号耗时正则（如 ``(45s``）及散文小写 ``generating``。
+    2. 信号收敛：底部出现实时转轮 ``Generating...``/``Generating response`` 必为真忙态；
+       若仅出现 ``esc to cancel``（如挂有常驻后台 cron 时底栏常驻提示），但同时存在可交互空输入框 ``>``
+       且无实时生成转轮，则不再误判为不可输入（闭合 99fd9205 / 2f4cf789 现场 P0）。
     """
     tail = _control_tail(pane)
-    return bool(tail and _BUSY.search(tail))
+    if not tail:
+        return False
+    if _LIVE_SPINNER.search(tail):
+        return True
+    return bool(_ESC_CANCEL.search(tail) and _INPUT_BOX.search(tail) is None)
 
 
 def _pane_looks_busy(pane: str) -> bool:
-    """判断当前 agy 终端窗格是否正处于忙碌生成态（``Generating...`` 或 ``esc to cancel``）。"""
+    """判断当前 agy 终端窗格是否正处于忙碌生成态。"""
     return is_terminal_busy(pane)
 
 
@@ -586,11 +596,8 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     这是本地、即时、与提示词长度无关的证据。读屏判"输入框空了"在重绘中途会看见假象，
     补发的空 Enter 会落进下一轮——opencode 与 claude 两侧都为此付过代价。
 
-    实测：agy 一次 Enter 即提交，不需要连发两次（与 opencode 1.17.10 相同，与
-    claude 早期那版的差异无关）。
-
-    确认不了也不抛不卡：留一条 debug 日志，交给完成轮询的超时兜底。那条日志是事后
-    排查"整段提示词滞留输入框"的唯一线索，NEVER 静默走掉。
+    若窗格处于真忙态（前台生成中），立即抛出 ``TmuxSendError`` 快速失败，绝不静默
+    ``return None`` 令上层进入 180 秒空等假死。
     """
     pane_now = ""
     capture = getattr(session, "capture_pane", None)
@@ -598,11 +605,17 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
         with contextlib.suppress(Exception):
             pane_now = capture() or ""
     if _pane_looks_busy(pane_now):
+        sid = str(getattr(session, "session_id", None) or "")
         logger.warning(
-            "agy pane is busy (Generating / esc to cancel); refusing to type prompt into input box (session=%s)",
-            getattr(session, "session_id", None),
+            "agy pane is busy (Generating / esc to cancel without idle prompt); refusing to type into input box (session=%s)",
+            sid,
         )
-        return
+        raise TmuxSendError(
+            sid,
+            f"agy 会话终端正在执行前台生成，暂不可输入（session={sid}）",
+            tmux_name=str(getattr(session, "tmux_name", "") or ""),
+            tail=pane_now[-400:],
+        )
 
     _claim_once(session)
     baseline = _transcript_size(session)

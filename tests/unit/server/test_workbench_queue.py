@@ -256,6 +256,98 @@ class TestCommandEchoCardIsNotLiveCard:
         assert workbench_queue.record_has_interactive_card(records[2], records) is True
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
 
+    def test_compound_cd_and_env_prefix_standalone_ask_blocks(self):
+        """`cd /repo && frago app ask ...` 与外层引号 + `VAR=1` 等串联命令必须判定为真挂卡锁死投递。"""
+        for cmd in (
+            'cd /repo && frago app ask single-choice -q "选一项" -o "A|继续|执行"',
+            'export FOO=bar; VAR=1 "frago" app ask single-choice -q "确认?" -o "A|是|确认" || true',
+            "uv run frago ask -q '下一步?' -o 'A|好|继续'",
+        ):
+            assert workbench_queue._is_standalone_ask_command(cmd) is True, cmd
+            records: list[UnifiedRecord] = [
+                _rec(1, "user.say", {"text": "执行步骤"}),
+                _rec(
+                    2,
+                    "tool.call",
+                    {"tool_name": "run_command", "call_id": "c-comp", "args": {"CommandLine": cmd}},
+                    group_id="grp-comp",
+                ),
+                _rec(
+                    3,
+                    "tool.result",
+                    {"status": "ok", "call_id": "c-comp", "body": FRAGO_ASK_TOOL_OUTPUT},
+                    group_id="grp-comp",
+                ),
+                _rec(4, "agent.say", {"text": "请点选上方卡片"}, group_id="grp-comp"),
+            ]
+            assert workbench_queue.record_has_interactive_card(records[2], records) is True
+            assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+
+        # 管道命令与带回显/脚本脚手架的多语句仍不当作真实挂卡
+        for non_ask_cmd in (
+            "frago app ask single-choice -q x | cat",
+            'echo "demo" && frago app ask -q "test"',
+            'printf "hdr\\n" && frago app ask -q "test"',
+            'python3 -c "print(1)" && frago app ask -q "test"',
+            'node -e "console.log(1)" && frago app ask -q "test"',
+            'rg foo /tmp && frago app ask -q "test"',
+            'cat /tmp/a.txt && frago app ask -q "test"',
+        ):
+            assert workbench_queue._is_standalone_ask_command(non_ask_cmd) is False, non_ask_cmd
+
+    def test_compound_agent_attach_then_ask_with_stdout_prefix_blocks(self):
+        """AC-06 / P0-2：`frago agent attach ... && frago app ask ...` 伴随前置 stdout 行仍必须判定为真挂卡。"""
+        cmd = (
+            'frago agent attach --files \'["/tmp/a.md"]\' '
+            '&& frago app ask single-choice "Q?" "A|a|x" "B|b|y"'
+        )
+        assert workbench_queue._is_standalone_ask_command(cmd) is True
+        assert (
+            workbench_queue._is_standalone_ask_command(
+                "uv run --project /Users/frago/Repos/frago frago app ask single-choice -q 'ok?' -o 'A|好|继续'"
+            )
+            is True
+        )
+        # 即使前序 `frago agent attach` 打印了常规标准输出，配对 tool.call 已确认为合法复合 ask，必须判为真卡片
+        body_with_attach_stdout = "Attached 1 file: /tmp/a.md\n" + FRAGO_ASK_TOOL_OUTPUT
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "交付报告并请我确认"}),
+            _rec(
+                2,
+                "tool.call",
+                {"tool_name": "run_command", "call_id": "c-attach-ask", "args": {"CommandLine": cmd}},
+                group_id="grp-attach-ask",
+            ),
+            _rec(
+                3,
+                "tool.result",
+                {"status": "ok", "call_id": "c-attach-ask", "body": body_with_attach_stdout},
+                group_id="grp-attach-ask",
+            ),
+            _rec(4, "agent.say", {"text": "报告已附在上方，请点选决策卡。"}, group_id="grp-attach-ask"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[2], records) is True
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+        # 未配对 tool.call 的孤立非裸回显正文依然被保守拒绝
+        assert workbench_queue.record_has_interactive_card(records[2], None) is False
+
+    def test_enqueue_rejects_async_callback_envelope(self):
+        """Option A 物理分轨硬闸：workbench_queue.enqueue 严禁收容异步回执信封。"""
+        with pytest.raises(workbench_queue.QueueError):
+            workbench_queue.enqueue(
+                CC_SID,
+                text='<frago-async-callback job_id="disp-1">done</frago-async-callback>',
+                prompt='<frago-async-callback job_id="disp-1">done</frago-async-callback>',
+                job_id="disp-1",
+            )
+        with pytest.raises(workbench_queue.QueueError):
+            workbench_queue.enqueue(
+                CC_SID,
+                text="normal",
+                prompt='<frago-async-callbacks count="1">batch</frago-async-callbacks>',
+            )
+        assert workbench_queue.list_queue(CC_SID) == []
+
     def test_ask_with_help_flag_does_not_block(self):
         """带 `--help` 的 ask 调用只是在查用法，不算挂卡。"""
         records: list[UnifiedRecord] = [
