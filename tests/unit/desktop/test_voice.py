@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import os
 import sys
@@ -31,7 +32,48 @@ import pytest
 
 from frago.desktop import aos, broker, voice
 
-from .test_desktop import ExplodingNet, ExplodingSubprocess, FakeCompleted, post_control
+from .test_desktop import ExplodingNet, ExplodingSubprocess, FakeCompleted
+
+
+async def _drain_speech_tasks(ctrl=None) -> None:
+    """事件循环关闭前显式停止并回收挂起的语音后台任务，避免协程泄漏与跨用例 GC 串扰。"""
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    if not pending:
+        return
+    if ctrl is not None:
+        try:
+            await ctrl.endpoint({"steps": [{"op": "speech.stop"}]})
+        except Exception:
+            pass
+        await asyncio.sleep(0)
+    for _ in range(32):
+        pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+        if not pending:
+            return
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+
+def _run_and_drain(coro, *, ctrl=None):
+    async def _runner():
+        try:
+            return await coro
+        finally:
+            await _drain_speech_tasks(ctrl=ctrl)
+
+    return asyncio.run(_runner())
+
+
+def post_control(cfg, body: dict) -> tuple[int, dict]:
+    """拿到 /control 那个 handler 并调它；退出事件循环前收掉挂起的 speech_worker。"""
+    app = broker.build_app(dict(cfg))
+    route = next(r for r in app.routes if getattr(r, "path", None) == "/control")
+    resp = _run_and_drain(route.endpoint(body), ctrl=route)
+    return resp.status_code, json.loads(resp.body)
 
 
 @pytest.fixture
@@ -41,7 +83,7 @@ def sealed(tmp_path, monkeypatch):
     monkeypatch.setattr(broker, "urllib", ExplodingNet())
     clips = tmp_path / "broker-clips"
     clips.mkdir()
-    return {
+    yield {
         "id": "default", "port": 18770,
         "desktop": {"w": 1920, "h": 1080}, "browser": {"w": 1280, "h": 800},
         "term": {"cols": 100, "rows": 30}, "start_url": "about:blank",
@@ -50,6 +92,7 @@ def sealed(tmp_path, monkeypatch):
         "stage_port": 19222, "record_port": 19223, "fps": 30,
         "content_id": "test-content", "ui_version": 1, "actor_headless": True,
     }
+    gc.collect()
 
 
 # ── 假的 edge-tts ────────────────────────────────────────────────────────
@@ -889,11 +932,16 @@ def test_speech_worker_logs_and_self_heals_after_crash(sealed, fake_synth, capsy
 
         def time(self):
             frame = sys._getframe(1)
-            if frame.f_code.co_name == "speech_worker" and crashed["count"] == 0:
+            if (
+                frame.f_code.co_name == "speech_worker"
+                and not isinstance(sys.exc_info()[1], GeneratorExit)
+                and crashed["count"] == 0
+            ):
                 crashed["count"] += 1
                 raise RuntimeError("模拟 worker 内部意外崩溃")
             return real_time()
 
+    gc.collect()
     monkeypatch.setattr(broker, "time", CrashOnceTime())
 
     code, out = post_control(
@@ -935,11 +983,15 @@ def test_speech_worker_circuit_breaker_stops_infinite_crash_loop(
             return getattr(time, name)
 
         def time(self):
-            if sys._getframe(1).f_code.co_name == "speech_worker":
+            if (
+                sys._getframe(1).f_code.co_name == "speech_worker"
+                and not isinstance(sys.exc_info()[1], GeneratorExit)
+            ):
                 crashes["count"] += 1
                 raise RuntimeError("模拟持续性 worker 崩溃")
             return real_time()
 
+    gc.collect()
     monkeypatch.setattr(broker, "time", AlwaysCrashWorkerTime())
 
     code, out = post_control(
@@ -1066,7 +1118,7 @@ def test_speech_wait_extends_deadline_on_interject(sealed, tmp_path, monkeypatch
         wait_resp = await wait_task
         return json.loads(interject_resp.body), json.loads(wait_resp.body)
 
-    interject_out, wait_out = asyncio.run(scenario())
+    interject_out, wait_out = _run_and_drain(scenario(), ctrl=ctrl)
     assert interject_out["ok"] is True
     assert wait_out["ok"] is True
     res = wait_out["results"][0]
@@ -1154,7 +1206,7 @@ def test_speech_wait_respects_hard_cap_and_genuine_hang_timeout(sealed, tmp_path
         resp = await wait_task
         return resp.status_code, json.loads(resp.body)
 
-    code2, out2 = asyncio.run(flood_scenario())
+    code2, out2 = _run_and_drain(flood_scenario(), ctrl=ctrl)
     assert code2 == 500 and out2["ok"] is False
     assert "期间又排了" in out2["error"]
 
