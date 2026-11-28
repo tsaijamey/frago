@@ -385,10 +385,26 @@ function summarizeReplyConclusion(rawText: string): string {
   return firstLine.length > 180 ? `${firstLine.slice(0, 177)}...` : firstLine;
 }
 
-export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchRecord[] {
+export interface TurnDecisionCardOptions {
+  /**
+   * 为 true 时表示当前会话的末尾回合仍在运行中：
+   * 若该回合中 `frago app ask` 工具结果之后尚未出现主会话 Stop 消息（`agent.say`），
+   * 且之后尚未出现生命周期停止或中断记录，则将该卡片暂存隐藏（不提前闪现，也不挂到更早的过程 `agent.say`）；
+   * 一旦 Stop 到达或 `deferUnfinishedTurn` 转为 false（回合结束/停止），立即释放显现。
+   */
+  deferUnfinishedTurn?: boolean;
+}
+
+export function withTurnDecisionCards(
+  records: WorkbenchRecord[],
+  options?: TurnDecisionCardOptions
+): WorkbenchRecord[] {
+  const deferUnfinishedTurn = options?.deferUnfinishedTurn === true;
   const delegateToolIndices = new Set<number>();
+  const stagedToolIndices = new Set<number>();
   const markBrokenToolIndices = new Set<number>();
   const attachToAgentSay = new Map<number, string>();
+  const attachSourceIdToAgentSay = new Map<number, string>();
   const attachImagesToAgentSay = new Map<number, string[]>();
   const attachContextToAgentSay = new Map<number, number>();
   const attachTriadToAgentSay = new Map<number, DeliveryTriadData>();
@@ -402,6 +418,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   let turnImageBodies: string[] = [];
   let turnInlineCardAgentIndices: number[] = [];
   let lastAgentSayIdx = -1;
+  let lastTurnStopSignalIdx = -1;
   let turnContextTokens: number | null = null;
   let sessionCwd: string | null = null;
   let turnPendingFileCalls = new Map<string, Array<{ path: string; add: number; del: number }>>();
@@ -409,12 +426,21 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   let turnPendingVerifyCalls = new Map<string, string>();
   let turnLastVerifyCmd = '';
 
-  const flushTurn = () => {
+  const flushTurn = (isFinalTurn: boolean) => {
+    const deferFinal = isFinalTurn && deferUnfinishedTurn;
     if (turnToolIndices.length) {
+      const lastToolIdx = turnToolIndices[turnToolIndices.length - 1];
+      const sourceId = records[lastToolIdx].id;
+      const shouldStage =
+        deferFinal && lastAgentSayIdx < lastToolIdx && lastTurnStopSignalIdx < lastToolIdx;
       for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
-      if (lastAgentSayIdx >= 0) {
+      if (shouldStage) {
+        for (const idx of turnToolIndices) delegateToolIndices.add(idx);
+        stagedToolIndices.add(lastToolIdx);
+      } else if (lastAgentSayIdx >= 0) {
         for (const idx of turnToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
+        attachSourceIdToAgentSay.set(lastAgentSayIdx, sourceId);
         for (const idx of turnInlineCardAgentIndices) {
           if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
         }
@@ -424,9 +450,17 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         }
       }
     } else if (turnBrokenToolIndices.length) {
-      if (lastAgentSayIdx >= 0) {
+      const lastBrokenIdx = turnBrokenToolIndices[turnBrokenToolIndices.length - 1];
+      const sourceId = records[lastBrokenIdx].id;
+      const shouldStage =
+        deferFinal && lastAgentSayIdx < lastBrokenIdx && lastTurnStopSignalIdx < lastBrokenIdx;
+      if (shouldStage) {
+        for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
+        stagedToolIndices.add(lastBrokenIdx);
+      } else if (lastAgentSayIdx >= 0) {
         for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnBrokenToolBody);
+        attachSourceIdToAgentSay.set(lastAgentSayIdx, sourceId);
         for (const idx of turnInlineCardAgentIndices) {
           if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
         }
@@ -434,7 +468,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         for (let k = 0; k < turnBrokenToolIndices.length - 1; k += 1) {
           delegateToolIndices.add(turnBrokenToolIndices[k]);
         }
-        markBrokenToolIndices.add(turnBrokenToolIndices[turnBrokenToolIndices.length - 1]);
+        markBrokenToolIndices.add(lastBrokenIdx);
       }
     } else if (turnInlineCardAgentIndices.length > 1) {
       for (let k = 0; k < turnInlineCardAgentIndices.length - 1; k += 1) {
@@ -478,6 +512,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
     turnImageBodies = [];
     turnInlineCardAgentIndices = [];
     lastAgentSayIdx = -1;
+    lastTurnStopSignalIdx = -1;
     turnContextTokens = null;
     turnPendingFileCalls = new Map();
     turnFileEdits = new Map();
@@ -500,7 +535,11 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         r.kind === 'user.say' ||
         (r.kind === 'context.inject' && r.payload.channel === 'queued_command');
       if (isHumanTurnBoundary) {
-        flushTurn();
+        flushTurn(false);
+        continue;
+      }
+      if (isLifecycleStopRecord(r) || r.kind === 'interrupt') {
+        lastTurnStopSignalIdx = i;
         continue;
       }
       if (r.kind === 'usage.tick') {
@@ -586,17 +625,22 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
           }
         }
         if (body) {
-          const isFailedAskCall = Boolean(
-            callId && turnAskCallIds.has(callId) && status === 'error'
-          );
-          const uiCard = parseUiComponentOutput(body, isFailedAskCall);
-          if (uiCard) {
-            if (uiCard.ok && status !== 'error') {
-              turnToolIndices.push(i);
-              turnToolBody = body;
-            } else {
-              turnBrokenToolIndices.push(i);
-              turnBrokenToolBody = body;
+          if (r.payload.ui_component_staged === true) {
+            delegateToolIndices.add(i);
+            stagedToolIndices.add(i);
+          } else {
+            const isFailedAskCall = Boolean(
+              callId && turnAskCallIds.has(callId) && status === 'error'
+            );
+            const uiCard = parseUiComponentOutput(body, isFailedAskCall);
+            if (uiCard) {
+              if (uiCard.ok && status !== 'error') {
+                turnToolIndices.push(i);
+                turnToolBody = body;
+              } else {
+                turnBrokenToolIndices.push(i);
+                turnBrokenToolBody = body;
+              }
             }
           }
           if (status !== 'error') {
@@ -610,10 +654,11 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       }
     }
   }
-  flushTurn();
+  flushTurn(true);
 
   if (
     !delegateToolIndices.size &&
+    !stagedToolIndices.size &&
     !markBrokenToolIndices.size &&
     !attachToAgentSay.size &&
     !attachImagesToAgentSay.size &&
@@ -624,6 +669,18 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   }
 
   return records.map((r, idx) => {
+    if (stagedToolIndices.has(idx)) {
+      return r.payload.ui_component_delegated === true && r.payload.ui_component_staged === true
+        ? r
+        : {
+            ...r,
+            payload: {
+              ...r.payload,
+              ui_component_delegated: true,
+              ui_component_staged: true,
+            },
+          };
+    }
     if (delegateToolIndices.has(idx)) {
       return r.payload.ui_component_delegated === true
         ? r
@@ -635,6 +692,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         : { ...r, payload: { ...r.payload, ui_component_broken: true } };
     }
     const attached = attachToAgentSay.get(idx);
+    const attachedSourceId = attachSourceIdToAgentSay.get(idx);
     const attachedImages = attachImagesToAgentSay.get(idx);
     const attachedContext = attachContextToAgentSay.get(idx);
     const attachedTriad = attachTriadToAgentSay.get(idx);
@@ -647,6 +705,9 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       const nextPayload: Record<string, unknown> = { ...r.payload };
       if (attached !== undefined) {
         nextPayload.ui_component = attached;
+        if (attachedSourceId) {
+          nextPayload.ui_component_source_id = attachedSourceId;
+        }
       }
       if (attachedImages !== undefined) {
         nextPayload.ui_image_grids = attachedImages;
@@ -746,7 +807,10 @@ function withAsyncCallbackMetadata(records: WorkbenchRecord[]): WorkbenchRecord[
  *
  * 镜头归属与卡上那枚下场标签都照这个值走，所以必须在分档之前做。
  */
-export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[] {
+export function withQueueOutcomes(
+  records: WorkbenchRecord[],
+  options?: TurnDecisionCardOptions
+): WorkbenchRecord[] {
   const outcomes = queueOutcomes(records);
   const queued = !outcomes.size
     ? records
@@ -756,7 +820,7 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
           ? { ...r, payload: { ...r.payload, queue_state: state } }
           : r;
       });
-  return withAsyncCallbackMetadata(withTurnDecisionCards(queued));
+  return withAsyncCallbackMetadata(withTurnDecisionCards(queued, options));
 }
 
 /**
@@ -765,8 +829,11 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
  * 当轮 `frago ask` 产出的交互卡已由 `withTurnDecisionCards` 挂载到当轮最后一条 `agent.say`
  * （收尾消息）的正文下方；仅当某轮完全没有 `agent.say` 时，才捎带未移交的 `tool.result` 兜底显示。
  */
-export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
-  const normalized = withTurnDecisionCards(records);
+export function talkView(
+  records: WorkbenchRecord[],
+  options?: TurnDecisionCardOptions
+): WorkbenchRecord[] {
+  const normalized = withTurnDecisionCards(records, options);
   const out: WorkbenchRecord[] = [];
   for (let i = 0; i < normalized.length; i += 1) {
     const record = normalized[i];
@@ -844,8 +911,11 @@ export type StreamSegment =
  * 在每一条 `agent.say` 回复出现前自动叠加为单行 `{num}次工具调用 · {num}次thinking`，
  * 数字原位自增，不出现刷新式多行递增。
  */
-export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
-  const normalized = withTurnDecisionCards(records);
+export function buildTalkSegments(
+  records: WorkbenchRecord[],
+  options?: TurnDecisionCardOptions
+): StreamSegment[] {
+  const normalized = withTurnDecisionCards(records, options);
   const out: StreamSegment[] = [];
   let pendingTools = 0;
   let pendingThinking = 0;
@@ -919,24 +989,26 @@ export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
 
 /** 提取某段记录切片中挂载了有效决策卡的条目，供 Watcher 在 Talk 折叠时原封不动展示并直接交互。 */
 export function extractSliceDecisionCards(
-  records: WorkbenchRecord[]
-): { recordId: string; block: DecisionBlock }[] {
-  const normalized = withTurnDecisionCards(records);
-  const cards: { recordId: string; block: DecisionBlock }[] = [];
+  records: WorkbenchRecord[],
+  options?: TurnDecisionCardOptions
+): { recordId: string; block: DecisionBlock; reveal?: boolean }[] {
+  const normalized = withTurnDecisionCards(records, options);
+  const cards: { recordId: string; block: DecisionBlock; reveal?: boolean }[] = [];
   for (const r of normalized) {
     if (r.agent_path.length > 0) continue;
+    const reveal = r.payload.ui_component_reveal === true ? true : undefined;
     if (r.kind === 'agent.say') {
       const text = typeof r.payload.text === 'string' ? r.payload.text : '';
       const trailing = text ? trailingDecision(text) : null;
       if (trailing && trailing.result.ok) {
-        cards.push({ recordId: r.id, block: trailing.result.block });
+        cards.push({ recordId: r.id, block: trailing.result.block, reveal });
         continue;
       }
       const delegatedUi =
         typeof r.payload.ui_component === 'string' ? r.payload.ui_component : '';
       const uiCard = parseUiComponentOutput(delegatedUi || text);
       if (uiCard && uiCard.ok) {
-        cards.push({ recordId: r.id, block: uiCard.block });
+        cards.push({ recordId: r.id, block: uiCard.block, reveal });
       }
     } else if (
       r.kind === 'tool.result' &&
@@ -946,7 +1018,7 @@ export function extractSliceDecisionCards(
       const body = typeof r.payload.body === 'string' ? r.payload.body : '';
       const uiCard = body ? parseUiComponentOutput(body) : null;
       if (uiCard && uiCard.ok) {
-        cards.push({ recordId: r.id, block: uiCard.block });
+        cards.push({ recordId: r.id, block: uiCard.block, reveal });
       }
     }
   }
@@ -1366,6 +1438,8 @@ export interface RecordStreamProps {
   onLoadOlder: () => void;
   /** 刚投了一句话进去、还没见 agent 有任何动静。为真时跟到底，让那句话下面的「Agent on it」露出来。 */
   awaitingAgent?: boolean;
+  /** 当前会话是否仍在运行中（用于暂存未等到 Stop 消息的交互决策卡，避免早于收尾正文闪现）。 */
+  sessionRunning?: boolean;
   /** 本页本次发出的每一句话的进度。按 `recordId` 挂到对应气泡下面。 */
   trails?: SendTrail[];
   /** 滚到这条记录（输入区「Show」）。`at` 让同一条连点两次也各算一次。 */
@@ -1485,7 +1559,7 @@ interface WatcherSlice {
   decision: string | null;
   summary: string;
   records: WorkbenchRecord[];
-  decisionCards: { recordId: string; block: DecisionBlock }[];
+  decisionCards: { recordId: string; block: DecisionBlock; reveal?: boolean }[];
 }
 
 function formatHm(ms: number | null | undefined): string {
@@ -1717,6 +1791,7 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
+  sessionRunning = false,
   trails = [],
   scrollTarget = null,
   onQuote,
@@ -1809,8 +1884,71 @@ export default function RecordStream({
     [onOpenFileDiff, onSelectSession]
   );
 
+  /** 眼下这一轮在跑的那一句：最后一份已落地、还没答完的进度。「Agent on it」只挂它下面。 */
+  const activeTrail = useMemo(() => {
+    for (let i = trails.length - 1; i >= 0; i -= 1) {
+      const tr = trails[i];
+      if (tr.expired || trailSettled(tr)) continue;
+      if (!tr.recordId) continue;
+      const since = (tr.steps.in_the_session ?? tr.steps.queued ?? tr.steps.on_its_way ?? 0) - 1_000;
+      const stoppedAfter = records.some(
+        (r) => r.ts >= since && (isLifecycleStopRecord(r) || r.kind === 'interrupt')
+      );
+      if (stoppedAfter) continue;
+      return tr;
+    }
+    return null;
+  }, [trails, records]);
+
+  /** 当前末尾回合是否仍在运行中：用于判断 `frago app ask` 卡片是否需暂存等待 Stop 消息到达。 */
+  const turnRunning = Boolean(sessionRunning || awaitingAgent || activeTrail !== null);
+  const turnCardOptions = useMemo<TurnDecisionCardOptions>(
+    () => ({ deferUnfinishedTurn: turnRunning }),
+    [turnRunning]
+  );
+
+  // 按会话记录曾经处于暂存隐藏态的 `tool.result` 卡片 ID：当该卡片随后随 Stop 消息或回合终态释放时，
+  // 精准附加渐显过渡类；历史已完结会话首次打开时集合为空，直接立即显示无动画抖动。
+  const stagedCardSessionRef = useRef<string | null>(sessionId);
+  const stagedCardIdsRef = useRef<Set<string>>(new Set());
+
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
-  const resolved = useMemo(() => withQueueOutcomes(records), [records]);
+  const resolved = useMemo(() => {
+    if (stagedCardSessionRef.current !== sessionId) {
+      stagedCardSessionRef.current = sessionId;
+      stagedCardIdsRef.current = new Set();
+    }
+    const base = withQueueOutcomes(records, turnCardOptions);
+    const stagedIds = stagedCardIdsRef.current;
+    const revealIndices = new Set<number>();
+    for (let i = 0; i < base.length; i += 1) {
+      const r = base[i];
+      if (r.payload.ui_component_staged === true) {
+        stagedIds.add(r.id);
+        continue;
+      }
+      if (r.kind === 'agent.say' && !r.agent_path.length) {
+        const srcId =
+          typeof r.payload.ui_component_source_id === 'string'
+            ? r.payload.ui_component_source_id
+            : '';
+        if (srcId && stagedIds.has(srcId)) {
+          revealIndices.add(i);
+        }
+      } else if (
+        r.kind === 'tool.result' &&
+        !r.agent_path.length &&
+        r.payload.ui_component_delegated !== true &&
+        stagedIds.has(r.id)
+      ) {
+        revealIndices.add(i);
+      }
+    }
+    if (!revealIndices.size) return base;
+    return base.map((r, i) =>
+      revealIndices.has(i) ? { ...r, payload: { ...r.payload, ui_component_reveal: true } } : r
+    );
+  }, [records, turnCardOptions, sessionId]);
   /** 基于未聚合的原始记录判定最终回复 ID，供缩略滚动条过滤过程旁白。 */
   const finalAgentSayIds = useMemo(() => computeFinalAgentSayIds(resolved), [resolved]);
 
@@ -1839,18 +1977,18 @@ export default function RecordStream({
       lens === 'all'
         ? resolved
         : lens === 'talk'
-          ? talkView(resolved)
+          ? talkView(resolved, turnCardOptions)
           : resolved.filter((r) => lensOf(r) === lens),
-    [resolved, lens]
+    [resolved, lens, turnCardOptions]
   );
 
   // 连续同类合并：「对话」档把响应前的工具调用与思考压成单行计数自增，其余对话原样摆；「系统」档不压系统记录。
   const segments = useMemo(
     () =>
       lens === 'talk'
-        ? buildTalkSegments(resolved)
+        ? buildTalkSegments(resolved, turnCardOptions)
         : collapseRuns(visible, { tools: lens === 'all' || lens === 'tool', system: lens === 'all' }),
-    [resolved, visible, lens]
+    [resolved, visible, lens, turnCardOptions]
   );
   const groups = useMemo(() => groupSegments(segments), [segments]);
   const lastSegment = segments[segments.length - 1];
@@ -2138,21 +2276,6 @@ export default function RecordStream({
     for (const tr of trails) if (tr.recordId && !tr.expired) map.set(tr.recordId, tr);
     return map;
   }, [trails]);
-  /** 眼下这一轮在跑的那一句：最后一份已落地、还没答完的进度。「Agent on it」只挂它下面。 */
-  const activeTrail = useMemo(() => {
-    for (let i = trails.length - 1; i >= 0; i -= 1) {
-      const tr = trails[i];
-      if (tr.expired || trailSettled(tr)) continue;
-      if (!tr.recordId) continue;
-      const since = (tr.steps.in_the_session ?? tr.steps.queued ?? tr.steps.on_its_way ?? 0) - 1_000;
-      const stoppedAfter = records.some(
-        (r) => r.ts >= since && (isLifecycleStopRecord(r) || r.kind === 'interrupt')
-      );
-      if (stoppedAfter) continue;
-      return tr;
-    }
-    return null;
-  }, [trails, records]);
   const now = useTicking(activeTrail !== null);
   const activeShown = activeTrail?.recordId
     ? visible.some((r) => r.id === activeTrail.recordId)
@@ -2178,6 +2301,8 @@ export default function RecordStream({
   const renderRecord = (record: WorkbenchRecord) => {
     const trail = trailOf.get(record.id);
     const bare = <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} />;
+    const decisionReveal =
+      record.kind === 'agent.say' && record.payload.ui_component_reveal === true;
     // 正文类记录外面多一层只装这张卡的壳：标注的锚点、着色、跳回原处都认这一层，
     // 缩略滚动条也按它量高度、分颜色。挂着进度的那几条外层另有一个 data-record-id
     // （输入区「Show」认它），这一层套在里面，只包卡、不包进度。
@@ -2186,11 +2311,12 @@ export default function RecordStream({
         key={record.id}
         data-record-id={record.id}
         data-record-kind={isPureAsyncCallbackRecord(record) ? 'async.callback' : record.kind}
+        data-decision-reveal={decisionReveal ? 'true' : undefined}
         data-minimap-exclude={
           record.kind === 'agent.say' && !finalAgentSayIds.has(record.id) ? 'true' : undefined
         }
         {...{ [RECORD_BODY_ATTR]: '' }}
-        className="wb-record"
+        className={decisionReveal ? 'wb-record is-decision-reveal' : 'wb-record'}
       >
         {bare}
       </div>
@@ -4084,6 +4210,7 @@ export default function RecordStream({
                                                 key={dc.recordId}
                                                 block={dc.block}
                                                 recordId={dc.recordId}
+                                                reveal={dc.reveal}
                                               />
                                             ))}
                                           </div>

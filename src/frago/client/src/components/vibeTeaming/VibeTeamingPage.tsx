@@ -906,6 +906,7 @@ function MySide({
                 error={mine.error}
                 onLoadOlder={() => void mine.loadOlder()}
                 awaitingAgent={mine.awaitingAgent}
+                sessionRunning={session?.status === 'running' || mine.awaitingAgent}
                 onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
               />
             </DecisionCardContext.Provider>

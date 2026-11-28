@@ -1526,6 +1526,7 @@ export default function SessionWorkbenchPage() {
               error={error}
               onLoadOlder={loadOlder}
               awaitingAgent={awaitingAgent}
+              sessionRunning={sessionRunning}
               trails={trails}
               scrollTarget={scrollTarget}
               onQuote={(text, anchor) => {
