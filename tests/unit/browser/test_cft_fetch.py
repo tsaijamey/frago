@@ -570,12 +570,20 @@ def test_codesign_preserves_bundle_identifier_on_real_bin_and_app(tmp_path):
 
 
 def test_cookie_guard_blocks_when_profile_locked_by_live_pid(tmp_path, monkeypatch):
+    key = cf.platform_key()
+    if key is None:
+        pytest.skip("本机平台没有 CfT")
+    rel = cf._relative_binary(key)
+
     profiles_root = tmp_path / "profiles" / "cft"
     prof = _seed_cft_profile_assets(profiles_root, "extension")
     os.symlink(f"localhost-{os.getpid()}", prof / "SingletonLock")
 
     root = tmp_path / "chrome-for-testing"
-    _app, binary = _make_fake_cft_app(root)
+    binary = root / rel
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 64)
+    binary.chmod(0o755)
 
     monkeypatch.setattr(cf, "fetch_manifest_entry",
                         lambda k, proxy: ("158.0.8127.36", f"https://example/{k}.zip"))

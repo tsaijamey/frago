@@ -66,11 +66,13 @@ microphone.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import platform
 import re
 import shutil
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -251,6 +253,96 @@ def _system_readable() -> list[Path]:
     )
 
 
+def _is_too_broad_dir(path: Path) -> bool:
+    """避免把根目录、/home、/Users 或用户主目录本身放进只读视图。"""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    broad: set[Path] = {Path("/"), Path("/home"), Path("/Users")}
+    for candidate in (Path.home(), Path(os.path.expanduser("~"))):
+        broad.add(candidate)
+        with contextlib.suppress(OSError):
+            broad.add(candidate.resolve())
+    try:
+        import pwd
+
+        pw_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        broad.add(pw_home)
+        with contextlib.suppress(OSError):
+            broad.add(pw_home.resolve())
+    except Exception:
+        pass
+    return path in broad or resolved in broad
+
+
+def _interpreter_symlink_paths(executable: str | Path) -> list[Path]:
+    """沿解释器路径逐跳解析符号链接链，收集每一跳目录与最终前缀目录。
+
+    不依赖可能被测试或环境覆写的 ``Path.home()``：即使 ``Path.home()`` 指向临时目录，
+    或 uv 托管的解释器经过多层符号链接（含相对链接或中间别名目录），沙盒内仍可完整
+    解析直至最终解释器二进制。
+    """
+    if not executable:
+        return []
+    collected: list[Path] = []
+
+    def add(p: Path) -> None:
+        if p not in collected:
+            collected.append(p)
+
+    def add_dir_or_self(target: Path, *, include_prefix: bool = False) -> None:
+        parent = target.parent
+        if not _is_too_broad_dir(parent):
+            add(parent)
+        else:
+            add(target)
+        if include_prefix:
+            prefix = parent.parent
+            if not _is_too_broad_dir(prefix):
+                add(prefix)
+
+    current = Path(executable)
+    seen: set[Path] = set()
+    for _ in range(40):
+        if current in seen:
+            break
+        seen.add(current)
+        # 检查当前路径前缀中的中间符号链接目录（例如 uv 托管版本别名目录）
+        parts = current.parts
+        if parts:
+            walk = Path(parts[0])
+            for part in parts[1:-1]:
+                walk = walk / part
+                try:
+                    if os.path.islink(walk) and not _is_too_broad_dir(walk):
+                        add(walk)
+                except OSError:
+                    pass
+        add_dir_or_self(current, include_prefix=current.parent.name in ("bin", "Scripts"))
+        try:
+            st = os.lstat(current)
+        except OSError:
+            break
+        if not stat.S_ISLNK(st.st_mode):
+            break
+        try:
+            raw = os.readlink(current)
+        except OSError:
+            break
+        next_path = Path(raw)
+        if not next_path.is_absolute():
+            next_path = Path(os.path.normpath(str(current.parent / next_path)))
+        current = next_path
+
+    try:
+        final = Path(executable).resolve()
+        add_dir_or_self(final, include_prefix=True)
+    except OSError:
+        pass
+    return collected
+
+
 def _interpreter_readable() -> list[Path]:
     """Whatever it takes to start the interpreter this recipe declared.
 
@@ -274,7 +366,7 @@ def _interpreter_readable() -> list[Path]:
         # whose `pyvenv.cfg` cannot be read kills the interpreter during
         # startup, before any code of ours runs, with "Failed to import the site
         # module".
-        Path(sys.executable).resolve().parent.parent,
+        *_interpreter_symlink_paths(sys.executable),
         sys.prefix,
         sys.base_prefix,
         home / ".pyenv",
@@ -683,10 +775,33 @@ class Bubblewrap(Backend):
                 "--dev-bind", "/dev", "/dev", "--tmpfs", "/tmp"]
         for path in self._system_services():
             argv += ["--bind-try", path, path]
+        # usrmerge 根级符号链接（/bin -> usr/bin、/lib -> usr/lib、/lib64 -> usr/lib64 等）：
+        # 当 /usr 已纳入只读视图时，按宿主机原始 symlink 语义用 --symlink 复原，
+        # 避免 --ro-bind-try 把 /lib64 变成独立目录导致 ELF PT_INTERP 相对路径解析失败，
+        # 同时跳过 _existing 为这些根级 symlink 展开出的重复 /usr/* 挂载。
+        usrmerge_links: list[tuple[str, str]] = []
+        usrmerge_skip: set[Path] = set()
+        if Path("/usr") in view.readable:
+            for path in view.readable:
+                if path.parent != Path("/") or path == Path("/") or path in self.FURNISHED:
+                    continue
+                try:
+                    if not path.is_symlink():
+                        continue
+                    raw_target = os.readlink(path)
+                    resolved = path.resolve()
+                except OSError:
+                    continue
+                if resolved == Path("/usr") or resolved.is_relative_to(Path("/usr")):
+                    usrmerge_links.append((raw_target, str(path)))
+                    usrmerge_skip.add(path)
+                    usrmerge_skip.add(resolved)
         for path in view.readable:
-            if path in view.shared or path in self.FURNISHED:
+            if path in view.shared or path in self.FURNISHED or path in usrmerge_skip:
                 continue
             argv += ["--ro-bind-try", str(path), str(path)]
+        for raw_target, link_path in usrmerge_links:
+            argv += ["--symlink", raw_target, link_path]
         writable = list(view.writable)
         if cwd is not None and cwd not in writable:
             writable.append(cwd)

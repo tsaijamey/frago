@@ -774,11 +774,10 @@ def activate_profile(
     from frago.init.config_manager import load_config, save_config
     from frago.init.profile_targets import apply_profile, resolve_targets, revert_targets
 
-    # Validate the request before touching anything: a half-applied activation
-    # is worse than a refused one, because nothing on screen would say which
-    # half went through.
-    resolved = resolve_targets(targets)
-
+    # Validate the profile itself before probing local CLI targets so that
+    # missing / retired / non-activatable profiles are refused consistently
+    # even on machines where target CLIs are not installed (and still before
+    # touching any configuration file).
     with locked_file(PROFILES_PATH, exclusive=True):
         store = load_profiles(raise_on_error=True)
         profile = None
@@ -800,6 +799,8 @@ def activate_profile(
             raise ValueError(
                 "WorkBuddy 借登录这条连接已下线，不能写进任何 CLI 的配置。"
             )
+
+        resolved = resolve_targets(targets)
 
         from frago.init.profile_targets import missing_channel_reason
 

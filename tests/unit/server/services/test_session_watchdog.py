@@ -199,24 +199,49 @@ def test_the_default_notice_goes_out_through_the_scheduler_channel(monkeypatch):
     assert "看护" in schedule["name"]
 
 
-def _run_loop_once(monkeypatch) -> None:
-    """把调度循环跑起来，等它走完第一跳再收掉。"""
+class _LoopSignal:
+    """线程安全桥接工作线程中的回调与调度循环所在事件循环的 asyncio.Event。"""
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._event: asyncio.Event | None = None
+        self._fired = False
+
+    def bind(self) -> asyncio.Event:
+        self._loop = asyncio.get_running_loop()
+        self._event = asyncio.Event()
+        if self._fired:
+            self._event.set()
+        return self._event
+
+    def set(self) -> None:
+        self._fired = True
+        if self._loop is not None and self._event is not None:
+            self._loop.call_soon_threadsafe(self._event.set)
+
+
+def _run_loop_once(monkeypatch, signal: _LoopSignal) -> None:
+    """把调度循环跑起来，等看护回调触发（或超时）后再收掉。"""
     from frago.server.services import scheduler_service as ss
 
-    monkeypatch.setattr(ss, "INITIAL_DELAY_S", 0.01)
+    monkeypatch.setattr(ss, "INITIAL_DELAY_S", 0.0)
     monkeypatch.setattr(ss, "TICK_INTERVAL", 0.01)
     # 不读真的 ~/.frago/schedules.json：这一条只问循环有没有把看护叫起来。
     monkeypatch.setattr(ss.SchedulerService, "_load", lambda self: setattr(self, "_schedules", []))
 
     async def go() -> None:
+        done = signal.bind()
         svc = ss.SchedulerService()
         svc._schedules_path = Path("/nonexistent/schedules.json")
         task = asyncio.create_task(svc._loop())
-        await asyncio.sleep(0.2)
-        svc._stop_event.set()
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(done.wait(), timeout=5.0)
+        finally:
+            svc._stop_event.set()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     asyncio.run(go())
 
@@ -224,9 +249,16 @@ def _run_loop_once(monkeypatch) -> None:
 def test_the_scheduler_loop_calls_the_watchdog(monkeypatch):
     """调度循环会按节拍自己把看护叫起来。"""
     swept: list[str] = []
-    monkeypatch.setattr(wd.SessionWatchdog, "sweep", lambda self: swept.append("swept") or [])
+    signal = _LoopSignal()
 
-    _run_loop_once(monkeypatch)
+    def fake_sweep(self):
+        swept.append("swept")
+        signal.set()
+        return []
+
+    monkeypatch.setattr(wd.SessionWatchdog, "sweep", fake_sweep)
+
+    _run_loop_once(monkeypatch, signal)
 
     assert swept, "调度循环没把看护叫起来，这条判据就是躺着的一段代码"
 
@@ -235,14 +267,37 @@ def test_the_scheduler_loop_calls_the_real_watchdog(monkeypatch):
     """上一条把 ``sweep`` 换成了替身——这一条换成替身的是它最外面那两层（谁在跑、推给
     谁），确认循环叫的确实是看护本人，而不是替身拦住了别的东西。"""
     touched: list[str] = []
+    signal = _LoopSignal()
 
     def fake_live() -> dict[str, bool]:
         touched.append("asked")
+        signal.set()
         return {}
 
     monkeypatch.setattr(wd, "_cards", lambda: [card()])
     monkeypatch.setattr(wd, "_live", fake_live)
 
-    _run_loop_once(monkeypatch)
+    _run_loop_once(monkeypatch, signal)
 
     assert touched == ["asked"], "循环叫的应该是看护本人"
+
+
+def test_the_scheduler_loop_runs_watchdog_immediately_on_low_uptime_host(monkeypatch):
+    """刚开机不久的机器上 time.monotonic() 小于 WATCHDOG_EVERY_S (300s) 时，
+    首轮调度循环仍必须立即触发看护巡检而非跳过。"""
+    from frago.server.services import scheduler_service as ss
+
+    swept: list[str] = []
+    signal = _LoopSignal()
+
+    def fake_sweep(self):
+        swept.append("swept")
+        signal.set()
+        return []
+
+    monkeypatch.setattr(ss.time, "monotonic", lambda: 12.5)
+    monkeypatch.setattr(wd.SessionWatchdog, "sweep", fake_sweep)
+
+    _run_loop_once(monkeypatch, signal)
+
+    assert swept == ["swept"], "低开机时长主机上首轮调度循环跳过看护巡检"

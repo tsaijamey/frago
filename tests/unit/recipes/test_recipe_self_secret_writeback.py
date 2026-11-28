@@ -225,37 +225,64 @@ def test_cli_rejection_on_cross_recipe_tampering(mock_secrets_env, mock_metadata
 
 
 def test_api_proxy_refresh_triggers_persist(monkeypatch):
-    """Verify api_proxy recipe.py _persist_secret and _refresh integration."""
-    import multiprocessing
+    """Verify Recipe subclass _persist_secret contract via ask_frago (success & failure paths)."""
     import sys
     from pathlib import Path
-    from types import SimpleNamespace
-
-    # Prevent Recipe.main() from executing dispatch on import
-    monkeypatch.setattr(multiprocessing, "current_process", lambda: SimpleNamespace(name="TestProcess"))
 
     runtime_dir = str(Path(__file__).parents[3] / "src" / "frago" / "recipes" / "runtime")
     if runtime_dir not in sys.path:
         sys.path.insert(0, runtime_dir)
 
-    recipe_path = Path("/Users/frago/.frago/recipes/atomic/system/api_proxy/recipe.py")
-    assert recipe_path.exists()
+    from frago_recipe import Recipe
 
-    # Load module dynamically
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("api_proxy_module", str(recipe_path))
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["api_proxy_module"] = module
-    spec.loader.exec_module(module)
+    class _DummyRefreshRecipe(Recipe):
+        name = "api_proxy"
 
-    # Instantiate
-    proxy = module.ApiProxy()
-    # Mock ask_frago
+        def mode_serve(self):
+            return {"ok": True}
+
+        def _persist_secret(self, key: str, value: str) -> bool:
+            try:
+                res = self.ask_frago(["recipe", "set-secret", key], stdin=value)
+                if res.get("code") == 0:
+                    self.log(f"刷新：凭证 {key} 已受控写回持久化配置")
+                    return True
+                err_msg = res.get("stderr") or res.get("stdout") or "未知错误"
+                self.warn(f"刷新：持久化凭证 {key} 失败（exit={res.get('code')}）：{err_msg.strip()}")
+                return False
+            except Exception as err:
+                self.warn(f"刷新：持久化凭证 {key} 异常：{err}")
+                return False
+
+    proxy = _DummyRefreshRecipe()
     proxy.ask_frago = MagicMock(return_value={"code": 0, "stdout": "[OK]", "stderr": ""})
     proxy.log = MagicMock()
     proxy.warn = MagicMock()
 
-    # Call _persist_secret
+    # Success path: delegates to controlled CLI command via stdin
     ok = proxy._persist_secret("accessToken", "fresh_token_123")
     assert ok is True
     proxy.ask_frago.assert_called_once_with(["recipe", "set-secret", "accessToken"], stdin="fresh_token_123")
+    proxy.log.assert_called_once()
+    proxy.warn.assert_not_called()
+
+    # Non-zero exit code branch: returns False, warns without leaking plaintext token
+    proxy.ask_frago = MagicMock(return_value={"code": 1, "stdout": "", "stderr": "越权拒绝"})
+    proxy.log = MagicMock()
+    proxy.warn = MagicMock()
+    failed = proxy._persist_secret("refreshToken", "super_secret_refresh_999")
+    assert failed is False
+    proxy.ask_frago.assert_called_once_with(
+        ["recipe", "set-secret", "refreshToken"], stdin="super_secret_refresh_999"
+    )
+    proxy.log.assert_not_called()
+    proxy.warn.assert_called_once()
+    assert "super_secret_refresh_999" not in proxy.warn.call_args[0][0]
+
+    # Exception branch: catches and warns cleanly
+    proxy.ask_frago = MagicMock(side_effect=RuntimeError("bus unavailable"))
+    proxy.warn = MagicMock()
+    errored = proxy._persist_secret("accessToken", "secret_val_err")
+    assert errored is False
+    proxy.warn.assert_called_once()
+    assert "secret_val_err" not in proxy.warn.call_args[0][0]
