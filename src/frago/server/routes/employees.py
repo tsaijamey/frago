@@ -15,26 +15,31 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from frago.employee import (
     DEFAULT_STOCK_EMPLOYEE_SPEC,
+    MAX_AVATAR_UPLOAD_BYTES,
     EmployeeOntologyService,
     EmployeePostRecord,
+    employees_dir,
     ensure_builtin_stock_employee,
     get_post,
     ledger_summary,
     list_available_resources,
     list_posts,
     load_ledger,
+    resolve_avatar_state,
     scan_data_slot_entries,
 )
-from frago.ontology import ContractViolationError
+from frago.ontology import ContractViolationError, ProjectionValidationError
 from frago.server.services.employee_usage import (
     epoch_ms_to_iso,
     get_employee_usage_summary,
@@ -90,6 +95,14 @@ class DataEntryRequest(BaseModel):
     slot_path: str | None = None
 
 
+class EmployeeAvatarUpdateRequest(BaseModel):
+    """保存员工内置 DiceBear Micah 头像选定配置。"""
+
+    seed: str
+    bg_color: str | None = None
+    palette_id: str | None = None
+
+
 def _data_summary(data_slots: list[str]) -> dict[str, Any]:
     """员工领地的一行总览：几个槽位、每个槽位下有几项、合计几项。
 
@@ -119,6 +132,11 @@ def _post_payload(
     session_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = record.to_dict()
+    payload["avatar_resolved"] = resolve_avatar_state(
+        record.member_post_id,
+        record.avatar,
+        employees_base_dir=employees_dir(),
+    )
     payload["last_used_at"] = last_used_at
     if session_counts is not None:
         payload["session_counts"] = session_counts
@@ -402,6 +420,148 @@ async def sync_employee_ledger_route(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.put("/employees/{member_post_id}/avatar")
+async def update_employee_avatar_micah(
+    member_post_id: str,
+    request: EmployeeAvatarUpdateRequest,
+) -> dict[str, Any]:
+    """保存员工的内置 DiceBear Micah 头像配置（seed + 8 色建筑底色板）。"""
+    service = EmployeeOntologyService()
+    try:
+        record, _ = await run_in_threadpool(
+            service.set_avatar_micah,
+            member_post_id,
+            seed=request.seed,
+            bg_color=request.bg_color,
+            palette_id=request.palette_id,
+        )
+        return _post_payload(record)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, ProjectionValidationError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _decode_avatar_json_upload(
+    body: dict[str, Any],
+) -> tuple[bytes, str | None, str | None]:
+    """Decode JSON base64 / data-URL upload payload into `(raw_bytes, content_type, filename)`."""
+    filename = str(body.get("filename") or "").strip() or None
+    declared_ct = str(body.get("content_type") or "").strip() or None
+    raw_input = str(body.get("data_url") or body.get("data_base64") or "").strip()
+    if not raw_input:
+        raise ValueError("缺少图片数据（需要 data_url 或 data_base64 字段）。")
+
+    if raw_input.startswith("data:"):
+        if "," not in raw_input:
+            raise ValueError("无效的 data URL 格式。")
+        header, b64_part = raw_input.split(",", 1)
+        meta = header[5:]
+        if ";base64" not in meta.lower():
+            raise ValueError("仅支持 base64 编码的 data URL 图片上传。")
+        mime_from_url = meta.split(";", 1)[0].strip()
+        if mime_from_url and not declared_ct:
+            declared_ct = mime_from_url
+    else:
+        b64_part = raw_input
+
+    # Guard against oversized base64 payloads before decoding (~1.4x overhead over 2 MiB)
+    if len(b64_part) > int(MAX_AVATAR_UPLOAD_BYTES * 1.45) + 1024:
+        raise OverflowError("上传的头像图片超过 2 MB 上限，请压缩后重试。")
+    try:
+        decoded = base64.b64decode(b64_part, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"图片 base64 解码失败：{exc}") from exc
+    return decoded, declared_ct, filename
+
+
+@router.post("/employees/{member_post_id}/avatar/upload")
+async def upload_employee_avatar(
+    member_post_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """安全上传并替换员工自定义栅格头像（严格 MIME + 魔数校验，仅放行 PNG/JPEG/WebP，上限 2 MB）。
+
+    支持两种零额外依赖传输格式：
+    - ``application/json``: ``{"data_url": "data:image/png;base64,...", "filename": "a.png"}``
+      （与工作台/PA 图片上传一致）
+    - 原始二进制体（如 ``Content-Type: image/png`` + 可选 ``X-Avatar-Filename`` 头）
+    """
+    req_ct = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    content_type: str | None = None
+    filename: str | None = None
+    try:
+        if req_ct == "application/json":
+            parsed = await request.json()
+            if not isinstance(parsed, dict):
+                raise ValueError("上传请求体必须为 JSON 对象。")
+            data, content_type, filename = _decode_avatar_json_upload(parsed)
+        else:
+            raw_body = await request.body()
+            data = raw_body
+            content_type = req_ct or None
+            filename = (request.headers.get("x-avatar-filename") or "").strip() or None
+    except OverflowError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if len(data) > MAX_AVATAR_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="上传的头像图片超过 2 MB 上限，请压缩后重试。",
+        )
+    service = EmployeeOntologyService()
+    try:
+        record, _ = await run_in_threadpool(
+            service.upload_avatar,
+            member_post_id,
+            data=data,
+            content_type=content_type,
+            filename=filename,
+        )
+        return _post_payload(record)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, ProjectionValidationError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.delete("/employees/{member_post_id}/avatar")
+async def reset_employee_avatar(member_post_id: str) -> dict[str, Any]:
+    """一键恢复员工默认确定性 Micah 头像并清理不再引用的旧上传文件。"""
+    service = EmployeeOntologyService()
+    try:
+        record, _ = await run_in_threadpool(service.reset_avatar, member_post_id)
+        return _post_payload(record)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, ProjectionValidationError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/employees/{member_post_id}/avatar/file")
+async def get_employee_avatar_file(member_post_id: str) -> Response:
+    """读取已校验的本地上传头像图片；缺失或损坏时返回 404 由前端平稳回退默认 Micah，永不返回 500。"""
+    service = EmployeeOntologyService()
+    try:
+        result = await run_in_threadpool(service.get_avatar_file, member_post_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if result is None:
+        raise HTTPException(status_code=404, detail="Avatar image file not available.")
+    data, mime_type, etag = result
+    return Response(
+        content=data,
+        media_type=mime_type,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=3600",
+            "ETag": f'"{etag}"',
+        },
+    )
 
 
 __all__ = ["DEFAULT_STOCK_EMPLOYEE_SPEC", "router"]

@@ -22,9 +22,9 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn
 
 from frago.agent_driver.driver import (
     AgentDriver,
@@ -32,6 +32,9 @@ from frago.agent_driver.driver import (
     LaunchCtx,
     load_driver,
 )
+
+if TYPE_CHECKING:
+    from frago.session.models import SessionSource
 
 # 注入点：测试以 fake runner 替换真实 tmux 调用，单测不拉真实 tmux。
 TmuxRunner = Callable[[list[str]], str]
@@ -299,6 +302,10 @@ class TurnResult:
     raw_delta: str
     status: Literal["ok", "timeout", "needs_input", "error"]
     duration_ms: int
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    canonical_session_id: str | None = None
+    tmux_name: str | None = None
 
 
 def _pane_tail(pane: str, *, lines: int = 20) -> str:
@@ -610,6 +617,23 @@ class TmuxAgentSession:
             self.driver.agent_type,
             self.session_id,
             native_session_id=self.native_session_id,
+        )
+
+    def canonical_session_id(self) -> str:
+        """返回面向会话本体账本、调度历史与会话清单的唯一规范会话编号。"""
+        from frago.agent_driver.driver import resolve_canonical_session_id
+
+        claimed: str | None = None
+        if self.driver.transcript_source is not None:
+            with contextlib.suppress(Exception):
+                src = self.driver.transcript_source(self)
+                if src is not None and getattr(src, "native_session_id", None):
+                    claimed = str(src.native_session_id)
+        return resolve_canonical_session_id(
+            self.driver.agent_type,
+            self.session_id,
+            native_session_id=self.native_session_id,
+            claimed_session_id=claimed,
         )
 
     def open(self, *, ready_timeout_s: float = 30.0) -> None:
@@ -959,15 +983,25 @@ class TmuxAgentSession:
         还在跑。要上限的调用方自己传一个正数。
         """
         start = self._clock()
+        started_wall = datetime.now()
         self.status = "busy"
         try:
-            return self._send_turn(prompt, start=start, timeout_s=timeout_s)
+            return self._send_turn(
+                prompt,
+                start=start,
+                started_wall=started_wall,
+                timeout_s=timeout_s,
+            )
         except _SessionVanished as vanished:
             # 会话在本轮途中消失（agent 崩溃 / 被外部 kill）。这一轮没有答案，但它是
             # 一个可报告的结果而不是异常：调用方据 status='error' 走既有的失败分支，
             # NEVER 把裸 CalledProcessError 抛给它。
             self.status = "dead"
             self.last_active_at = datetime.now(UTC)
+            duration_ms = max(0, int((self._clock() - start) * 1000))
+            ended_wall = datetime.now()
+            if duration_ms > 0 and ended_wall <= started_wall:
+                ended_wall = started_wall + timedelta(milliseconds=duration_ms)
             tail = "\n".join(vanished.last_pane.splitlines()[-20:])
             note = (
                 f"tmux session {self.tmux_name!r} disappeared mid-turn; "
@@ -979,7 +1013,11 @@ class TmuxAgentSession:
                 text=note,
                 raw_delta=vanished.last_pane,
                 status="error",
-                duration_ms=int((self._clock() - start) * 1000),
+                duration_ms=duration_ms,
+                started_at=started_wall,
+                ended_at=ended_wall,
+                canonical_session_id=self.canonical_session_id(),
+                tmux_name=self.tmux_name,
             )
         except Exception:
             if self.status == "busy":
@@ -987,7 +1025,14 @@ class TmuxAgentSession:
                 self.last_active_at = datetime.now(UTC)
             raise
 
-    def _send_turn(self, prompt: str, *, start: float, timeout_s: float | None) -> TurnResult:
+    def _send_turn(
+        self,
+        prompt: str,
+        *,
+        start: float,
+        started_wall: datetime,
+        timeout_s: float | None,
+    ) -> TurnResult:
         pre_snapshot = self._capture_resilient()
 
         # 权威完成探针（如 claude 的 transcript JSONL）。在提交前先读一次取 baseline
@@ -1040,7 +1085,16 @@ class TmuxAgentSession:
         )
         # 探针给出本轮 verdict 且带文本时，直接采用其权威文本（绕开读屏抠答案）。
         verdict = probe_box["verdict"]
-        if outcome == "ok" and verdict is not None and verdict.text is not None:
+        if outcome is None:
+            # 本轮超时未收到完成或待输入信号：严禁调用 read_answer / extract 将
+            # 整屏终端残片（如滚屏后的超长 prompt 片段）伪装成正式 assistant 答复。
+            # 仅保留末屏快照在 raw_delta 供排障，text 诚实置空。
+            pane = ""
+            with contextlib.suppress(Exception):
+                pane = self._capture_resilient()
+            text = ""
+            raw_delta = pane
+        elif outcome == "ok" and verdict is not None and verdict.text is not None:
             text = verdict.text
             raw_delta = verdict.text
         # driver 提供 read_answer 时，从完成时可见 pane 直接抽答案（claude 这类
@@ -1054,7 +1108,10 @@ class TmuxAgentSession:
             scrollback = self._capture_resilient(full=True)
             raw_delta = _compute_delta(pre_snapshot, scrollback)
             text = self.driver.extract(raw_delta)
-        duration_ms = int((self._clock() - start) * 1000)
+        duration_ms = max(0, int((self._clock() - start) * 1000))
+        ended_wall = datetime.now()
+        if duration_ms > 0 and ended_wall <= started_wall:
+            ended_wall = started_wall + timedelta(milliseconds=duration_ms)
         self.status = "idle"
         self.last_active_at = datetime.now(UTC)
         status: Literal["ok", "timeout", "needs_input", "error"] = outcome or "timeout"
@@ -1068,6 +1125,10 @@ class TmuxAgentSession:
             raw_delta=raw_delta,
             status=status,
             duration_ms=duration_ms,
+            started_at=started_wall,
+            ended_at=ended_wall,
+            canonical_session_id=self.canonical_session_id(),
+            tmux_name=self.tmux_name,
         )
 
     # ── 轮询辅助 ───────────────────────────────────────────────────
@@ -1153,6 +1214,8 @@ class SessionLauncher:
         keep_alive: bool = False,
         timeout_s: float | None = None,
         tmux_target: str | None = None,
+        persist_turn: bool = False,
+        source: SessionSource | str = "terminal",
     ) -> TurnResult:
         """开会话（或复用）→ 投喂一轮 → 取归一化结果。
 
@@ -1162,6 +1225,9 @@ class SessionLauncher:
         ``timeout_s`` 缺省 None = 本轮不设时间上限（见 ``TmuxAgentSession.send``）。
         ``tmux_target`` 给定时 agent 借住在那个已有的 tmux 会话里跑，结束后只请它退场，
         会话本身留着（见 ``TmuxAgentSession.tmux_target``）。
+        ``persist_turn=True`` 时走统一持久化单出口 ``persist_turn_result``：具备原生
+        持久化转录的驱动不生成合成 ``tmux://`` 双轨目录，无原生转录驱动强制复用唯一
+        规范会话编号落盘。
         """
         session = self.open_session(
             agent_type,
@@ -1174,7 +1240,22 @@ class SessionLauncher:
             tmux_target=tmux_target,
         )
         try:
-            return session.send(prompt, timeout_s=timeout_s)
+            result = session.send(prompt, timeout_s=timeout_s)
+            if persist_turn:
+                with contextlib.suppress(Exception):
+                    from frago.agent_driver.transcript import persist_turn_result
+
+                    persist_turn_result(
+                        session_id=session_id,
+                        agent_type=agent_type,
+                        project_path=cwd,
+                        user_prompt=prompt,
+                        result=result,
+                        native_session_id=native_session_id,
+                        source=source,
+                        driver=session.driver,
+                    )
+            return result
         finally:
             if not keep_alive:
                 with contextlib.suppress(Exception):

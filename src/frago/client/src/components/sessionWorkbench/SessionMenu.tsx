@@ -5,7 +5,7 @@
  *
  * | 段 | 项 |
  * |---|---|
- * | 1 | Remove from today（只在今天捡回来的那几场上出现）、Pin / Unpin、Put in group（分组接回之前置灰）、复制续接命令 |
+ * | 1 | Remove from today（只在今天捡回来的那几场上出现）、Pin / Unpin、Put in group（分组接回之前置灰）、复制续接命令、交接到新会话（页头传入 `onHandoff` 时出现，任意时机可用） |
  * | 2 | Close tmux session —— 只在这场开在 tmux 里时出现，整段连同分隔线都不画 |
  * | 3 | Delete session —— 报错红，先确认 |
  *
@@ -26,7 +26,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { CalendarMinus, Check, Copy, Folder, Loader2, MoreHorizontal, Pin, SquareTerminal, Trash2 } from 'lucide-react';
+import { CalendarMinus, Check, Copy, Folder, GitBranchPlus, Loader2, MoreHorizontal, Pin, SquareTerminal, Trash2 } from 'lucide-react';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { menuOpensUp } from './StackPanel';
 import { resumeCommand } from './SessionItem';
@@ -55,6 +55,10 @@ export interface SessionMenuProps {
   /** 复制续接命令。不给、或这一家拼不出续接命令就不长这一项（见 `resumeCommand`）。 */
   onCopy?: (session: WorkbenchSession) => void;
   copied?: boolean;
+  /** 交接到新会话：从页头「…」二级菜单触发，不设上下文水位或运行态门控。 */
+  onHandoff?: (session: WorkbenchSession) => void;
+  /** 交接请求正在路上：仅防重复点击。 */
+  handingOff?: boolean;
   /**
    * 往哪个框里量「下面放不放得下」：菜单外层带这个属性的那个祖先。找不到就按窗口量。
    */
@@ -77,6 +81,8 @@ export default function SessionMenu({
   onDeleted,
   onCopy,
   copied = false,
+  onHandoff,
+  handingOff = false,
   boundSelector = '[data-session-menu-bound]',
 }: SessionMenuProps) {
   const { t } = useTranslation();
@@ -286,6 +292,28 @@ export default function SessionMenu({
                       <Copy size={12} className="shrink-0 text-text-muted" />
                     )}
                     {t('workbench.menu.copyResume')}
+                  </button>
+                ) : null}
+                {onHandoff ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="session-menu-handoff"
+                    disabled={handingOff}
+                    title={t('workbench.composer.handoffHint')}
+                    onClick={() => {
+                      if (handingOff) return;
+                      onHandoff(session);
+                      closeMenu();
+                    }}
+                    className={ITEM}
+                  >
+                    {handingOff ? (
+                      <Loader2 size={12} className="shrink-0 animate-spin text-text-muted" />
+                    ) : (
+                      <GitBranchPlus size={12} className="shrink-0 text-text-muted" />
+                    )}
+                    {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
                   </button>
                 ) : null}
               </div>
