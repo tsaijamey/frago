@@ -26,7 +26,7 @@
  * 变量（跟着 `[data-theme]` 走），强调色与状态色照搬工作台设计稿的色相。
  */
 
-import { createContext, memo, useContext, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -716,7 +716,7 @@ function Prose({ text }: { text: string }) {
  * 排过版的正文。agent 的回复本来就是 Markdown 写的——标题、清单、表格、代码块，
  * 照字面铺开等于把排版信息当噪音丢掉，一屏井号和星号读起来比什么都累。
  */
-function Rich({ text }: { text: string }) {
+function Rich({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const { t } = useTranslation();
   if (!text) {
     return <p className="text-scaled-prose italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
@@ -724,6 +724,7 @@ function Rich({ text }: { text: string }) {
   return (
     <MarkdownContent
       content={text}
+      streaming={streaming}
       className="text-scaled-prose min-w-0 max-w-full break-words [overflow-wrap:anywhere] leading-[1.72] text-text-primary"
     />
   );
@@ -1433,7 +1434,7 @@ function RectifyStrip({ meta }: { meta: RectifyMeta }) {
  * 只认主会话的回复：子 agent 问的是主控，主控看的是 tmux 会话、看不到页面上的卡片，
  * 画成可点的卡只会让人替主控作答。子 agent 那一块照普通代码块显示。
  */
-function AgentSay({ record }: { record: WorkbenchRecord }) {
+function AgentSay({ record, streaming = false }: { record: WorkbenchRecord; streaming?: boolean }) {
   const { t } = useTranslation();
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
@@ -1490,13 +1491,13 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         <>
           {rectifyMeta ? (
             <>
-              <Rich text={trailing.body} />
+              <Rich text={trailing.body} streaming={streaming} />
               <RectifyStrip meta={rectifyMeta} />
               <DecisionReply
                 recordId={record.id}
                 text={bodyWithoutGrid}
                 split={{ ...trailing, body: '' }}
-                rich={(s) => <Rich text={s} />}
+                rich={(s) => <Rich text={s} streaming={streaming} />}
               />
             </>
           ) : (
@@ -1504,7 +1505,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
               recordId={record.id}
               text={bodyWithoutGrid}
               split={trailing}
-              rich={(s) => <Rich text={s} />}
+              rich={(s) => <Rich text={s} streaming={streaming} />}
             />
           )}
           {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
@@ -1514,7 +1515,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         </>
       ) : (
         <>
-          <Rich text={displayText} />
+          <Rich text={displayText} streaming={streaming} />
           {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
@@ -2723,11 +2724,17 @@ function ToolRunLine({
   row,
   sessionId,
   live,
+  aborted = false,
+  highlighted = false,
 }: {
   row: ToolRow;
   sessionId: string;
   /** 这一框是记录流的最后一段：结果没到说明它还在跑。不是的话只是没留下结果。 */
   live: boolean;
+  /** 该条工具调用为异常中断点（进程中途退场且无配对结果）。 */
+  aborted?: boolean;
+  /** 「定位中断点」触发的短暂红框聚焦闪烁。 */
+  highlighted?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -2741,6 +2748,8 @@ function ToolRunLine({
     num(result, 'duration_ms') ??
     (row.call && row.result && row.result.ts >= row.call.ts ? row.result.ts - row.call.ts : null);
   const failed = status === 'error';
+  const isAborted = aborted && !row.result;
+  const recordId = row.call?.id ?? row.result?.id;
   const resultBody = str(result, 'body');
   const uiComponent =
     row.result &&
@@ -2756,23 +2765,34 @@ function ToolRunLine({
       ? parseAllImageGridOutputs(resultBody)
       : [];
   return (
-    <li className="min-w-0">
+    <li
+      className="min-w-0"
+      data-record-id={recordId}
+      data-tool-aborted={isAborted ? 'true' : undefined}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         data-testid="tool-run-line"
+        data-tool-aborted={isAborted ? 'true' : undefined}
         /* 这一行住在 `tool-run` 那个 `overflow-hidden` 的框里：全局外扩 3px 的焦点环
            一落到行上就被框边切掉半圈。补一圈内收环（`--focus-ring-inset`），框边切不到它。 */
         className={`flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left hover:bg-bg-hover focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)] ${
-          failed ? ERR_BG : ''
+          isAborted
+            ? `tool-aborted${highlighted ? ' tool-abort-flash' : ''}`
+            : failed
+              ? ERR_BG
+              : ''
         }`}
       >
         <ChevronRight
           size={11}
           className={`shrink-0 text-text-dim transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         />
-        <span className="shrink-0 text-text-muted">{toolIcon(family)}</span>
+        <span className={`shrink-0 ${isAborted ? 'text-accent-error' : 'text-text-muted'}`}>
+          {toolIcon(family)}
+        </span>
         <span className="shrink-0 font-mono text-[12px] font-semibold text-text-primary">{name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">{preview}</span>
         {row.result ? (
@@ -2781,6 +2801,10 @@ function ToolRunLine({
             {failed || status === 'denied' || status === 'interrupted' ? (
               <StatusChip status={status} />
             ) : null}
+          </span>
+        ) : isAborted ? (
+          <span data-testid="tool-aborted-badge" className="tool-aborted-badge">
+            {t('workbench.abort.toolBadge')}
           </span>
         ) : (
           <span className="shrink-0 text-[11px] text-text-muted">
@@ -2833,16 +2857,32 @@ export function ToolRun({
   extras,
   sessionId,
   live,
+  abortedCallId = null,
+  forceOpenSeq = 0,
+  highlightedCallId = null,
 }: {
   rows: ToolRow[];
   /** 夹在调用之间、被一并收进框里的其余记录。 */
   extras: WorkbenchRecord[];
   sessionId: string;
   live: boolean;
+  /** 当前会话工具异常中断的 tool.call record id（命中时默认展开并标红）。 */
+  abortedCallId?: string | null;
+  /** 外部「定位中断点」序号变化时强制展开包含中断工具的折箱。 */
+  forceOpenSeq?: number;
+  /** 短暂高亮闪烁的目标 tool.call record id。 */
+  highlightedCallId?: string | null;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const hasAborted = Boolean(
+    abortedCallId && rows.some((r) => r.call?.id === abortedCallId && !r.result)
+  );
+  const [open, setOpen] = useState(() => hasAborted);
   const [showExtras, setShowExtras] = useState(false);
+
+  useEffect(() => {
+    if (hasAborted) setOpen(true);
+  }, [hasAborted, forceOpenSeq]);
 
   let totalMs = 0;
   let errCount = 0;
@@ -2869,6 +2909,7 @@ export function ToolRun({
   return (
     <section
       data-testid="turn-tools-rail"
+      data-has-aborted={hasAborted ? 'true' : undefined}
       className="turn-tools min-w-0"
     >
       <button
@@ -2884,6 +2925,11 @@ export function ToolRun({
         />
         <span className="cnt">{t('workbench.record.toolRunCount', { count: rows.length })}</span>
         {totalMs > 0 ? <span className="dur">{formatDuration(totalMs)}</span> : null}
+        {hasAborted ? (
+          <span data-testid="tool-run-abort-pill" className="err-pill">
+            {t('workbench.abort.toolPill')}
+          </span>
+        ) : null}
         {errCount > 0 ? (
           <span className="err-pill">
             {errCount} {t('workbench.record.status.error')}
@@ -2900,14 +2946,19 @@ export function ToolRun({
       {open ? (
         <div data-testid="tool-run" className="turn-tools-list">
           <ul className="divide-y divide-border-color">
-            {rows.map((row, i) => (
-              <ToolRunLine
-                key={(row.call ?? row.result)?.id ?? i}
-                row={row}
-                sessionId={sessionId}
-                live={live}
-              />
-            ))}
+            {rows.map((row, i) => {
+              const callId = row.call?.id ?? null;
+              return (
+                <ToolRunLine
+                  key={(row.call ?? row.result)?.id ?? i}
+                  row={row}
+                  sessionId={sessionId}
+                  live={live}
+                  aborted={Boolean(abortedCallId && callId === abortedCallId && !row.result)}
+                  highlighted={Boolean(highlightedCallId && callId === highlightedCallId)}
+                />
+              );
+            })}
           </ul>
           {extras.length ? (
             <div className="border-t border-border-color">
@@ -3028,6 +3079,8 @@ export interface RecordCardProps {
   record: WorkbenchRecord;
   /** 取原文要带会话编号——记录编号自己定位不到档案。 */
   sessionId: string;
+  /** 仅当前会话处于流式输出且为末尾 `agent.say` 时传 `true`。 */
+  streaming?: boolean;
 }
 
 /**
@@ -3035,7 +3088,7 @@ export interface RecordCardProps {
  * 重渲染一次整栏；不记忆化的话那两百张全部重跑一遍分发与格式化，追加越密越卡，正是
  * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
  */
-function RecordCardInner({ record, sessionId }: RecordCardProps) {
+function RecordCardInner({ record, sessionId, streaming = false }: RecordCardProps) {
   const override = useContext(RecordOverrideContext);
   const special = override ? override(record) : null;
   if (special) return <>{special}</>;
@@ -3044,7 +3097,7 @@ function RecordCardInner({ record, sessionId }: RecordCardProps) {
     case 'user.say':
       return <UserSay record={record} />;
     case 'agent.say':
-      return <AgentSay record={record} />;
+      return <AgentSay record={record} streaming={streaming} />;
     case 'agent.think':
       return <AgentThink record={record} />;
     case 'context.inject':

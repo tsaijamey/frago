@@ -144,7 +144,54 @@
         <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
         <span>最新消息</span>
       </button>
+
+      <!-- 引用悬浮气泡 -->
+      <div id="cite-popover" class="cite-popover is-hidden" role="tooltip">
+        <div class="cite-pop-head">
+          <span id="cite-pop-badge" class="cite-pop-badge">[1]</span>
+          <span id="cite-pop-title" class="cite-pop-title"></span>
+        </div>
+        <div id="cite-pop-path" class="cite-pop-path"></div>
+        <div id="cite-pop-excerpt" class="cite-pop-excerpt is-hidden"></div>
+        <div id="cite-pop-hint" class="cite-pop-hint"></div>
+      </div>
+
+      <!-- 引用/文件预览抽屉（经 8093 鉴权沙箱读取，绝不直连 file://） -->
+      <section id="cite-preview-drawer" class="cite-drawer is-hidden" aria-label="文件与引用预览">
+        <div class="cite-drawer-head">
+          <div class="cite-drawer-title-wrap">
+            <span id="cite-drawer-title" class="cite-drawer-title"></span>
+            <span id="cite-drawer-path" class="cite-drawer-path"></span>
+          </div>
+          <div class="cite-drawer-actions">
+            <button id="cite-drawer-close" class="icon-btn" type="button" title="关闭预览 (Esc)" aria-label="关闭预览">
+              <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="cite-drawer-banner" class="cite-drawer-banner is-hidden"></div>
+        <div id="cite-drawer-body" class="cite-drawer-body"></div>
+      </section>
     </main>
+
+    <!-- 外链二次确认弹窗 -->
+    <div id="cite-ext-modal" class="cite-ext-modal-bd is-hidden" role="dialog" aria-modal="true" aria-labelledby="cite-ext-title">
+      <div class="cite-ext-modal">
+        <div class="cite-ext-head">
+          <div id="cite-ext-title" class="cite-ext-title"></div>
+        </div>
+        <div class="cite-ext-body">
+          <div class="cite-ext-label">即将打开外部网页链接</div>
+          <div id="cite-ext-url" class="cite-ext-url"></div>
+          <div id="cite-ext-excerpt" class="cite-ext-excerpt is-hidden"></div>
+          <div class="cite-ext-warn">请核对目标域名是否可信后继续。</div>
+        </div>
+        <div class="cite-ext-foot">
+          <button id="cite-ext-cancel" class="btn btn-sm" type="button">取消</button>
+          <button id="cite-ext-open" class="btn btn-primary btn-sm" type="button">在新标签页打开 ↗</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 3. 底部紧凑输入与网页选区挂载栏 -->
     <footer class="chat-composer">

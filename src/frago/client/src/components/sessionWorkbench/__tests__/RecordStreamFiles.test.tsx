@@ -137,7 +137,7 @@ describe('清单开着的时候', () => {
 });
 
 describe('点击回复正文里的 file:// 本地文件链接', () => {
-  it('拦截跳转并就地打开统一 FileViewer 预览浮窗（含行号提示、复制路径、打开所在目录）', () => {
+  it('先打开绿色全文预览侧栏（file-mode），点击全屏展开再切到 FileViewer（含行号锚点与操作按钮）', () => {
     renderStream({
       records: [
         {
@@ -159,6 +159,16 @@ describe('点击回复正文里的 file:// 本地文件链接', () => {
     const link = screen.getByRole('link', { name: 'routes.ts' });
     fireEvent.click(link);
 
+    const drawer = screen.getByTestId('cite-preview-drawer');
+    expect(drawer).toBeTruthy();
+    expect(drawer.getAttribute('data-drawer-mode')).toBe('file');
+    const banner = screen.getByTestId('cite-drawer-banner');
+    expect(banner.classList.contains('file-mode')).toBe(true);
+    expect(screen.getByTestId('cite-drawer-copy')).toBeTruthy();
+    expect(screen.getByTestId('cite-drawer-reveal')).toBeTruthy();
+    expect(screen.queryByTestId('file-viewer')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('cite-drawer-expand'));
     const viewer = screen.getByTestId('file-viewer');
     expect(viewer).toBeTruthy();
     expect(screen.getByTestId('file-viewer-line-anchor').textContent).toBe('#L84');
@@ -167,6 +177,12 @@ describe('点击回复正文里的 file:// 本地文件链接', () => {
 
     fireEvent.click(screen.getByTestId('file-viewer-close'));
     expect(screen.queryByTestId('file-viewer')).toBeNull();
+
+    // 重新点开侧栏并验证关闭按钮
+    fireEvent.click(link);
+    expect(screen.getByTestId('cite-preview-drawer')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('close-cite-drawer-btn'));
+    expect(screen.queryByTestId('cite-preview-drawer')).toBeNull();
   });
 });
 

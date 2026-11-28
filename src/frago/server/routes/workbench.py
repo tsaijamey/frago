@@ -484,7 +484,7 @@ async def collect_workbench_session_rows(
     }
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
-    computed_states: list[tuple[Any, str, bool, str, bool, str]] = []
+    computed_states: list[tuple[Any, str, bool, str, bool, str, bool, str | None]] = []
     running_worker_parents: set[str] = set()
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
@@ -544,7 +544,23 @@ async def collect_workbench_session_rows(
             and status == "running"
         ):
             running_worker_parents.add(card.parent_session_id)
-        computed_states.append((card, name, alive, status, is_alive, str(lifecycle_state or "completed")))
+        abort_reason = (
+            ev.heal_summary
+            or (getattr(onto_rec, "summary", None) if onto_rec is not None else None)
+            or getattr(card, "digest_stuck", None)
+        ) if lifecycle_state == "error" else None
+        computed_states.append(
+            (
+                card,
+                name,
+                alive,
+                status,
+                is_alive,
+                str(lifecycle_state or "completed"),
+                bool(ev.tool_aborted),
+                str(abort_reason).strip() or None if abort_reason else None,
+            )
+        )
     if pending_onto_heals and can_write_ontology_store(onto_svc):
         with contextlib.suppress(Exception):
             await asyncio.to_thread(onto_svc.store.batch_reconcile_states, pending_onto_heals)
@@ -578,7 +594,16 @@ async def collect_workbench_session_rows(
         callback_inbox_map = _callback_inbox_summaries_by_caller()
         effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
-        for card, name, alive, status, is_alive, lifecycle_state in computed_states:
+        for (
+            card,
+            name,
+            alive,
+            status,
+            is_alive,
+            lifecycle_state,
+            tool_aborted,
+            abort_reason,
+        ) in computed_states:
             employee_id = _resolve_employee_id(card)
             if filter_employee_id is not None and employee_id != filter_employee_id:
                 continue
@@ -611,7 +636,7 @@ async def collect_workbench_session_rows(
                 is_local_ops=is_local_ops,
             )
             card_data = asdict(card)
-            card_data.pop("last_kind", None)
+            last_kind_val = card_data.pop("last_kind", None)
             matched_post = posts_by_id.get(employee_id) if employee_id else None
             employee_title = (
                 matched_post.title if matched_post is not None else employee_id
@@ -640,6 +665,9 @@ async def collect_workbench_session_rows(
                     if status == "error"
                     else ("running" if status == "running" else "completed")
                 ),
+                "last_kind": last_kind_val,
+                "tool_aborted": tool_aborted,
+                "abort_reason": abort_reason,
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,
@@ -1505,6 +1533,114 @@ async def _read_text(sid: str, path: str) -> dict[str, Any]:
     return _read_body(await _listed_target(sid, path), path)
 
 
+_SENSITIVE_DIR_NAMES = frozenset(
+    {".ssh", ".gnupg", ".aws", ".kube", ".docker"}
+)
+_SENSITIVE_FILENAMES = frozenset(
+    {
+        ".env",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".git-credentials",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+        "authorized_keys",
+        "known_hosts",
+        "credentials",
+        "secrets.json",
+        "auth.json",
+    }
+)
+_SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks")
+
+
+def _frago_home_root() -> Path:
+    raw = os.environ.get("FRAGO_HOME")
+    base = Path(os.path.expanduser(raw)) if raw else (Path.home() / ".frago")
+    return base.resolve()
+
+
+def _is_sensitive_cited_path(target: Path, raw_path: str) -> bool:
+    """Reject secret/credential files even inside allowed sandbox roots."""
+    candidates = [target]
+    with contextlib.suppress(OSError):
+        candidates.append(Path(os.path.expanduser(raw_path)))
+    for candidate in candidates:
+        parts_lower = [p.lower() for p in candidate.parts]
+        if any(p in _SENSITIVE_DIR_NAMES for p in parts_lower):
+            return True
+        name_lower = candidate.name.lower()
+        if (
+            name_lower in _SENSITIVE_FILENAMES
+            or name_lower.startswith(".env.")
+            or name_lower.endswith(_SENSITIVE_SUFFIXES)
+        ):
+            return True
+    resolved_str = str(target).lower()
+    if resolved_str in {"/etc/shadow", "/etc/gshadow", "/etc/passwd", "/etc/sudoers"}:
+        return True
+    try:
+        frago_home = _frago_home_root()
+        if target.is_relative_to(frago_home):
+            rel_parts = [p.lower() for p in target.relative_to(frago_home).parts]
+            if rel_parts and (
+                rel_parts[0].startswith("secret")
+                or rel_parts[0].startswith("auth")
+                or rel_parts[0].startswith("token")
+            ):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+async def _cited_target(sid: str, path: str) -> Path:
+    """Sandboxed read-only target resolution for ``scope=cited`` file/citation previews.
+
+    Allowed only if the resolved file:
+    - is NOT a sensitive secret/credential file; AND
+    - belongs to one of: session touched files, session working directory, or ``FRAGO_HOME`` (``~/.frago``).
+    """
+    base = await asyncio.to_thread(_session_root, sid)
+    touched_files = await _touched(sid)
+    resolved, err_reason = _resolve_path(path, base)
+    if resolved is None:
+        raise _path_rejection_error(path, err_reason)
+
+    target = Path(resolved)
+    if _is_sensitive_cited_path(target, path):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Refused: {path} is a sensitive file (sandbox-denied)",
+        )
+
+    allowed_touched = {
+        n for f in touched_files if (n := _resolve_path(f.path, base)[0]) is not None
+    }
+    in_touched = resolved in allowed_touched
+    in_session_root = base is not None and (
+        resolved == base or target.is_relative_to(Path(base))
+    )
+    try:
+        frago_home = _frago_home_root()
+        in_frago_home = target == frago_home or target.is_relative_to(frago_home)
+    except OSError:
+        in_frago_home = False
+
+    if not (in_touched or in_session_root or in_frago_home):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refused: {path} resolves outside the session sandbox "
+                "(not touched, outside session cwd and FRAGO_HOME)"
+            ),
+        )
+    return target
+
+
 class WriteSessionFileRequest(BaseModel):
     """``PUT /workbench/sessions/{sid}/file`` 的请求体：要改的那份文件路径与新正文。"""
 
@@ -1515,9 +1651,17 @@ class WriteSessionFileRequest(BaseModel):
 @router.get("/workbench/sessions/{sid}/file")
 async def read_session_file(
     sid: str,
-    path: str = Query(..., description="要取内容的那一份文件，必须是本会话改过的其中之一"),
+    path: str = Query(..., description="要取内容的那一份文件"),
+    scope: Literal["touched", "cited"] = Query(
+        "touched",
+        description="touched=仅本会话改过的文件（默认）；cited=引用溯源/本地链接沙箱只读预览",
+    ),
 ) -> dict[str, Any]:
-    """取清单里某一份文件的内容，给浮窗预览用。门的规矩见 :func:`_listed_target`。"""
+    """取文件正文，给浮窗/侧栏预览用。默认走 ``touched`` 严格白名单，``scope=cited`` 走沙箱只读预览。"""
+    effective_scope = scope if isinstance(scope, str) else "touched"
+    if effective_scope == "cited":
+        target = await _cited_target(sid, path)
+        return _read_body(target, path)
     return await _read_text(sid, path)
 
 

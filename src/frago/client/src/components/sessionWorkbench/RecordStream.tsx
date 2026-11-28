@@ -82,6 +82,14 @@ import FileViewer, {
 import { revealPath } from '@/api';
 import type { SessionChildrenResponse, SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
+import {
+  CitationInteractionContext,
+  type CiteDefinition,
+  type CitationInteractionContextValue,
+} from '@/components/ui/citations';
+import CiteDrawer, { type CiteDrawerTarget } from './CiteDrawer';
+import CiteExternalModal from './CiteExternalModal';
+import CitePopover from './CitePopover';
 import EmptyState from '@/components/ui/EmptyState';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
@@ -1478,12 +1486,16 @@ export interface RecordStreamProps {
   onLoadOlder: () => void;
   /** 刚投了一句话进去、还没见 agent 有任何动静。为真时跟到底，让那句话下面的「Agent on it」露出来。 */
   awaitingAgent?: boolean;
-  /** 当前会话是否仍在运行中（用于暂存未等到 Stop 消息的交互决策卡，避免早于收尾正文闪现）。 */
+  /** 当前会话是否仍在运行中（用于暂存未等到 Stop 消息的交互决策卡，以及仅对末尾 `agent.say` 开启未定义 `[^N]` 流式占位）。 */
   sessionRunning?: boolean;
   /** 本页本次发出的每一句话的进度。按 `recordId` 挂到对应气泡下面。 */
   trails?: SendTrail[];
-  /** 滚到这条记录（输入区「Show」）。`at` 让同一条连点两次也各算一次。 */
+  /** 滚到这条记录（输入区「Show」或异常中断「定位中断点」）。`at` 让同一条连点两次也各算一次。 */
   scrollTarget?: { recordId: string; at: number } | null;
+  /** 当前会话工具异常中断点的 `tool.call` 记录 ID（存在时自动展开对应工具框并标红）。 */
+  abortedToolCallId?: string | null;
+  /** 点击「定位中断点」的递增序号，用于强制展开对应工具框并触发短暂红框高亮。 */
+  abortLocateSeq?: number;
   /**
    * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
    * 接住它的是输入区——这一侧不碰输入框的内容。
@@ -1583,6 +1595,12 @@ export interface RecordStreamProps {
   onOpenStackPopover?: (state: StackPopoverState) => void;
   /** 视图处于非轨模式（Watcher/Files/Terminal/Hook/Tool/System 或无轨）时通知上层展示 Composer 兜底胶囊。 */
   onStreamViewChange?: (view: { nonRail: boolean }) => void;
+  /** 上层全屏 FileViewer 是否处于打开态（互斥关闭引用抽屉/浮层）。 */
+  fileViewerOpen?: boolean;
+  /** 通知上层收起 Stack 浮层。 */
+  onCloseStackPopover?: () => void;
+  /** 通知上层收起全屏 FileViewer。 */
+  onCloseFileViewer?: () => void;
 }
 
 interface WatcherSlice {
@@ -1831,9 +1849,11 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
-  sessionRunning,
+  sessionRunning = false,
   trails = [],
   scrollTarget = null,
+  abortedToolCallId = null,
+  abortLocateSeq = 0,
   onQuote,
   onStack,
   onBranch,
@@ -1867,6 +1887,9 @@ export default function RecordStream({
   stackPopover = null,
   onOpenStackPopover,
   onStreamViewChange,
+  fileViewerOpen = false,
+  onCloseStackPopover,
+  onCloseFileViewer,
 }: RecordStreamProps) {
   const { t, i18n } = useTranslation();
   const isZh = i18n.language?.startsWith('zh');
@@ -1877,6 +1900,7 @@ export default function RecordStream({
   const [lens, setLens] = useState<StreamLens>(initialLensState.lens);
   const [watcherOpen, setWatcherOpen] = useState(initialLensState.progressOpen);
   const [inspectOpen, setInspectOpen] = useState(false);
+  const [highlightedAbortId, setHighlightedAbortId] = useState<string | null>(null);
   const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
   const [anchorExpanded, setAnchorExpanded] = useState(false);
   const [stateExpanded, setStateExpanded] = useState(false);
@@ -1904,12 +1928,143 @@ export default function RecordStream({
     size: number | null;
     line?: string;
     mode?: 'preview' | 'file' | 'changes' | 'edit';
+    scope?: 'touched' | 'cited';
   } | null>(null);
+  const [citePopover, setCitePopover] = useState<{
+    def: CiteDefinition;
+    anchorRect: DOMRect;
+  } | null>(null);
+  const [citeDrawer, setCiteDrawer] = useState<CiteDrawerTarget | null>(null);
+  const [citeExtModal, setCiteExtModal] = useState<CiteDefinition | null>(null);
+  const citeHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCiteHoverTimer = useCallback(() => {
+    if (citeHoverTimerRef.current !== null) {
+      clearTimeout(citeHoverTimerRef.current);
+      citeHoverTimerRef.current = null;
+    }
+  }, []);
+
+  const closeCitations = useCallback(() => {
+    clearCiteHoverTimer();
+    setCitePopover(null);
+    setCiteDrawer(null);
+    setCiteExtModal(null);
+  }, [clearCiteHoverTimer]);
+
+  useEffect(() => {
+    closeCitations();
+  }, [sessionId, closeCitations]);
+
+  useEffect(() => {
+    if (stackPopover || fileViewerOpen || filesOpen || terminalOpen || watcherOpen || peek) {
+      closeCitations();
+    }
+  }, [stackPopover, fileViewerOpen, filesOpen, terminalOpen, watcherOpen, peek, closeCitations]);
+
+  useEffect(() => {
+    return () => clearCiteHoverTimer();
+  }, [clearCiteHoverTimer]);
+
+  useEffect(() => {
+    if (!citeExtModal && !citeDrawer && !citePopover) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (citeExtModal) {
+        setCiteExtModal(null);
+      } else if (citeDrawer) {
+        setCiteDrawer(null);
+      } else if (citePopover) {
+        setCitePopover(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [citeExtModal, citeDrawer, citePopover]);
+
+  const handleCiteHover = useCallback(
+    (def: CiteDefinition, anchorEl: HTMLElement) => {
+      clearCiteHoverTimer();
+      const rect = anchorEl.getBoundingClientRect();
+      setCitePopover({ def, anchorRect: rect });
+    },
+    [clearCiteHoverTimer]
+  );
+
+  const handleCiteLeave = useCallback(() => {
+    clearCiteHoverTimer();
+    citeHoverTimerRef.current = setTimeout(() => {
+      setCitePopover(null);
+      citeHoverTimerRef.current = null;
+    }, 160);
+  }, [clearCiteHoverTimer]);
+
+  const handleCiteClick = useCallback(
+    (def: CiteDefinition) => {
+      if (def.kind === 'invalid') return;
+      clearCiteHoverTimer();
+      setCitePopover(null);
+      if (def.kind === 'web') {
+        setCiteExtModal(def);
+        return;
+      }
+      if (!preview) return;
+      setPeek(null);
+      setCiteExtModal(null);
+      setWatcherOpen(false);
+      onFilesOpenChange?.(false);
+      onTerminalOpenChange?.(false);
+      onCloseStackPopover?.();
+      onCloseFileViewer?.();
+      setCiteDrawer({ mode: 'cite', def });
+    },
+    [clearCiteHoverTimer, preview, onFilesOpenChange, onTerminalOpenChange, onCloseStackPopover, onCloseFileViewer]
+  );
+
+  const activeCiteId =
+    citeDrawer?.mode === 'cite'
+      ? citeDrawer.def.id
+      : citePopover?.def.id ?? citeExtModal?.id ?? null;
+
+  const citationInteraction = useMemo<CitationInteractionContextValue>(
+    () => ({
+      activeCiteId,
+      onCiteHover: handleCiteHover,
+      onCiteLeave: handleCiteLeave,
+      onCiteClick: (def) => handleCiteClick(def),
+    }),
+    [activeCiteId, handleCiteHover, handleCiteLeave, handleCiteClick]
+  );
+
   const handleFileLink = useCallback(
     (target: FileLinkTarget) => {
-      if (preview) setPeek({ path: target.path, size: null, line: target.line });
+      if (!preview) return;
+      const isDir = target.path.endsWith('/') || target.path.endsWith('\\');
+      if (isDir) {
+        closeCitations();
+        setPeek({ path: target.path, size: null, line: target.line });
+        return;
+      }
+      clearCiteHoverTimer();
+      setCitePopover(null);
+      setCiteExtModal(null);
+      setPeek(null);
+      setWatcherOpen(false);
+      onFilesOpenChange?.(false);
+      onTerminalOpenChange?.(false);
+      onCloseStackPopover?.();
+      onCloseFileViewer?.();
+      setCiteDrawer({ mode: 'file', path: target.path, line: target.line });
     },
-    [preview]
+    [
+      preview,
+      closeCitations,
+      clearCiteHoverTimer,
+      onFilesOpenChange,
+      onTerminalOpenChange,
+      onCloseStackPopover,
+      onCloseFileViewer,
+    ]
   );
 
   const streamActions = useMemo<RecordStreamActions>(
@@ -2441,10 +2596,24 @@ export default function RecordStream({
     </p>
   ) : null;
 
+  const lastAgentSayId = useMemo(() => {
+    for (let i = resolved.length - 1; i >= 0; i -= 1) {
+      if (resolved[i].kind === 'agent.say') return resolved[i].id;
+    }
+    return null;
+  }, [resolved]);
+
   /** 一条记录连同挂在它下面的进度。只有对得上某份进度的记录才多包一层。 */
   const renderRecord = (record: WorkbenchRecord) => {
     const trail = trailOf.get(record.id);
-    const bare = <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} />;
+    const bare = (
+      <RecordCard
+        key={record.id}
+        record={record}
+        sessionId={sessionId ?? ''}
+        streaming={Boolean(sessionRunning && record.id === lastAgentSayId)}
+      />
+    );
     const decisionReveal =
       record.kind === 'agent.say' &&
       record.payload.ui_component_reveal === true &&
@@ -2531,7 +2700,10 @@ export default function RecordStream({
           rows={seg.rows}
           extras={seg.extras}
           sessionId={sessionId ?? ''}
-          live={seg === lastSegment}
+          live={seg === lastSegment && !abortedToolCallId}
+          abortedCallId={abortedToolCallId}
+          forceOpenSeq={abortLocateSeq}
+          highlightedCallId={highlightedAbortId}
         />
       );
     }
@@ -2928,7 +3100,7 @@ export default function RecordStream({
     }
   }, [awaitingAgent, scrollToBottom]);
 
-  // 输入区「Show」：滚到那句话。它可能在当前镜头里看不见，那就先回到「对话」档。
+  // 输入区「Show」或异常中断「定位中断点」：滚到目标记录。若当前镜头看不到该记录，自动切至能看见它的镜头。
   const scrollAt = scrollTarget?.at ?? 0;
   const scrollId = scrollTarget?.recordId ?? '';
   useEffect(() => {
@@ -2946,9 +3118,14 @@ export default function RecordStream({
       setWatcherOpen(false);
       return;
     }
-    if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
-      setLens('talk');
-      return;
+    if (!visible.some((r) => r.id === scrollId)) {
+      const rawTarget = resolved.find((r) => r.id === scrollId);
+      const needsAll = rawTarget ? !isTalkBubbleRecord(rawTarget) : false;
+      const desiredLens: StreamLens = needsAll ? 'all' : 'talk';
+      if (lens !== desiredLens) {
+        setLens(desiredLens);
+        return;
+      }
     }
     const el = scrollRef.current?.querySelector<HTMLElement>(
       `[data-record-id="${CSS.escape(scrollId)}"]`
@@ -2959,9 +3136,16 @@ export default function RecordStream({
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     followArmed.current = false;
     el.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() });
+    if (abortedToolCallId && scrollId === abortedToolCallId) {
+      setHighlightedAbortId(scrollId);
+      const timer = window.setTimeout(() => {
+        setHighlightedAbortId((cur) => (cur === scrollId ? null : cur));
+      }, 2200);
+      return () => window.clearTimeout(timer);
+    }
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen]);
+  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen, abortedToolCallId]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
@@ -3308,6 +3492,7 @@ export default function RecordStream({
               type="button"
               data-testid="lens-watcher"
               onClick={() => {
+                closeCitations();
                 setWatcherOpen(true);
                 onFilesOpenChange?.(false);
                 onTerminalOpenChange?.(false);
@@ -3336,6 +3521,7 @@ export default function RecordStream({
                 key={id}
                 type="button"
                 onClick={() => {
+                  closeCitations();
                   setWatcherOpen(false);
                   setLens(id);
                   onFilesOpenChange?.(false);
@@ -3359,6 +3545,7 @@ export default function RecordStream({
                 type="button"
                 data-testid="lens-files"
                 onClick={() => {
+                  closeCitations();
                   setWatcherOpen(false);
                   onTerminalOpenChange?.(false);
                   onFilesOpenChange?.(!filesOpen);
@@ -3382,6 +3569,7 @@ export default function RecordStream({
                 type="button"
                 data-testid="lens-terminal"
                 onClick={() => {
+                  closeCitations();
                   setWatcherOpen(false);
                   onFilesOpenChange?.(false);
                   onTerminalOpenChange?.(!terminalOpen);
@@ -3406,6 +3594,7 @@ export default function RecordStream({
                     key={id}
                     type="button"
                     onClick={() => {
+                      closeCitations();
                       setWatcherOpen(false);
                       setLens(id);
                       onFilesOpenChange?.(false);
@@ -3487,7 +3676,8 @@ export default function RecordStream({
 
       {/* 缩略滚动条压在滚动区右侧那条空白里，所以两者包在同一个定位框里；它只在「全部」
           「对话」两档出现，其余几档本来就没有人发言和代理回复可画。 */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={scrollRef}
         id="record-stream-scroll"
@@ -3512,6 +3702,7 @@ export default function RecordStream({
         }`}
         data-testid="record-stream-scroll"
       >
+        <CitationInteractionContext.Provider value={citationInteraction}>
         <FileLinkContext.Provider value={preview ? handleFileLink : null}>
         <RecordStreamActionsContext.Provider value={streamActions}>
         <div
@@ -4422,6 +4613,7 @@ export default function RecordStream({
         </div>
         </RecordStreamActionsContext.Provider>
         </FileLinkContext.Provider>
+        </CitationInteractionContext.Provider>
       </div>
       {showMinimap ? (
         <StreamMinimap
@@ -4487,6 +4679,39 @@ export default function RecordStream({
         </div>
       ) : null}
       </div>
+      {citeDrawer && sessionId ? (
+        <CiteDrawer
+          sessionId={sessionId}
+          target={citeDrawer}
+          onClose={() => setCiteDrawer(null)}
+          onReveal={(p) => {
+            if (onRevealFile) onRevealFile(p);
+            else void revealPath(p).catch(() => {});
+          }}
+          onOpenFullViewer={(p, line) => {
+            setCiteDrawer(null);
+            setPeek({ path: p, size: null, line, scope: 'cited' });
+          }}
+        />
+      ) : null}
+      </div>
+
+      {citePopover ? (
+        <CitePopover
+          def={citePopover.def}
+          anchorRect={citePopover.anchorRect}
+          onMouseEnter={clearCiteHoverTimer}
+          onMouseLeave={handleCiteLeave}
+          onOpen={(def) => handleCiteClick(def)}
+        />
+      ) : null}
+
+      {citeExtModal ? (
+        <CiteExternalModal
+          def={citeExtModal}
+          onClose={() => setCiteExtModal(null)}
+        />
+      ) : null}
 
       {/* 圈中一段文字之后冒出来的「引用」按钮，以及短选区的同字标绿。
           它挂在滚动容器外面：摆在里面会被 `overflow-y-auto` 裁掉一半。 */}
@@ -4518,6 +4743,7 @@ export default function RecordStream({
               index={viewerIdx}
               line={peek.line}
               initialMode={peek.mode}
+              scope={peek.scope}
               onClose={() => setPeek(null)}
               onStep={(delta) => {
                 const total = viewerFiles.length;

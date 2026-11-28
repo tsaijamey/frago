@@ -153,7 +153,7 @@ export interface WorkbenchSession {
   has_running_worker?: boolean;
   /** 该会话此刻是否真正存在需要人类拍板的未决事项（服务端收敛判定）。 */
   need_decision?: boolean;
-  /** 本体五态生命周期（queued | running | awaiting_input | completed | error | cancelled）。 */
+  /** 本体六态生命周期（queued | running | awaiting_input | completed | error | cancelled）。 */
   lifecycle_state?:
     | 'queued'
     | 'running'
@@ -163,6 +163,12 @@ export interface WorkbenchSession {
     | 'cancelled'
     | string
     | null;
+  /** 末条归一化记录类型（tool.call / agent.think / user.say / agent.say 等，只读派生）。 */
+  last_kind?: string | null;
+  /** 工具调用中途异常中止未返回结果（只读派生信号，本体 lifecycle_state 仍为 error）。 */
+  tool_aborted?: boolean;
+  /** 异常中断说明（如 process_terminated_mid_turn 或阻塞摘要）。 */
+  abort_reason?: string | null;
 }
 
 /**

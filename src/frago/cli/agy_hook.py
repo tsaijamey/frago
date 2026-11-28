@@ -311,6 +311,7 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     env = dict(os.environ)
+    env.setdefault("FRAGO_HARNESS", "agy")
     sid = engine_payload.get("session_id")
     if isinstance(sid, str) and sid and not env.get("FRAGO_SESSION_ID"):
         env["FRAGO_SESSION_ID"] = sid

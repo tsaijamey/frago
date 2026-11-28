@@ -146,6 +146,11 @@ export interface ComposerProps {
    */
   packedPrompt?: { text: string; count: number; tracePath: string; at: number } | null;
   /**
+   * 外部按钮（如异常中断警示条「从断点续跑」）预填到输入框的纯文本草稿。
+   * 不产生引用胶囊，也不静默发送，交由用户检视编辑后自行发送。
+   */
+  draftPrefill?: { text: string; at: number } | null;
+  /**
    * 人在决定卡片上点出来的那一句答复，等着整句投出。
    *
    * 走的是跟「发送」同一条路（信封、进度、失败退回），只是不经输入框：框里人正在打的字
@@ -345,6 +350,7 @@ export default function Composer({
   showStackPill = false,
   onOpenStackSummary,
   packedPrompt = null,
+  draftPrefill = null,
   answer = null,
   directSend = null,
   notice = null,
@@ -631,6 +637,16 @@ export default function Composer({
     }
     setPackedBanner({ count: packedCount, tracePath: packedTrace });
   }, [packedAt, packedText, packedCount, packedTrace, addQuote, setText]);
+
+  const lastPrefillAt = useRef(0);
+  const prefillAt = draftPrefill?.at ?? 0;
+  const prefillText = draftPrefill?.text ?? '';
+  useEffect(() => {
+    if (!prefillText || !prefillAt || lastPrefillAt.current === prefillAt) return;
+    lastPrefillAt.current = prefillAt;
+    caretTo.current = prefillText.length;
+    setText(prefillText);
+  }, [prefillAt, prefillText, setText]);
 
   // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片；记下已消费的序号，防止重挂载或同帧重渲染重复投出。
   const lastAnswerAt = useRef(0);
