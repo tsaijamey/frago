@@ -2052,7 +2052,8 @@
       "closedTerminals_other": "已关掉 {{count}} 个终端",
       "idleFor": "客户端已退出 · {{age}}前停下",
       "clientExited": "客户端已退出",
-      "noReply": "agent 还没有回复"
+      "noReply": "agent 还没有回复",
+      "callbackBadge": "有 {{n}} 份新回执"
     },
     "children": {
       "runningBanner": "后台仍有 {{count}} 个派生任务正在运行",
@@ -2716,6 +2717,24 @@
       "moveUp": "上移",
       "moveDown": "下移",
       "remove": "移除"
+    },
+    "callbackInbox": {
+      "runningBar": "{{n}} 份后台回执已收齐，本轮结束后自动并入",
+      "holdingBar": "另有 {{n}} 份后台回执已就绪，拍板后自动汇总",
+      "holdingHint": "等待上方决策卡拍板",
+      "viewSummary": "查看只读摘要",
+      "collapseSummary": "收起摘要",
+      "drawerAriaLabel": "待消化异步回执只读摘要",
+      "drawerTitle": "待消化后台回执摘要（{{n}} 份）",
+      "readOnlyBadge": "纯只读 · 本轮结束后自动并入",
+      "collapse": "收起",
+      "kindWorker": "后台 Worker",
+      "kindEmployee": "同侪员工",
+      "noSummary": "（无摘要）",
+      "statusDelivering": "投递中",
+      "statusExitReady": "exit {{code}} · 已收齐",
+      "statusReady": "已收齐",
+      "statusFailed": "exit {{code}} · 异常"
     },
     "newSession": {
       "title": "新建会话",

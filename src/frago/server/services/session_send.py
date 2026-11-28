@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from frago.agent_driver.tmux_session import TmuxSendError
 from frago.session import agy_store, codex_store, opencode_store, record_reader
 from frago.session import claude_sessions as claude_svc
 from frago.session import transcript_completion as tc
@@ -412,13 +413,22 @@ def send_when_idle(
             if clock() >= deadline:
                 return "not_now"
             sleep(poll_s)
-    outcome = get_runner().submit_when_idle(
-        session_id,
-        prompt,
-        landed=landed,
-        agent_type=target.agent_type,
-        cwd=target.cwd,
-    )
+    try:
+        outcome = get_runner().submit_when_idle(
+            session_id,
+            prompt,
+            landed=landed,
+            agent_type=target.agent_type,
+            cwd=target.cwd,
+        )
+    except TmuxSendError as exc:
+        logger.warning(
+            "send_when_idle 遭遇驱动拒绝或忙态（session=%s, agent=%s）：%s",
+            session_id,
+            target.agent_type,
+            exc,
+        )
+        return "not_now"
     if outcome == "landed":
         _mark_ontology_turn_started(session_id, target.family)
     return outcome

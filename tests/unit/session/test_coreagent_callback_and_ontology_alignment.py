@@ -166,29 +166,44 @@ class TestCoreAgentCallbackChainFix:
             coreagent_runner.send_queued(sid, "hi", cwd="/tmp")
 
     def test_deliver_callback_delegates_to_running_server(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sid = "core_serverdeleg0001"
         job_id = "disp-deleg-01"
+        monkeypatch.setattr(async_dispatch, "frago_home", lambda: tmp_path)
         monkeypatch.setattr(record_reader, "detect_family", lambda _s: "coreagent")
         monkeypatch.setattr(async_dispatch, "_local_server_wakeup_port", lambda: 8093)
+
+        job = async_dispatch.AsyncDispatchJob(
+            job_id=job_id,
+            kind="worker",
+            mode="new",
+            caller_session_id=sid,
+            caller_employee_id=None,
+            caller_cwd="/tmp",
+            target_session_id="worker-deleg-01",
+            target_name="worker-deleg",
+            employee_id=None,
+            agent="claude",
+            cwd="/tmp",
+            prompt="do work",
+            task_summary="work",
+            status="delivering",
+            delivery_state="queued",
+        )
+        async_dispatch.save_dispatch_job(job)
 
         poked: list[tuple[int, str]] = []
 
         def fake_poke(port: int, target_sid: str):
             poked.append((port, target_sid))
-            q = workbench_queue.list_raw_queue(target_sid)
-            assert len(q) == 1
-            item = workbench_queue.pop_earliest(target_sid)
-            assert item is not None
-            d = workbench_queue.queue_dir(target_sid)
-            st = workbench_queue._read_queue_state(d)
-            st["delivered_items"] = [item["id"]]
-            st["delivered_job_ids"] = [job_id]
-            workbench_queue._write_queue_state(d, st)
-            return {"injected": True, "delivered": True, "item": item}
+            claimed = async_dispatch.claim_ready_callbacks_for_session(
+                target_sid, delivery_channel="idle_batch", debounce_ms=0
+            )
+            async_dispatch.finalize_claimed_callbacks(target_sid, claimed, success=True)
+            return {"delivered": True, "claimed": len(claimed), "job_ids": [job_id]}
 
-        monkeypatch.setattr(async_dispatch, "_poke_server_queue_drain", fake_poke)
+        monkeypatch.setattr(async_dispatch, "_poke_server_callback_drain", fake_poke)
         # 确保短命 watcher 子进程绝不会在本地直接触发 coreagent_runner.send_queued
         monkeypatch.setattr(
             coreagent_runner,
@@ -200,11 +215,14 @@ class TestCoreAgentCallbackChainFix:
             sid,
             f'<frago-async-callback job_id="{job_id}">done</frago-async-callback>',
             job_id=job_id,
-            max_wait_s=5.0,
-            poll_interval_s=0.05,
         )
         assert ok is True
         assert poked == [(8093, sid)]
+        # Option A 物理分轨：workbench_queue (Next Task 人类队列) 保持绝对纯净为空
+        assert workbench_queue.list_queue(sid) == []
+        reloaded = async_dispatch.load_dispatch_job(job_id)
+        assert reloaded is not None
+        assert reloaded.delivery_state == "delivered"
 
 
 class TestAgentOntologyAlignment:
@@ -274,8 +292,6 @@ class TestAgentOntologyAlignment:
     ) -> None:
         ont = MagicMock()
         stream = OpencodeStream(ontology_service=ont, origin="web")
-
-        from frago.session import opencode_store
 
         # 第一趟对齐水位（不推送历史）
         rec1 = UnifiedRecord(

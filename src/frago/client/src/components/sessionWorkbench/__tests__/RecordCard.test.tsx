@@ -1257,6 +1257,135 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     fireEvent.click(screen.getByTestId('async-callback-jump'));
     expect(onSelectSession).toHaveBeenCalledWith('core_20261106_115104_b00cf771');
   });
+
+  it('批信封 <frago-async-callbacks count="1" delivery="idle-batch"> 渲染为折叠回传卡片且零裸标签外泄', () => {
+    const batchOne =
+      '<frago-async-callbacks count="1" delivery="idle-batch" priority="background-after-human">\n\n' +
+      '【后台异步派发回执汇总】以下 1 项后台异步任务已完成且当前会话处于空闲安全窗口，请结合领域上下文复核关键结论并按需向人类汇报。\n\n' +
+      `${WORKER_CB}\n\n` +
+      '</frago-async-callbacks>';
+
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: batchOne } })}
+        sessionId={SID}
+      />
+    );
+
+    expect(screen.getAllByTestId('async-callback-card')).toHaveLength(1);
+    expect(screen.getByTestId('async-callback-job').textContent).toBe('disp-beaa67f7b8ea');
+    expect(screen.getByTestId('async-callback-body').textContent).toContain(
+      '已完成验证，48 项测试全部通过。'
+    );
+    expect(container.textContent).not.toContain('你说');
+    expect(container.textContent).not.toContain('<frago-async-callbacks');
+    expect(container.textContent).not.toContain('</frago-async-callback>');
+    expect(container.textContent).not.toContain('</frago-async-callbacks>');
+    expect(container.textContent).not.toContain('【后台异步派发回执汇总】');
+  });
+
+  it('批信封 <frago-async-callbacks count="2" delivery="turn-submit-hitchhike"> 含紧凑降级与省略提示，渲染两张卡片且无裸标签', () => {
+    const batchTwo =
+      '<frago-async-callbacks count="3" delivery="turn-submit-hitchhike" priority="background-after-human">\n\n' +
+      '【优先主线声明】主人的本轮当前请求是唯一最高优先级主线；请先直接、完整回应主人本轮请求。\n' +
+      '以下是在此之前由后台完成的异步派发回执，仅作附带参考信息。\n\n' +
+      `${WORKER_CB}\n\n` +
+      `${EMPLOYEE_FAILED_CB}\n\n` +
+      '（因上下文预算上限，其余 1 条回执已省略详情；请查阅 `~/.frago/sessions/async_dispatches/`。）\n\n' +
+      '</frago-async-callbacks>';
+
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: batchTwo } })}
+        sessionId={SID}
+      />
+    );
+
+    const cards = screen.getAllByTestId('async-callback-card');
+    expect(cards).toHaveLength(2);
+    expect(screen.getByTestId('async-callback-batch-notice').textContent).toContain(
+      '其余 1 条回执已省略详情'
+    );
+    expect(container.textContent).not.toContain('<frago-async-callbacks');
+    expect(container.textContent).not.toContain('</frago-async-callback>');
+    expect(container.textContent).not.toContain('</frago-async-callbacks>');
+    expect(container.textContent).not.toContain('【优先主线声明】');
+  });
+
+  it('批信封与人类正文混合时拆出回调卡片并正常保留人类「你说」气泡，零裸标签', () => {
+    const mixedBatch =
+      '<frago-async-callbacks count="1" delivery="turn-submit-hitchhike" priority="background-after-human">\n\n' +
+      '【优先主线声明】主人的本轮当前请求是唯一最高优先级主线。\n\n' +
+      `${WORKER_CB}\n\n` +
+      '</frago-async-callbacks>\n\n' +
+      '请继续核对 8093 实机状态';
+
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: mixedBatch } })}
+        sessionId={SID}
+      />
+    );
+
+    expect(screen.getAllByTestId('async-callback-card')).toHaveLength(1);
+    expect(screen.getByText('你说')).toBeTruthy();
+    expect(screen.getByText('请继续核对 8093 实机状态')).toBeTruthy();
+    expect(container.textContent).not.toContain('<frago-async-callbacks');
+    expect(container.textContent).not.toContain('</frago-async-callback>');
+    expect(container.textContent).not.toContain('</frago-async-callbacks>');
+  });
+
+  it('未闭合/畸形批信封优雅降级渲染不崩溃且不外泄闭合标签', () => {
+    const malformed =
+      '<frago-async-callbacks count="2" delivery="idle-batch">\n\n' +
+      '<frago-async-callback kind="worker" mode="new" job_id="disp-broken-1" worker_session_id="core_broken" status="completed">\n' +
+      '### Worker 交付结果\n' +
+      '半截回传内容\n' +
+      '</frago-async-callback>\n' +
+      '</frago-async-callback>\n' +
+      '人类后续追问';
+
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: malformed } })}
+        sessionId={SID}
+      />
+    );
+
+    expect(screen.getAllByTestId('async-callback-card')).toHaveLength(1);
+    expect(screen.getByTestId('async-callback-body').textContent).toContain('半截回传内容');
+    expect(screen.getByText('人类后续追问')).toBeTruthy();
+    expect(container.textContent).not.toContain('<frago-async-callbacks');
+    expect(container.textContent).not.toContain('</frago-async-callback>');
+    expect(container.textContent).not.toContain('</frago-async-callbacks>');
+  });
+
+  it('context.inject 携带 turn-submit-hitchhike 批信封时展开渲染为回调卡片且无裸标签', () => {
+    const hitchhikeCtx =
+      '<frago-async-callbacks count="1" delivery="turn-submit-hitchhike" priority="background-after-human">\n\n' +
+      '【优先主线声明】主人的本轮当前请求是唯一最高优先级主线。\n\n' +
+      `${WORKER_CB}\n\n` +
+      '</frago-async-callbacks>';
+
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('context.inject', {
+          payload: {
+            channel: 'UserPromptSubmit',
+            label: 'Hook',
+            body: hitchhikeCtx,
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+
+    fireEvent.click(container.querySelector('button.sys-capsule-hd')!);
+    expect(screen.getAllByTestId('async-callback-card')).toHaveLength(1);
+    expect(container.textContent).not.toContain('<frago-async-callbacks');
+    expect(container.textContent).not.toContain('</frago-async-callback>');
+    expect(container.textContent).not.toContain('</frago-async-callbacks>');
+  });
 });
 
 describe('P0-2 DeliveryTriad 完工验收三要素', () => {

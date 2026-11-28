@@ -2052,7 +2052,8 @@
       "closedTerminals_other": "Closed {{count}} terminals",
       "idleFor": "client exited · stopped {{age}} ago",
       "clientExited": "client exited",
-      "noReply": "No reply from the agent yet"
+      "noReply": "No reply from the agent yet",
+      "callbackBadge": "{{n}} new receipt(s)"
     },
     "children": {
       "runningBanner": "{{count}} derived task(s) running in the background",
@@ -2716,6 +2717,24 @@
       "moveUp": "Move up",
       "moveDown": "Move down",
       "remove": "Remove"
+    },
+    "callbackInbox": {
+      "runningBar": "{{n}} background receipt(s) ready — will merge after this turn",
+      "holdingBar": "{{n}} more background receipt(s) ready — will auto-summarize after decision",
+      "holdingHint": "Waiting for decision card above",
+      "viewSummary": "View read-only summary",
+      "collapseSummary": "Collapse summary",
+      "drawerAriaLabel": "Read-only summary of pending async callbacks",
+      "drawerTitle": "Pending background receipts ({{n}})",
+      "readOnlyBadge": "Read-only · auto-merges after turn",
+      "collapse": "Collapse",
+      "kindWorker": "Worker",
+      "kindEmployee": "Employee",
+      "noSummary": "(No summary)",
+      "statusDelivering": "Delivering",
+      "statusExitReady": "exit {{code}} · ready",
+      "statusReady": "Ready",
+      "statusFailed": "exit {{code}} · failed"
     },
     "newSession": {
       "title": "New session",

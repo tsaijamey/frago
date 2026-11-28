@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import fcntl
 import json
 import logging
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ from frago.employee.store import frago_home
 from frago.file_guard import atomic_write_text, locked_file
 from frago.ontology import (
     ActionContractError,
+    build_claim_callback_inbox_contract,
     build_finalize_dispatch_job_contract,
     build_record_callback_delivery_outcome_contract,
     ontological_action,
@@ -424,8 +427,10 @@ class AsyncDispatchJob:
     report_total_chars: int | None = None
     report_truncated: bool = False
     delivery_state: str = "queued"  # "queued" | "delivering" | "delivered" | "failed"
+    delivery_channel: str | None = None  # "idle_batch" | "hook_piggyback"
     delivery_attempts: int = 0
     delivery_error: str | None = None
+    worker_finished_at: str | None = None
     delivery_failure_kind: str | None = None  # "transient" | "permanent" | None
     next_retry_at: str | None = None
     execution_completed_at: str | None = None
@@ -484,6 +489,357 @@ def load_dispatch_job(job_id_or_path: str | Path) -> AsyncDispatchJob | None:
 
 _RECORD_DELIVERY_OUTCOME_CONTRACT = build_record_callback_delivery_outcome_contract()
 _FINALIZE_DISPATCH_JOB_CONTRACT = build_finalize_dispatch_job_contract()
+_CLAIM_CALLBACK_INBOX_CONTRACT = build_claim_callback_inbox_contract()
+
+_ACTIVE_CALLBACK_CALLERS_FILENAME = ".active-callback-callers.json"
+_ACTIVE_CALLBACK_CALLERS_LOCK_FILENAME = ".active-callback-callers.lock"
+_CALLBACK_CLAIM_LOCKS_GUARD = threading.Lock()
+_CALLBACK_CLAIM_THREAD_LOCKS: dict[str, threading.Lock] = {}
+CALLBACK_INBOX_DEBOUNCE_MS = 400
+CALLBACK_DELIVERING_STALE_S = 60.0
+CALLBACK_HOOK_MAX_CHARS = 5500
+
+
+def _iso_to_epoch_ms(raw: str | None) -> int | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return int(datetime.fromisoformat(s).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _safe_lock_token(session_id: str) -> str:
+    return "".join(c if (c.isalnum() or c in "_-") else "_" for c in (session_id or "default"))
+
+
+@contextlib.contextmanager
+def _flock_path(lock_path: Path) -> Iterator[None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+
+
+@contextlib.contextmanager
+def callback_claim_lock(caller_session_id: str) -> Iterator[None]:
+    """跨线程 + 跨进程 OS 级排他锁：保护同一发起方会话的 CallbackInbox 认领与回滚。"""
+    key = (caller_session_id or "").strip() or "_default"
+    with _CALLBACK_CLAIM_LOCKS_GUARD:
+        tlock = _CALLBACK_CLAIM_THREAD_LOCKS.get(key)
+        if tlock is None:
+            tlock = threading.Lock()
+            _CALLBACK_CLAIM_THREAD_LOCKS[key] = tlock
+    lock_path = dispatch_store_dir() / f".callback-claim-{_safe_lock_token(key)}.lock"
+    with tlock, _flock_path(lock_path):
+        yield
+
+
+def _read_active_callback_callers_raw() -> tuple[set[str], bool]:
+    index_path = dispatch_store_dir() / _ACTIVE_CALLBACK_CALLERS_FILENAME
+    if not index_path.is_file():
+        return set(), False
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return set(), False
+        raw_callers = data.get("callers") or []
+        callers = {str(c).strip() for c in raw_callers if isinstance(c, str) and c.strip()}
+        return callers, bool(data.get("seeded"))
+    except Exception:
+        return set(), False
+
+
+def _write_active_callback_callers_raw(callers: set[str], *, seeded: bool = True) -> None:
+    index_path = dispatch_store_dir() / _ACTIVE_CALLBACK_CALLERS_FILENAME
+    payload = {
+        "version": 1,
+        "seeded": seeded,
+        "callers": sorted(c for c in callers if c),
+    }
+    atomic_write_text(
+        index_path,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        save_lkg=False,
+    )
+
+
+def _rebuild_active_callback_callers() -> set[str]:
+    callers: set[str] = set()
+    for job in list_dispatch_jobs(active_only=False):
+        if job.status != "delivering":
+            continue
+        ds = (getattr(job, "delivery_state", "queued") or "queued").strip().lower()
+        if ds in ("queued", "delivering") and job.caller_session_id:
+            callers.add(job.caller_session_id)
+    return callers
+
+
+def register_active_callback_caller(caller_session_id: str) -> None:
+    """将待投递回执的发起方会话登记到可重建轻索引 ``.active-callback-callers.json``。"""
+    sid = (caller_session_id or "").strip()
+    if not sid:
+        return
+    lock_path = dispatch_store_dir() / _ACTIVE_CALLBACK_CALLERS_LOCK_FILENAME
+    with _flock_path(lock_path):
+        callers, seeded = _read_active_callback_callers_raw()
+        if not seeded:
+            callers |= _rebuild_active_callback_callers()
+        if sid not in callers or not seeded:
+            callers.add(sid)
+            _write_active_callback_callers_raw(callers, seeded=True)
+
+
+def unregister_active_callback_caller(caller_session_id: str) -> None:
+    """将已无可投递回执的发起方会话移出 ``.active-callback-callers.json``。"""
+    sid = (caller_session_id or "").strip()
+    if not sid:
+        return
+    lock_path = dispatch_store_dir() / _ACTIVE_CALLBACK_CALLERS_LOCK_FILENAME
+    with _flock_path(lock_path):
+        callers, seeded = _read_active_callback_callers_raw()
+        if not seeded:
+            callers |= _rebuild_active_callback_callers()
+        if sid in callers or not seeded:
+            callers.discard(sid)
+            _write_active_callback_callers_raw(callers, seeded=True)
+
+
+def list_active_callback_callers() -> set[str]:
+    """读取存在待消化或投递中回执的发起方会话集合（未建索引时自动自愈重建一次）。"""
+    callers, seeded = _read_active_callback_callers_raw()
+    if seeded:
+        return callers
+    lock_path = dispatch_store_dir() / _ACTIVE_CALLBACK_CALLERS_LOCK_FILENAME
+    with _flock_path(lock_path):
+        callers, seeded = _read_active_callback_callers_raw()
+        if seeded:
+            return callers
+        rebuilt = _rebuild_active_callback_callers()
+        _write_active_callback_callers_raw(rebuilt, seeded=True)
+        return rebuilt
+
+
+def _refresh_caller_callback_index(caller_session_id: str) -> None:
+    pending = list_callback_inbox_jobs(caller_session_id, states=("queued", "delivering"))
+    if pending:
+        register_active_callback_caller(caller_session_id)
+    else:
+        unregister_active_callback_caller(caller_session_id)
+
+
+def list_callback_inbox_jobs(
+    caller_session_id: str,
+    *,
+    states: tuple[str, ...] = ("queued",),
+) -> list[AsyncDispatchJob]:
+    """``CallbackInbox`` 权威视图投影：直接由 ``AsyncDispatchJob`` 账本投影，零影子状态机。
+
+    只投影已结束后台执行进入 ``status == "delivering"``（或历史未收口的 queued/delivering 单据，
+    严格排除仍在跑的 ``pending`` / ``running`` 以及终态 ``completed`` / ``failed`` / ``superseded`` /
+    ``cancelled``）。
+    """
+    sid = (caller_session_id or "").strip()
+    if not sid:
+        return []
+    allowed = {s.strip().lower() for s in states}
+    matched: list[AsyncDispatchJob] = []
+    for job in list_dispatch_jobs(caller_session_id=sid, active_only=False):
+        st = (job.status or "").strip().lower()
+        if st != "delivering":
+            continue
+        ds = (getattr(job, "delivery_state", "queued") or "queued").strip().lower()
+        if ds not in allowed:
+            continue
+        matched.append(job)
+    matched.sort(
+        key=lambda j: (
+            j.worker_finished_at or j.updated_at or j.created_at,
+            j.created_at,
+            j.job_id,
+        )
+    )
+    return matched
+
+
+@ontological_action(_CLAIM_CALLBACK_INBOX_CONTRACT)
+def claim_callback_inbox(
+    caller_session_id: str,  # noqa: ARG001 — 契约谓词校验 caller_session_id
+    delivery_channel: str,
+    job_ids: list[str],
+    *,
+    prior_states: Mapping[str, str],  # noqa: ARG001 — 契约谓词校验已持久化态
+    has_human_next_task: bool = False,  # noqa: ARG001 — 契约谓词校验三类优先级硬闸
+    blocked_by_card: bool = False,  # noqa: ARG001
+    is_session_busy: bool = False,  # noqa: ARG001
+    enqueue_to_next_task: bool = False,  # noqa: ARG001 — 物理分轨硬不变量
+) -> list[str]:
+    """挂载 Ring 3 ``claim_callback_inbox`` 契约护栏的原子批量认领动作（``queued → delivering``）。"""
+    claimed: list[str] = []
+    for raw_jid in job_ids:
+        jid = str(raw_jid).strip()
+        job = load_dispatch_job(jid)
+        if job is None:
+            raise ActionContractError(f"Dispatch job '{jid}' does not exist; cannot claim callback.")
+        cur_ds = (getattr(job, "delivery_state", "queued") or "queued").strip().lower()
+        record_callback_delivery_outcome(
+            jid,
+            from_state="queued",
+            to_state="delivering",
+            prior_delivery_state=cur_ds,
+        )
+        updated = load_dispatch_job(jid)
+        if updated is not None:
+            updated.delivery_channel = delivery_channel
+            save_dispatch_job(updated)
+        claimed.append(jid)
+    return claimed
+
+
+def recover_stale_delivering_callbacks(
+    caller_session_id: str,
+    *,
+    stale_after_s: float = CALLBACK_DELIVERING_STALE_S,
+) -> list[str]:
+    """对超时停留在 ``delivering``（进程崩毁/卡死）的回执执行安全自愈退回 ``queued``。"""
+    now_ms = int(time.time() * 1000)
+    threshold_ms = int(max(1.0, stale_after_s) * 1000)
+    recovered: list[str] = []
+    for job in list_callback_inbox_jobs(caller_session_id, states=("delivering",)):
+        updated_ms = _iso_to_epoch_ms(job.updated_at)
+        if updated_ms is None or (now_ms - updated_ms) < threshold_ms:
+            continue
+        record_callback_delivery_outcome(
+            job.job_id,
+            from_state="delivering",
+            to_state="queued",
+            reason=f"Recovered stale delivering state after {int(stale_after_s)}s",
+            prior_delivery_state="delivering",
+        )
+        recovered.append(job.job_id)
+    return recovered
+
+
+def claim_ready_callbacks_for_session(
+    caller_session_id: str,
+    *,
+    delivery_channel: str,
+    has_human_next_task: bool = False,
+    blocked_by_card: bool = False,
+    is_session_busy: bool = False,
+    debounce_ms: int = 0,
+    stale_after_s: float = CALLBACK_DELIVERING_STALE_S,
+) -> list[AsyncDispatchJob]:
+    """在跨进程 ``flock`` 保护下原子认领当前发起方会话就绪的 ``CallbackInbox`` 批次。"""
+    sid = (caller_session_id or "").strip()
+    if not sid:
+        return []
+    with callback_claim_lock(sid):
+        recover_stale_delivering_callbacks(sid, stale_after_s=stale_after_s)
+        queued = list_callback_inbox_jobs(sid, states=("queued",))
+        if not queued:
+            _refresh_caller_callback_index(sid)
+            return []
+        if delivery_channel == "idle_batch" and debounce_ms > 0:
+            now_ms = int(time.time() * 1000)
+            newest_ms = max(
+                (
+                    _iso_to_epoch_ms(j.worker_finished_at)
+                    or _iso_to_epoch_ms(j.updated_at)
+                    or _iso_to_epoch_ms(j.created_at)
+                    or now_ms
+                )
+                for j in queued
+            )
+            if (now_ms - newest_ms) < debounce_ms:
+                return []
+        job_ids = [j.job_id for j in queued]
+        prior_states = {j.job_id: (j.delivery_state or "queued") for j in queued}
+        claim_callback_inbox(
+            sid,
+            delivery_channel,
+            job_ids,
+            prior_states=prior_states,
+            has_human_next_task=has_human_next_task,
+            blocked_by_card=blocked_by_card,
+            is_session_busy=is_session_busy,
+            enqueue_to_next_task=False,
+        )
+        claimed_jobs: list[AsyncDispatchJob] = []
+        for jid in job_ids:
+            reloaded = load_dispatch_job(jid)
+            if reloaded is not None:
+                claimed_jobs.append(reloaded)
+        return claimed_jobs
+
+
+def finalize_claimed_callbacks(
+    caller_session_id: str,
+    jobs: Sequence[AsyncDispatchJob],
+    *,
+    success: bool,
+    reason: str | None = None,
+) -> None:
+    """将已认领的 ``delivering`` 回执批次统一推进至 ``delivered`` 终态，或失败回滚为 ``queued``。"""
+    sid = (caller_session_id or "").strip()
+    if not sid or not jobs:
+        return
+    with callback_claim_lock(sid):
+        for item in jobs:
+            cur = load_dispatch_job(item.job_id)
+            if cur is None:
+                continue
+            cur_ds = (getattr(cur, "delivery_state", "queued") or "queued").strip().lower()
+            if success:
+                if cur_ds == "queued":
+                    record_callback_delivery_outcome(
+                        cur.job_id,
+                        from_state="queued",
+                        to_state="delivering",
+                        prior_delivery_state=cur_ds,
+                    )
+                    cur = load_dispatch_job(cur.job_id) or cur
+                    cur_ds = (cur.delivery_state or "delivering").strip().lower()
+                if cur_ds == "delivering":
+                    record_callback_delivery_outcome(
+                        cur.job_id,
+                        from_state="delivering",
+                        to_state="delivered",
+                        prior_delivery_state=cur_ds,
+                    )
+                    cur = load_dispatch_job(cur.job_id) or cur
+                if (cur.delivery_state or "").strip().lower() == "delivered":
+                    target_status = "completed" if cur.exit_code == 0 else "failed"
+                    finalize_dispatch_job(
+                        cur.job_id,
+                        exit_code=cur.exit_code,
+                        delivery_state="delivered",
+                        job_status=target_status,
+                        prior_delivery_state="delivered",
+                    )
+            else:
+                if cur_ds == "delivering":
+                    record_callback_delivery_outcome(
+                        cur.job_id,
+                        from_state="delivering",
+                        to_state="queued",
+                        reason=reason or "Deferred back to CallbackInbox",
+                        prior_delivery_state=cur_ds,
+                    )
+        _refresh_caller_callback_index(sid)
 
 
 @ontological_action(_RECORD_DELIVERY_OUTCOME_CONTRACT)
@@ -784,6 +1140,8 @@ def reconcile_superseded_dispatch_jobs() -> list[str]:
     reconciled: list[str] = []
     root = dispatch_store_dir()
     for p in sorted(root.glob("*.json")):
+        if p.name.startswith("."):
+            continue
         job = load_dispatch_job(p)
         if job is None or job.status != "superseded":
             continue
@@ -812,6 +1170,8 @@ def list_dispatch_jobs(
     root = dispatch_store_dir()
     jobs: list[AsyncDispatchJob] = []
     for p in sorted(root.glob("*.json")):
+        if p.name.startswith("."):
+            continue
         job = load_dispatch_job(p)
         if job is None:
             continue
@@ -861,6 +1221,8 @@ def sync_claimed_target_session_id(
     updated_job_ids: list[str] = []
     root = dispatch_store_dir()
     for p in sorted(root.glob("*.json")):
+        if p.name.startswith("."):
+            continue
         job = load_dispatch_job(p)
         if job is None or job.target_session_id != old_sid:
             continue
@@ -1399,6 +1761,147 @@ def format_callback_prompt(job: AsyncDispatchJob) -> str:
     )
 
 
+def _format_compact_callback_item(
+    job: AsyncDispatchJob,
+    *,
+    body_limit: int = 160,
+    summary_limit: int = 100,
+) -> str:
+    """将单条派发单压成保留结构化元数据的紧凑 ``<frago-async-callback>`` 摘要。"""
+    status_label = "completed" if job.exit_code == 0 and job.status != "failed" else "failed"
+    summary = " ".join((job.task_summary or "").split())
+    if len(summary) > summary_limit:
+        summary = summary[: max(1, summary_limit - 1)] + "…"
+    body = " ".join((job.output or job.error or "").split())
+    snippet_line = ""
+    if body and body_limit > 0:
+        snippet = body[:body_limit].rstrip()
+        if len(body) > body_limit:
+            snippet += "…"
+        snippet_line = f"- 摘要：{snippet}\n"
+    report_ref = (
+        f"`{job.report_file}`（或 `frago session read {job.target_session_id}`）"
+        if job.report_file
+        else f"`frago session read {job.target_session_id}`"
+    )
+    if job.kind == "employee":
+        attrs = (
+            f'kind="employee" mode="{job.mode}" job_id="{job.job_id}" '
+            f'employee_id="{job.employee_id or ""}" session_id="{job.target_session_id}" '
+            f'status="{status_label}"'
+        )
+        source_desc = f"同侪 `{job.employee_id or job.target_session_id}`"
+    else:
+        attrs = (
+            f'kind="worker" mode="{job.mode}" job_id="{job.job_id}" '
+            f'worker_session_id="{job.target_session_id}" status="{status_label}"'
+        )
+        source_desc = f"Worker `{job.target_session_id}`"
+    return (
+        f"<frago-async-callback {attrs}>\n"
+        f"- 来源：{source_desc} | 派发单号：`{job.job_id}` | 状态：`{status_label}` (exit_code={job.exit_code})\n"
+        f"- 诉求：{summary}\n"
+        f"{snippet_line}"
+        f"- 完整交付：{report_ref}\n"
+        f"</frago-async-callback>"
+    )
+
+
+def format_callback_batch_prompt(
+    jobs: Sequence[AsyncDispatchJob],
+    *,
+    delivery: str = "idle-batch",
+    max_chars: int | None = None,
+) -> str:
+    """将一批就绪的 ``CallbackInbox`` 回执合并组装为带优先级隔离信封的批量投递报文。
+
+    当 ``max_chars`` 给定（如 ``TurnSubmit`` 搭便车 ``<= 5500`` 字符上限）时，按结构化降级阶梯
+    压缩正文，始终保留 ``job_id``、``report_file`` 与合法闭合标签 ``</frago-async-callbacks>``，
+    绝不粗暴切片破坏 XML/隔离标签。
+    """
+    job_list = list(jobs)
+    if not job_list:
+        return ""
+    count = len(job_list)
+    open_tag = (
+        f'<frago-async-callbacks count="{count}" delivery="{delivery}" '
+        f'priority="background-after-human">'
+    )
+    close_tag = "</frago-async-callbacks>"
+    if delivery == "turn-submit-hitchhike":
+        header = (
+            "【优先主线声明】主人的本轮当前请求是唯一最高优先级主线；请先直接、完整回应主人本轮请求。\n"
+            "以下是在此之前由后台完成的异步派发回执，仅作附带参考信息；"
+            "严禁让后台回执劫持你当前回应主人主线的议程（除非主人本轮正好在询问该任务）。"
+        )
+    else:
+        header = (
+            f"【后台异步派发回执汇总】以下 {count} 项后台异步任务已完成且当前会话处于空闲安全窗口，"
+            "请结合领域上下文复核关键结论并按需向人类汇报。"
+        )
+
+    def _wrap(items: Sequence[str], *, footer: str = "") -> str:
+        body_parts = [open_tag, header, *items]
+        if footer:
+            body_parts.append(footer)
+        body_parts.append(close_tag)
+        return "\n\n".join(body_parts)
+
+    full_items = [format_callback_prompt(j) for j in job_list]
+    full_text = _wrap(full_items)
+    if max_chars is None or len(full_text) <= max_chars:
+        return full_text
+
+    # 结构化逐级降级：优先缩减单条正文片段，保留全部 job_id 与 report_file；仍超限时再按条数省略尾项
+    for body_limit in (180, 80, 0):
+        compact_items = [
+            _format_compact_callback_item(j, body_limit=body_limit, summary_limit=80)
+            for j in job_list
+        ]
+        candidate = _wrap(compact_items)
+        if len(candidate) <= max_chars:
+            return candidate
+
+    # 极端多条并发时保留尽可能多的完整元数据条目，并显式标出省略数，保证闭合标签完整
+    kept: list[str] = []
+    for idx, job in enumerate(job_list):
+        item = _format_compact_callback_item(job, body_limit=0, summary_limit=48)
+        remaining = count - (idx + 1)
+        footer = (
+            f"（因上下文预算上限，其余 {remaining} 条回执已省略详情；"
+            "请查阅 `~/.frago/sessions/async_dispatches/` 或按 `job_id` / `frago session read` 取全。）"
+            if remaining > 0
+            else ""
+        )
+        trial = _wrap([*kept, item], footer=footer)
+        if len(trial) <= max_chars:
+            kept.append(item)
+        else:
+            break
+
+    if not kept:
+        kept.append(_format_compact_callback_item(job_list[0], body_limit=0, summary_limit=24))
+    omitted_count = max(0, count - len(kept))
+    final_footer = (
+        f"（因上下文预算上限，其余 {omitted_count} 条回执已省略详情；"
+        "请查阅 `~/.frago/sessions/async_dispatches/`。）"
+        if omitted_count > 0
+        else ""
+    )
+    res = _wrap(kept, footer=final_footer)
+    if len(res) <= max_chars:
+        return res
+    # 最极端窄预算兜底（如测试传入极小 max_chars）：输出纯索引行并严保闭合标签
+    min_lines = "\n".join(
+        f"- job_id={j.job_id} status={'completed' if j.exit_code == 0 else 'failed'} report={j.report_file or '-'}"
+        for j in job_list[:3]
+    )
+    overhead = len(open_tag) + len(close_tag) + 4
+    budget = max(0, max_chars - overhead)
+    trimmed_lines = min_lines[:budget].rstrip()
+    return f"{open_tag}\n{trimmed_lines}\n{close_tag}"
+
+
 def _extract_latest_assistant_output(session_id: str) -> str | None:
     """从目标会话的记录中提取最新一条实质性 assistant 文本（排除纯 [dispatched] 过渡回执）。"""
     return extract_latest_substantive_assistant_output(session_id)
@@ -1429,7 +1932,9 @@ def wait_for_pending_child_dispatches(
         pending_children = has_pending_async_work(target_session_id)
         queued_items = False
         with contextlib.suppress(Exception):
-            queued_items = len(workbench_queue.list_queue(target_session_id)) > 0
+            queued_items = len(workbench_queue.list_queue(target_session_id)) > 0 or bool(
+                list_callback_inbox_jobs(target_session_id, states=("queued", "delivering"))
+            )
         busy = False
         with contextlib.suppress(Exception):
             busy = workbench_queue.is_session_busy(target_session_id)
@@ -1480,12 +1985,15 @@ def _local_server_wakeup_port() -> int | None:
     return None
 
 
-def _poke_server_queue_drain(port: int, session_id: str) -> dict[str, Any] | None:
-    """唤醒常驻 ``frago server`` 在其自身进程上下文内安全执行队首注入与落盘确认。"""
+def _poke_server_callback_drain(port: int, session_id: str) -> dict[str, Any] | None:
+    """唤醒常驻 ``frago server`` 在其自身进程上下文内安全消费 ``CallbackInbox``。"""
     import urllib.parse
     import urllib.request
 
-    url = f"http://127.0.0.1:{port}/api/workbench/sessions/{urllib.parse.quote(session_id, safe='')}/queue/drain"
+    url = (
+        f"http://127.0.0.1:{port}/api/workbench/sessions/"
+        f"{urllib.parse.quote(session_id, safe='')}/callback-inbox/drain"
+    )
     req = urllib.request.Request(url, data=b"", method="POST")
     try:
         with urllib.request.urlopen(req, timeout=35.0) as resp:
@@ -1502,10 +2010,10 @@ def deliver_callback_to_session(
     *,
     job_id: str | None = None,
     cwd_hint: str | None = None,
-    max_wait_s: float = 1800.0,
-    poll_interval_s: float = 0.5,
+    max_wait_s: float = 1800.0,  # noqa: ARG001 — 保留入参兼容旧签名；Option A 不再阻塞等待
+    poll_interval_s: float = 0.5,  # noqa: ARG001
 ) -> bool:
-    """将结构化回传报文投递回发起方会话流（``workbench_queue`` + ``session_send``）。"""
+    """非阻塞将完成回执挂入 ``CallbackInbox`` 并尝试立即空闲投递（绝不写入 ``workbench-queue.json``）。"""
     if not caller_session_id or not callback_prompt.strip():
         return False
 
@@ -1519,14 +2027,22 @@ def deliver_callback_to_session(
             jid = m.group(1)
 
     try:
-        from frago.server.services import workbench_queue
+        from frago.server.services import callback_inbox_dispatcher, workbench_queue
     except ImportError as imp_exc:
+        if jid:
+            imp_job_path = dispatch_store_dir() / f"{jid}.json"
+            with locked_file(imp_job_path):
+                imp_job = load_dispatch_job(imp_job_path)
+                if imp_job is not None and imp_job.status == "delivering":
+                    imp_job.status = "running"
+                    save_dispatch_job(imp_job)
         _item_id, already_delivered = _lightweight_enqueue_callback(
             caller_session_id,
             prompt=callback_prompt,
             job_id=jid,
             cwd=cwd_hint,
         )
+        register_active_callback_caller(caller_session_id)
         if already_delivered:
             return True
         port = _lightweight_local_server_port()
@@ -1548,162 +2064,87 @@ def deliver_callback_to_session(
             f"workbench_queue import failed ({imp_exc}); callback persisted to disk queue for patrol"
         ) from imp_exc
 
-    # 先查权威送达回执与队列幂等去重，严禁对同一 job_id 重复入队
-    if jid:
-        with contextlib.suppress(Exception):
-            existing_receipt = workbench_queue.get_queue_delivery_receipt(caller_session_id)
-            if jid in (existing_receipt.get("delivered_job_ids") or []):
-                return True
+    job = load_dispatch_job(jid) if jid else None
+    if job is not None:
+        if job.status == "superseded":
+            return False
+        if (job.delivery_state or "").strip().lower() == "delivered":
+            return True
+        dirty = False
+        if job.status in ("pending", "running"):
+            job.status = "delivering"
+            dirty = True
+        if not job.worker_finished_at:
+            job.worker_finished_at = _utc_now()
+            dirty = True
+        if not job.delivery_state:
+            job.delivery_state = "queued"
+            dirty = True
+        if dirty:
+            save_dispatch_job(job)
+        register_active_callback_caller(caller_session_id)
 
-    item_id: str | None = None
-    if jid:
-        with contextlib.suppress(Exception):
-            for existing_item in workbench_queue.list_queue(caller_session_id):
-                if existing_item.get("job_id") == jid:
-                    item_id = str(existing_item.get("id") or "") or None
-                    break
-
-    if item_id is None:
-        try:
-            item = workbench_queue.enqueue(
-                caller_session_id,
-                text=callback_prompt.strip()[:_LIGHTWEIGHT_QUEUE_MAX_TEXT],
-                prompt=callback_prompt,
-                cwd=cwd_hint,
-                job_id=jid,
-                auto_schedule=False,  # 禁止在短命 watcher 进程中拉起后台 0.3s 守护线程自我竞争！
-            )
-            item_id = str(item.get("id") or "")
-        except Exception:
-            item_id = None
-
-    deadline = time.monotonic() + max(max_wait_s, 5.0)
-    idle_without_turn_id_ticks = 0
-    last_server_poke_at = 0.0
-
-    while time.monotonic() < deadline:
-        # 1. 优先检查权威送达回执（派发单磁盘状态与持久化队列回执）
+    server_port = _local_server_wakeup_port()
+    if server_port is not None:
+        outcome = _poke_server_callback_drain(server_port, caller_session_id)
         if jid:
-            job = load_dispatch_job(jid)
-            if job is not None and job.delivery_state == "delivered":
+            reloaded = load_dispatch_job(jid)
+            if reloaded is not None and (reloaded.delivery_state or "").strip().lower() == "delivered":
                 return True
-
-        if item_id is not None:
-            receipt = workbench_queue.get_queue_delivery_receipt(caller_session_id)
-            deliv_items = receipt.get("delivered_items") or []
-            deliv_jobs = receipt.get("delivered_job_ids") or []
-            if item_id in deliv_items or (jid and jid in deliv_jobs):
+        if isinstance(outcome, dict) and outcome.get("delivered"):
+            deliv_ids = outcome.get("delivered_job_ids")
+            if not jid or not isinstance(deliv_ids, list) or jid in deliv_ids:
                 return True
+        return False
 
-            # 若条目已被显式删除（非送达消费），判定未送达
-            removed_items = receipt.get("removed_item_ids") or []
-            if item_id in removed_items:
-                return False
-
-        # 2. 跨进程所有权保护：若本机 frago server 在线，唤醒服务端在持有真实进程表与热池的
-        #    主进程内安全执行注入；严禁在短命 watcher 子进程里盲目另起 TmuxCoreProcess 误杀服务端会话！
-        server_port = _local_server_wakeup_port()
-        if server_port is not None:
-            now_mono = time.monotonic()
-            if now_mono - last_server_poke_at >= max(poll_interval_s, 1.0):
-                last_server_poke_at = now_mono
-                outcome = _poke_server_queue_drain(server_port, caller_session_id)
-                if isinstance(outcome, dict) and outcome.get("delivered"):
-                    delivered_item = outcome.get("item")
-                    if isinstance(delivered_item, dict) and (
-                        (item_id and delivered_item.get("id") == item_id)
-                        or (jid and delivered_item.get("job_id") == jid)
-                    ):
-                        return True
-            if item_id is not None:
-                receipt_after = workbench_queue.get_queue_delivery_receipt(caller_session_id)
-                if item_id in (receipt_after.get("delivered_items") or []) or (
-                    jid and jid in (receipt_after.get("delivered_job_ids") or [])
-                ):
-                    return True
-            time.sleep(poll_interval_s)
-            continue
-
-        if item_id is not None:
-            # 2b. 无服务端在线时的本进程标准注入尝试：触发一次 try_auto_inject
-            try:
-                outcome = workbench_queue.try_auto_inject(caller_session_id, sync=True)
-                if isinstance(outcome, dict) and outcome.get("delivered"):
-                    delivered_item = outcome.get("item")
-                    if isinstance(delivered_item, dict) and (
-                        delivered_item.get("id") == item_id
-                        or (jid and delivered_item.get("job_id") == jid)
-                    ):
-                        return True
-            except Exception:
-                pass
-
-            # 再次检查送达回执（可能被服务端巡检或当前注入刚刚标记 delivered）
-            receipt_after = workbench_queue.get_queue_delivery_receipt(caller_session_id)
-            if item_id in (receipt_after.get("delivered_items") or []) or (
-                jid and jid in (receipt_after.get("delivered_job_ids") or [])
-            ):
+    if job is not None:
+        debounce_ms = CALLBACK_INBOX_DEBOUNCE_MS
+        outcome = callback_inbox_dispatcher.try_deliver_callback_inbox(
+            caller_session_id,
+            debounce_ms=debounce_ms,
+        )
+        # 无常驻 server 的独立 watcher 场景：同样遵守 300–500ms 空闲合批窗口，
+        # 等待防抖窗口成熟后再尝试单次合并认领（防止并发完成子任务各自抢先单条唤醒主控）。
+        for _ in range(4):
+            reason = outcome.get("reason")
+            if reason == "debouncing":
+                remaining_ms = int(outcome.get("remaining_debounce_ms") or debounce_ms)
+                time.sleep(min(max(remaining_ms + 20, 20), 600) / 1000.0)
+            elif reason == "injecting":
+                # 同会话另一并发 watcher 正在合批投递，短暂让出后回查是否已随批送达
+                time.sleep(0.05)
+            else:
+                break
+            reloaded_check = load_dispatch_job(jid) if jid else None
+            if reloaded_check is not None and (reloaded_check.delivery_state or "").strip().lower() == "delivered":
                 return True
+            outcome = callback_inbox_dispatcher.try_deliver_callback_inbox(
+                caller_session_id,
+                debounce_ms=debounce_ms,
+            )
+        reloaded = load_dispatch_job(jid) if jid else None
+        if reloaded is not None and (reloaded.delivery_state or "").strip().lower() == "delivered":
+            return True
+        if isinstance(outcome, dict) and outcome.get("delivered"):
+            deliv_ids = outcome.get("delivered_job_ids") or []
+            if jid in deliv_ids:
+                return True
+        return False
 
-        # 3. 兜底路径：仅对尚无任何历史记录的新建会话或测试桩会话，在确认不忙且无跨进程注入锁后直接出队投递
-        busy = False
-        with contextlib.suppress(Exception):
-            busy = workbench_queue.is_session_busy(caller_session_id)
-
-        if not busy:
-            stop_turn = None
-            has_records = False
-            blocked_or_injecting = False
-            with contextlib.suppress(Exception):
-                q_state = workbench_queue.evaluate_queue_state(caller_session_id)
-                stop_turn = q_state.get("stop_turn_id")
-                has_records = bool(q_state.get("has_records"))
-                blocked_or_injecting = bool(
-                    q_state.get("blocked_by_card") or q_state.get("injecting")
+    # 无持久化 AsyncDispatchJob 的直发兜底（保持与 Next Task 物理隔离，直接尝试空闲直投）
+    with workbench_queue.cross_process_inject_guard(caller_session_id) as acquired:
+        if not acquired:
+            return False
+        try:
+            return bool(
+                workbench_queue._send_prompt(
+                    caller_session_id,
+                    callback_prompt,
+                    cwd_hint,
                 )
-            if (not stop_turn and not has_records and not blocked_or_injecting) or item_id is None:
-                idle_without_turn_id_ticks += 1
-                if idle_without_turn_id_ticks >= 2 or item_id is None:
-                    sent_ok = False
-                    with workbench_queue.cross_process_inject_guard(caller_session_id) as acquired:
-                        if acquired:
-                            if item_id is not None:
-                                r_check = workbench_queue.get_queue_delivery_receipt(caller_session_id)
-                                if item_id in (r_check.get("delivered_items") or []) or (
-                                    jid and jid in (r_check.get("delivered_job_ids") or [])
-                                ):
-                                    return True
-                            try:
-                                sent_ok = bool(
-                                    workbench_queue._send_prompt(
-                                        caller_session_id,
-                                        callback_prompt,
-                                        cwd_hint=cwd_hint,
-                                    )
-                                )
-                            except Exception:
-                                sent_ok = False
-                            if sent_ok and item_id is not None:
-                                with contextlib.suppress(Exception):
-                                    workbench_queue.remove_item(caller_session_id, str(item_id))
-                                    d = workbench_queue.queue_dir(caller_session_id)
-                                    st = workbench_queue._read_queue_state(d)
-                                    d_items = list(st.get("delivered_items") or [])
-                                    d_items.append(item_id)
-                                    st["delivered_items"] = d_items[-100:]
-                                    if jid:
-                                        d_jobs = list(st.get("delivered_job_ids") or [])
-                                        d_jobs.append(jid)
-                                        st["delivered_job_ids"] = d_jobs[-100:]
-                                    workbench_queue._write_queue_state(d, st)
-                    if sent_ok:
-                        return True
-        else:
-            idle_without_turn_id_ticks = 0
-
-        time.sleep(poll_interval_s)
-
-    return False
+            )
+        except Exception:
+            return False
 
 
 def _spawn_detached_watcher(job_path: Path, *, target_session_id: str, target_employee_id: str | None = None) -> None:
@@ -2232,6 +2673,30 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
         if superseded:
             return _mark_job_superseded(job, superseded_by=sup_by)
 
+        # 后台子任务已完成：在文件锁内回读磁盘真态，防止覆盖服务端并发推进的 delivering/delivered
+        job_disk_path = dispatch_store_dir() / f"{job.job_id}.json"
+        with locked_file(job_disk_path):
+            disk_job = load_dispatch_job(job_disk_path)
+            if disk_job is not None and disk_job.status == "superseded":
+                return disk_job
+            disk_delivery_state = (
+                (getattr(disk_job, "delivery_state", None) or "").strip().lower()
+                if disk_job is not None
+                else ""
+            )
+            if disk_delivery_state in ("delivering", "delivered"):
+                job.delivery_state = disk_delivery_state
+                if disk_job is not None:
+                    job.status = disk_job.status
+                    job.delivered_at = disk_job.delivered_at or job.delivered_at
+                    job.completed_at = disk_job.completed_at or job.completed_at
+            else:
+                job.status = "delivering"
+                job.delivery_state = "queued"
+            job.worker_finished_at = job.worker_finished_at or _utc_now()
+            save_dispatch_job(job)
+        register_active_callback_caller(job.caller_session_id)
+
         callback_prompt = format_callback_prompt(job)
         delivered = False
         delivery_err: str | None = None
@@ -2248,7 +2713,6 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
             delivery_exc = exc
             delivery_err = str(exc)
 
-        job_disk_path = dispatch_store_dir() / f"{job.job_id}.json"
         with locked_file(job_disk_path):
             cur_job = load_dispatch_job(job_disk_path) or job
             if cur_job.status == "superseded":
@@ -2259,6 +2723,7 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
                     exit_code=job.exit_code,
                     allow_from_failed_reason="Confirmed delivered by watcher callback",
                 )
+                _refresh_caller_callback_index(job.caller_session_id)
             else:
                 # 1. 权威已送达优先：锁内检查磁盘真态与发起方持久化回执，绝不倒写终态 delivered
                 receipt = _read_caller_queue_receipt(job.caller_session_id)
@@ -2271,7 +2736,8 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
                         exit_code=job.exit_code,
                         allow_from_failed_reason="Confirmed delivered in caller queue receipt",
                     )
-                # 2. 服务端 pop-before-send / inflight 投喂窗口保护：严禁误落 failed / permanent
+                    _refresh_caller_callback_index(job.caller_session_id)
+                # 2. 服务端 pop-before-send / inflight 投喂窗口保护：严禁误落 failed / permanent 或倒写 queued
                 elif cur_job.delivery_state == "delivering" or inflight_job_id == job.job_id:
                     logger.info(
                         "Dispatch job %s is currently delivering/inflight (disk=%s, inflight=%s); "
@@ -2281,105 +2747,30 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
                         inflight_job_id,
                     )
                 else:
-                    has_item = False
-                    try:
-                        from frago.server.services import workbench_queue
-
-                        remaining = workbench_queue.list_queue(job.caller_session_id)
-                        has_item = any(it.get("job_id") == job.job_id for it in remaining)
-                    except Exception:
-                        has_item = _lightweight_has_queued_job(job.caller_session_id, job.job_id)
-
                     is_transient_err = _is_transient_delivery_error(delivery_exc, delivery_err)
                     attempts = int(getattr(cur_job, "delivery_attempts", 0) or 0)
-                    can_retry = has_item or (
-                        is_transient_err and (attempts + 1) < CALLBACK_DELIVERY_MAX_ATTEMPTS
-                    )
-
-                    if can_retry:
-                        already_delivered_on_disk = False
-                        if not has_item:
-                            with contextlib.suppress(Exception):
-                                _enq_id, already_delivered_on_disk = _lightweight_enqueue_callback(
-                                    job.caller_session_id,
-                                    prompt=callback_prompt,
-                                    job_id=job.job_id,
-                                    cwd=job.caller_cwd,
-                                )
-                                if _enq_id:
-                                    has_item = True
-
-                        if already_delivered_on_disk:
-                            _converge_job_to_delivered_locked(
-                                job.job_id,
-                                exit_code=job.exit_code,
-                                allow_from_failed_reason="Confirmed delivered in caller queue receipt",
-                            )
-                        else:
-                            retry_at = _compute_next_retry_at(attempts) if is_transient_err else None
-                            cur_job = load_dispatch_job(job_disk_path) or cur_job
-                            # 若仍在队列中且已被底层回退为 queued（无新异常），直接保持 queued 交由巡检接管；
-                            # 若因瞬态异常（如 ImportError 降级直写队列）刚落盘，则经 queued -> delivering -> queued 记录退避。
-                            if cur_job.delivery_state == "queued" and is_transient_err:
-                                record_callback_delivery_outcome(
-                                    job.job_id,
-                                    from_state="queued",
-                                    to_state="delivering",
-                                    prior_delivery_state=cur_job.delivery_state,
-                                )
-                                cur_job = load_dispatch_job(job_disk_path) or cur_job
-                                if cur_job.delivery_state == "delivering":
-                                    record_callback_delivery_outcome(
-                                        job.job_id,
-                                        from_state="delivering",
-                                        to_state="queued",
-                                        reason=delivery_err
-                                        or "Watcher wait window elapsed; retained in queue for patrol",
-                                        prior_delivery_state=cur_job.delivery_state,
-                                        failure_kind="transient",
-                                        next_retry_at=retry_at,
-                                    )
-                    else:
-                        fail_kind = "transient" if is_transient_err else "permanent"
+                    if cur_job.delivery_state == "queued" and is_transient_err:
+                        # 瞬态异常（如 ImportError 降级直写队列）经 queued -> delivering -> queued 记录退避与失败分类
+                        retry_at = _compute_next_retry_at(attempts)
+                        record_callback_delivery_outcome(
+                            job.job_id,
+                            from_state="queued",
+                            to_state="delivering",
+                            prior_delivery_state=cur_job.delivery_state,
+                        )
                         cur_job = load_dispatch_job(job_disk_path) or cur_job
-                        if cur_job.delivery_state == "delivered":
-                            _converge_job_to_delivered_locked(
+                        if cur_job.delivery_state == "delivering":
+                            record_callback_delivery_outcome(
                                 job.job_id,
-                                exit_code=job.exit_code,
+                                from_state="delivering",
+                                to_state="queued",
+                                reason=delivery_err
+                                or "Transient delivery error; retained in CallbackInbox/queue for patrol",
+                                prior_delivery_state=cur_job.delivery_state,
+                                failure_kind="transient",
+                                next_retry_at=retry_at,
                             )
-                        elif cur_job.delivery_state == "delivering":
-                            logger.info(
-                                "Dispatch job %s transitioned to delivering before failure finalization; "
-                                "retaining delivering state",
-                                job.job_id,
-                            )
-                        else:
-                            if cur_job.delivery_state == "queued":
-                                record_callback_delivery_outcome(
-                                    job.job_id,
-                                    from_state="queued",
-                                    to_state="delivering",
-                                    prior_delivery_state=cur_job.delivery_state,
-                                )
-                                cur_job = load_dispatch_job(job_disk_path) or cur_job
-                            if cur_job.delivery_state == "delivering":
-                                record_callback_delivery_outcome(
-                                    job.job_id,
-                                    from_state="delivering",
-                                    to_state="failed",
-                                    reason=delivery_err or "Callback delivery could not be confirmed",
-                                    prior_delivery_state=cur_job.delivery_state,
-                                    failure_kind=fail_kind,
-                                )
-                                cur_job = load_dispatch_job(job_disk_path) or cur_job
-                            if cur_job.delivery_state == "failed":
-                                finalize_dispatch_job(
-                                    job.job_id,
-                                    exit_code=job.exit_code,
-                                    delivery_state=cur_job.delivery_state,
-                                    job_status="failed",
-                                    prior_delivery_state=cur_job.delivery_state,
-                                )
+                    register_active_callback_caller(job.caller_session_id)
 
         reloaded = load_dispatch_job(job.job_id)
         if reloaded is not None:

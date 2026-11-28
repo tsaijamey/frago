@@ -66,6 +66,7 @@ import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { useSessionObserver } from '@/hooks/useSessionObserver';
 import { useSessionChildren } from '@/hooks/useSessionChildren';
+import { useCallbackInbox } from '@/hooks/useCallbackInbox';
 import { useSessionQueue } from '@/hooks/useSessionQueue';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
@@ -224,7 +225,9 @@ export default function SessionWorkbenchPage() {
   const callbackSessionIds = useMemo(
     () =>
       new Set(
-        sessions.sessions.filter((s) => s.callback_queued === true).map((s) => s.session_id)
+        sessions.sessions
+          .filter((s) => s.callback_queued === true || (s.callback_inbox?.count ?? 0) > 0)
+          .map((s) => s.session_id)
       ),
     [sessions.sessions]
   );
@@ -342,6 +345,11 @@ export default function SessionWorkbenchPage() {
       void sessions.reload();
     },
   });
+  const callbackInbox = useCallbackInbox(selectedId, selected?.callback_inbox);
+  const callbackHolding =
+    callbackInbox.inbox.blocked_reason === 'blocked_by_card' ||
+    sessionQueue.blockedByCard ||
+    Boolean(cardQuestion && cardQuestion.sid === selectedId);
   const sendingId =
     selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
   const busyId = selectedId && inFlight ? selectedId : null;
@@ -1885,9 +1893,12 @@ export default function SessionWorkbenchPage() {
           onEnqueue={sessionQueue.enqueue}
           onRemoveQueueItem={sessionQueue.remove}
           onMoveQueueItem={sessionQueue.move}
+          callbackInbox={callbackInbox.inbox}
+          callbackHolding={callbackHolding}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
+            void callbackInbox.reload();
             // 兜底：进度里没认出落地（比如人早切走了），接口回来这一刻照样落。
             if (outboundId) landOutbound(outboundId);
             // 接口回来了就说明这一轮已经说完，那句话必定在会话里了：信封该收，
