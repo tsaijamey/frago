@@ -1482,8 +1482,12 @@ export interface RecordStreamProps {
   sessionRunning?: boolean;
   /** 本页本次发出的每一句话的进度。按 `recordId` 挂到对应气泡下面。 */
   trails?: SendTrail[];
-  /** 滚到这条记录（输入区「Show」）。`at` 让同一条连点两次也各算一次。 */
+  /** 滚到这条记录（输入区「Show」或异常中断「定位中断点」）。`at` 让同一条连点两次也各算一次。 */
   scrollTarget?: { recordId: string; at: number } | null;
+  /** 当前会话工具异常中断点的 `tool.call` 记录 ID（存在时自动展开对应工具框并标红）。 */
+  abortedToolCallId?: string | null;
+  /** 点击「定位中断点」的递增序号，用于强制展开对应工具框并触发短暂红框高亮。 */
+  abortLocateSeq?: number;
   /**
    * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
    * 接住它的是输入区——这一侧不碰输入框的内容。
@@ -1834,6 +1838,8 @@ export default function RecordStream({
   sessionRunning,
   trails = [],
   scrollTarget = null,
+  abortedToolCallId = null,
+  abortLocateSeq = 0,
   onQuote,
   onStack,
   onBranch,
@@ -1877,6 +1883,7 @@ export default function RecordStream({
   const [lens, setLens] = useState<StreamLens>(initialLensState.lens);
   const [watcherOpen, setWatcherOpen] = useState(initialLensState.progressOpen);
   const [inspectOpen, setInspectOpen] = useState(false);
+  const [highlightedAbortId, setHighlightedAbortId] = useState<string | null>(null);
   const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
   const [anchorExpanded, setAnchorExpanded] = useState(false);
   const [stateExpanded, setStateExpanded] = useState(false);
@@ -2531,7 +2538,10 @@ export default function RecordStream({
           rows={seg.rows}
           extras={seg.extras}
           sessionId={sessionId ?? ''}
-          live={seg === lastSegment}
+          live={seg === lastSegment && !abortedToolCallId}
+          abortedCallId={abortedToolCallId}
+          forceOpenSeq={abortLocateSeq}
+          highlightedCallId={highlightedAbortId}
         />
       );
     }
@@ -2928,7 +2938,7 @@ export default function RecordStream({
     }
   }, [awaitingAgent, scrollToBottom]);
 
-  // 输入区「Show」：滚到那句话。它可能在当前镜头里看不见，那就先回到「对话」档。
+  // 输入区「Show」或异常中断「定位中断点」：滚到目标记录。若当前镜头看不到该记录，自动切至能看见它的镜头。
   const scrollAt = scrollTarget?.at ?? 0;
   const scrollId = scrollTarget?.recordId ?? '';
   useEffect(() => {
@@ -2946,9 +2956,14 @@ export default function RecordStream({
       setWatcherOpen(false);
       return;
     }
-    if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
-      setLens('talk');
-      return;
+    if (!visible.some((r) => r.id === scrollId)) {
+      const rawTarget = resolved.find((r) => r.id === scrollId);
+      const needsAll = rawTarget ? !isTalkBubbleRecord(rawTarget) : false;
+      const desiredLens: StreamLens = needsAll ? 'all' : 'talk';
+      if (lens !== desiredLens) {
+        setLens(desiredLens);
+        return;
+      }
     }
     const el = scrollRef.current?.querySelector<HTMLElement>(
       `[data-record-id="${CSS.escape(scrollId)}"]`
@@ -2959,9 +2974,16 @@ export default function RecordStream({
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     followArmed.current = false;
     el.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() });
+    if (abortedToolCallId && scrollId === abortedToolCallId) {
+      setHighlightedAbortId(scrollId);
+      const timer = window.setTimeout(() => {
+        setHighlightedAbortId((cur) => (cur === scrollId ? null : cur));
+      }, 2200);
+      return () => window.clearTimeout(timer);
+    }
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen]);
+  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen, abortedToolCallId]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头

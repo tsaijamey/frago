@@ -1942,8 +1942,23 @@
     "status": {
       "running": "在跑",
       "error": "出错",
+      "toolAborted": "异常中断（未完成）",
+      "awaitingInput": "等待输入",
+      "awaitingInputDetail": "等待输入 · 需人工介入",
       "done": "已完成",
       "idle": "停着"
+    },
+    "abort": {
+      "bannerTitle": "异常中断（未完成） · 工具调用中途退场，未标记为「已完成」",
+      "bannerDescDefault": "最后一次工具调用未返回结果即异常中止，会话已保留为错误中断态而非「已完成」。",
+      "bannerDescTool": "工具 {{tool}} 未返回结果即异常中止，会话已保留为错误中断态而非「已完成」。",
+      "locate": "定位中断点",
+      "resume": "从断点续跑",
+      "resumeDraft": "上次执行在工具 {{tool}} 处异常中断且未返回结果，请检查当前状态并从断点继续。",
+      "resumeDraftGeneric": "上次执行在工具调用中途异常中断未完成，请检查当前状态并从断点继续。",
+      "resumeReady": "已在输入框预填断点续跑指令，确认后发送。",
+      "toolBadge": "异常中断 · 未返回结果",
+      "toolPill": "1 中断"
     },
     "family": {
       "claude-code": "Claude Code",

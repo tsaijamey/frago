@@ -568,3 +568,417 @@ def test_v4_reconcile_startup_orphans_cleans_dead_panes_and_spares_live(monkeypa
     live_rec = onto_svc.get_session("core_attached_live")
     assert live_rec is not None and live_rec.lifecycle_state == "running"
 
+
+def _seed_coreagent_jsonl(path, events, *, mtime_s: float) -> None:
+    import json
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in events) + "\n",
+        encoding="utf-8",
+    )
+    os.utime(path, (mtime_s, mtime_s))
+
+
+def _seed_live_marker(panes_root, run_root, sid: str, pid: int):
+    import json
+
+    run_dir = run_root / f"run_{sid}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "core.pid").write_text(str(pid), encoding="utf-8")
+    (run_dir / "launch.json").write_text(
+        json.dumps({"session_id": sid}, ensure_ascii=False), encoding="utf-8"
+    )
+    marker = panes_root / f"{sid}.active_run"
+    marker.write_text(str(run_dir), encoding="utf-8")
+    return marker
+
+
+def test_d2_reconcile_startup_orphans_spares_live_long_tool_session_beyond_90s_and_worker_idle(
+    monkeypatch, tmp_path
+):
+    """D2: 运行超过 90s（且超过 worker_idle_timeout_s=300s）的长耗时工具活会话不被误杀或误标 startup_orphan_error。"""
+    import json
+    import os
+
+    from frago.agent_driver import coreagent_pane_host as host
+    from frago.server.services import coreagent_runner
+    from frago.server.services import ui_session_lifecycle as life
+    from frago.session import coreagent_store
+    from frago.session import service as session_service_mod
+    from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    now_s = time.time()
+    panes_root = tmp_path / "panes"
+    panes_root.mkdir(parents=True, exist_ok=True)
+    runs_root = tmp_path / "runs"
+    core_root = tmp_path / "coreagent_sessions"
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(panes_root))
+    monkeypatch.setattr(host, "panes_dir", lambda: panes_root)
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: core_root)
+
+    sid_web = "core_d2_long_tool_web"
+    sid_worker = "core_d2_long_tool_worker"
+    marker_web = _seed_live_marker(panes_root, runs_root, sid_web, os.getpid())
+    marker_worker = _seed_live_marker(panes_root, runs_root, sid_worker, os.getpid())
+
+    tool_events = [
+        {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "long build"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tu_long_1",
+                        "name": "Bash",
+                        "input": {"command": "pytest --full"},
+                    }
+                ],
+            },
+        },
+    ]
+    # 静默 420s：远超 90s 中断窗，也超过 worker_idle_timeout_s=300s
+    _seed_coreagent_jsonl(core_root / "-tmp-demo" / f"{sid_web}.jsonl", tool_events, mtime_s=now_s - 420.0)
+    _seed_coreagent_jsonl(core_root / "-tmp-demo" / f"{sid_worker}.jsonl", tool_events, mtime_s=now_s - 420.0)
+
+    store_path = tmp_path / "session-ontology-store.json"
+    store = SessionOntologyStore(
+        store_path,
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    onto_svc.start_turn(sid_web, agent_kernel_id="coreagent", origin="web")
+    onto_svc.start_turn(sid_worker, agent_kernel_id="coreagent", origin="worker")
+
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(
+        session_service_mod,
+        "collect_live_runtime_probes",
+        lambda **_kw: LiveRuntimeProbes(),
+    )
+    monkeypatch.setattr(
+        life,
+        "_list_coreagent_tmux_panes",
+        lambda: [
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid_web}",
+                session_id=sid_web,
+                attached_count=0,
+                activity_ts=now_s - 420.0,
+                pane_cmd="python3",
+                pane_dead=False,
+            ),
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid_worker}",
+                session_id=sid_worker,
+                attached_count=0,
+                activity_ts=now_s - 420.0,
+                pane_cmd="python3",
+                pane_dead=False,
+            ),
+        ],
+    )
+    killed: list[str] = []
+    monkeypatch.setattr(life, "_kill_tmux_session", lambda name: killed.append(name) or True)
+
+    svc = life.UiSessionLifecycleService()
+    summary = svc.reconcile_startup_orphans(now_s=now_s, worker_idle_timeout_s=300.0)
+
+    assert summary["markers_cleaned"] == 0
+    assert summary["tmux_killed"] == 0
+    assert summary["onto_reconciled"] == 0
+    assert killed == []
+    assert marker_web.exists()
+    assert marker_worker.exists()
+
+    disk = json.loads(store_path.read_text(encoding="utf-8"))["sessions"]
+    assert disk[sid_web]["lifecycle_state"] == "running"
+    assert disk[sid_web].get("summary") != "startup_orphan_error"
+    assert disk[sid_worker]["lifecycle_state"] == "running"
+    assert disk[sid_worker].get("summary") != "startup_orphan_error"
+
+
+def test_d2_reconcile_startup_orphans_marks_live_session_with_real_transcript_error(
+    monkeypatch, tmp_path
+):
+    """D2: 活会话出现真实转录报错（api_error）时应准确标记 error + startup_orphan_error。"""
+    import os
+
+    from frago.agent_driver import coreagent_pane_host as host
+    from frago.server.services import coreagent_runner
+    from frago.server.services import ui_session_lifecycle as life
+    from frago.session import coreagent_store
+    from frago.session import service as session_service_mod
+    from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    now_s = time.time()
+    panes_root = tmp_path / "panes"
+    panes_root.mkdir(parents=True, exist_ok=True)
+    core_root = tmp_path / "coreagent_sessions"
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(panes_root))
+    monkeypatch.setattr(host, "panes_dir", lambda: panes_root)
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: core_root)
+
+    sid = "core_d2_real_api_error"
+    _seed_live_marker(panes_root, tmp_path / "runs", sid, os.getpid())
+    _seed_coreagent_jsonl(
+        core_root / "-tmp-demo" / f"{sid}.jsonl",
+        [
+            {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "hi"}},
+            {"type": "system", "subtype": "api_error", "error": "rate_limit_exceeded"},
+        ],
+        mtime_s=now_s - 30.0,
+    )
+
+    store = SessionOntologyStore(
+        tmp_path / "session-ontology-store.json",
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    onto_svc.start_turn(sid, agent_kernel_id="coreagent", origin="web")
+
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(
+        session_service_mod,
+        "collect_live_runtime_probes",
+        lambda **_kw: LiveRuntimeProbes(),
+    )
+    monkeypatch.setattr(
+        life,
+        "_list_coreagent_tmux_panes",
+        lambda: [
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid}",
+                session_id=sid,
+                attached_count=0,
+                activity_ts=now_s - 30.0,
+                pane_cmd="python3",
+                pane_dead=False,
+            )
+        ],
+    )
+    killed: list[str] = []
+    monkeypatch.setattr(life, "_kill_tmux_session", lambda name: killed.append(name) or True)
+
+    svc = life.UiSessionLifecycleService()
+    summary = svc.reconcile_startup_orphans(now_s=now_s)
+
+    assert killed == []
+    assert summary["onto_reconciled"] == 1
+    rec = onto_svc.get_session(sid)
+    assert rec is not None
+    assert rec.lifecycle_state == "error"
+    assert rec.summary == "startup_orphan_error"
+
+
+def test_d2_reconcile_startup_orphans_reaps_truly_dead_and_zombie_mid_tool_orphans(
+    monkeypatch, tmp_path
+):
+    """D2: 真正死亡的孤儿（死 pane / 退回 shell / 零活进程陈旧记录）以及超过 6h 僵尸上限的会话仍会被准确回收。"""
+    import json
+    import os
+
+    from frago.agent_driver import coreagent_pane_host as host
+    from frago.server.services import coreagent_runner
+    from frago.server.services import ui_session_lifecycle as life
+    from frago.session import coreagent_store
+    from frago.session import service as session_service_mod
+    from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    now_s = time.time()
+    panes_root = tmp_path / "panes"
+    panes_root.mkdir(parents=True, exist_ok=True)
+    core_root = tmp_path / "coreagent_sessions"
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(panes_root))
+    monkeypatch.setattr(host, "panes_dir", lambda: panes_root)
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: core_root)
+
+    sid_dead_pane = "core_d2_dead_pane"
+    sid_shell_exit = "core_d2_shell_exited"
+    sid_stale_no_pane = "core_d2_stale_no_pane"
+    sid_zombie_tool = "core_d2_zombie_tool"
+
+    # dead pid marker for shell_exit; live pid marker for zombie (>6h)
+    _seed_live_marker(panes_root, tmp_path / "runs", sid_shell_exit, 999_999_999)
+    _seed_live_marker(panes_root, tmp_path / "runs", sid_zombie_tool, os.getpid())
+
+    tool_events = [
+        {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "run"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_dead", "name": "Bash", "input": {"command": "sleep 999"}}],
+            },
+        },
+    ]
+    _seed_coreagent_jsonl(core_root / "-tmp-demo" / f"{sid_dead_pane}.jsonl", tool_events, mtime_s=now_s - 200.0)
+    _seed_coreagent_jsonl(core_root / "-tmp-demo" / f"{sid_shell_exit}.jsonl", tool_events, mtime_s=now_s - 200.0)
+    _seed_coreagent_jsonl(core_root / "-tmp-demo" / f"{sid_stale_no_pane}.jsonl", tool_events, mtime_s=now_s - 200.0)
+    _seed_coreagent_jsonl(
+        core_root / "-tmp-demo" / f"{sid_zombie_tool}.jsonl",
+        tool_events,
+        mtime_s=now_s - 7 * 3600.0,
+    )
+
+    store_path = tmp_path / "session-ontology-store.json"
+    store = SessionOntologyStore(
+        store_path,
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    for sid in (sid_dead_pane, sid_shell_exit, sid_stale_no_pane, sid_zombie_tool):
+        onto_svc.start_turn(sid, agent_kernel_id="coreagent", origin="web")
+
+    # 回拨 sid_stale_no_pane 的 updated_at 以满足步骤 3 的 >60s 条件
+    raw_store = json.loads(store_path.read_text(encoding="utf-8"))
+    raw_store["sessions"][sid_stale_no_pane]["updated_at"] = int(now_s - 200.0)
+    store_path.write_text(json.dumps(raw_store, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(
+        session_service_mod,
+        "collect_live_runtime_probes",
+        lambda **_kw: LiveRuntimeProbes(),
+    )
+    monkeypatch.setattr(host, "_pid_is_alive", lambda pid: pid == os.getpid())
+    monkeypatch.setattr(
+        life,
+        "_list_coreagent_tmux_panes",
+        lambda: [
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid_dead_pane}",
+                session_id=sid_dead_pane,
+                attached_count=0,
+                activity_ts=now_s - 200.0,
+                pane_cmd="python3",
+                pane_dead=True,
+            ),
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid_shell_exit}",
+                session_id=sid_shell_exit,
+                attached_count=0,
+                activity_ts=now_s - 200.0,
+                pane_cmd="zsh",
+                pane_dead=False,
+            ),
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid_zombie_tool}",
+                session_id=sid_zombie_tool,
+                attached_count=0,
+                activity_ts=now_s - 7 * 3600.0,
+                pane_cmd="python3",
+                pane_dead=False,
+            ),
+        ],
+    )
+    killed: list[str] = []
+    monkeypatch.setattr(life, "_kill_tmux_session", lambda name: killed.append(name) or True)
+
+    svc = life.UiSessionLifecycleService()
+    summary = svc.reconcile_startup_orphans(now_s=now_s)
+
+    assert set(killed) == {
+        f"frago-agent-{sid_dead_pane}",
+        f"frago-agent-{sid_shell_exit}",
+        f"frago-agent-{sid_zombie_tool}",
+    }
+    assert summary["markers_cleaned"] == 1
+    assert summary["tmux_killed"] == 3
+    assert summary["onto_reconciled"] == 4
+
+    for sid in (sid_dead_pane, sid_shell_exit, sid_stale_no_pane, sid_zombie_tool):
+        rec = onto_svc.get_session(sid)
+        assert rec is not None
+        assert rec.lifecycle_state == "error", f"{sid} expected error, got {rec.lifecycle_state}"
+        assert rec.summary == "startup_orphan_interrupted", f"{sid} expected startup_orphan_interrupted, got {rec.summary}"
+
+
+def test_d2_reconcile_startup_orphans_never_overwrites_cancelled_session(monkeypatch, tmp_path):
+    """D1+D2 联动：人工 cancelled 终态经启动孤儿巡检后不被覆写为 error。"""
+    import json
+
+    from frago.agent_driver import coreagent_pane_host as host
+    from frago.server.services import coreagent_runner
+    from frago.server.services import ui_session_lifecycle as life
+    from frago.session import coreagent_store
+    from frago.session import service as session_service_mod
+    from frago.session.service import LiveRuntimeProbes, SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    now_s = time.time()
+    panes_root = tmp_path / "panes"
+    panes_root.mkdir(parents=True, exist_ok=True)
+    core_root = tmp_path / "coreagent_sessions"
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(panes_root))
+    monkeypatch.setattr(host, "panes_dir", lambda: panes_root)
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: core_root)
+
+    sid = "core_d2_cancelled_protected"
+    _seed_coreagent_jsonl(
+        core_root / "-tmp-demo" / f"{sid}.jsonl",
+        [
+            {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "stop me"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "tu_cancel", "name": "Bash", "input": {"command": "sleep 999"}}],
+                },
+            },
+        ],
+        mtime_s=now_s - 300.0,
+    )
+
+    store_path = tmp_path / "session-ontology-store.json"
+    store = SessionOntologyStore(
+        store_path,
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    onto_svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: onto_svc)
+    onto_svc.start_turn(sid, agent_kernel_id="coreagent", origin="web")
+    onto_svc.terminate_agent_session(
+        session_id=sid, terminal_status="cancelled", summary="user_cancelled"
+    )
+
+    monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+    monkeypatch.setattr(
+        session_service_mod,
+        "collect_live_runtime_probes",
+        lambda **_kw: LiveRuntimeProbes(),
+    )
+    monkeypatch.setattr(
+        life,
+        "_list_coreagent_tmux_panes",
+        lambda: [
+            life._OrphanTmuxPane(
+                tmux_name=f"frago-agent-{sid}",
+                session_id=sid,
+                attached_count=0,
+                activity_ts=now_s - 300.0,
+                pane_cmd="zsh",
+                pane_dead=True,
+            )
+        ],
+    )
+    monkeypatch.setattr(life, "_kill_tmux_session", lambda _name: True)
+
+    svc = life.UiSessionLifecycleService()
+    summary = svc.reconcile_startup_orphans(now_s=now_s)
+
+    assert summary["onto_reconciled"] == 0
+    disk = json.loads(store_path.read_text(encoding="utf-8"))["sessions"][sid]
+    assert disk["lifecycle_state"] == "cancelled"
+    assert disk["summary"] == "user_cancelled"
+
+

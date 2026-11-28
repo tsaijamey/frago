@@ -636,6 +636,10 @@ class SessionOntologyStore:
                 if rec is None:
                     continue
                 target = normalize_session_lifecycle_state(raw_state)
+                # 人工取消（cancelled）是受保护终态：读面与后台批量对账绝不将其覆写为其他状态
+                # （显式重开会话须走 start_turn / update_lifecycle_state 写面路径）。
+                if rec.lifecycle_state == "cancelled" and target != "cancelled":
+                    continue
                 if (
                     rec.lifecycle_state == target
                     and (raw_summary is None or rec.summary == raw_summary)

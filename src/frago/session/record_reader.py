@@ -749,6 +749,8 @@ def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCar
             card.lifecycle_state = ev.lifecycle_state
             if ev.ui_status == "running":
                 card.digest_stuck = None
+            elif ev.tool_aborted and not card.digest_stuck:
+                card.digest_stuck = ev.heal_summary or "process_terminated_mid_turn"
             if ev.heal_target is not None:
                 if ev.heal_target == "completed":
                     card.digest_stuck = None

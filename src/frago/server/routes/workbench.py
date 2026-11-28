@@ -484,7 +484,7 @@ async def collect_workbench_session_rows(
     }
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
-    computed_states: list[tuple[Any, str, bool, str, bool, str]] = []
+    computed_states: list[tuple[Any, str, bool, str, bool, str, bool, str | None]] = []
     running_worker_parents: set[str] = set()
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
@@ -544,7 +544,23 @@ async def collect_workbench_session_rows(
             and status == "running"
         ):
             running_worker_parents.add(card.parent_session_id)
-        computed_states.append((card, name, alive, status, is_alive, str(lifecycle_state or "completed")))
+        abort_reason = (
+            ev.heal_summary
+            or (getattr(onto_rec, "summary", None) if onto_rec is not None else None)
+            or getattr(card, "digest_stuck", None)
+        ) if lifecycle_state == "error" else None
+        computed_states.append(
+            (
+                card,
+                name,
+                alive,
+                status,
+                is_alive,
+                str(lifecycle_state or "completed"),
+                bool(ev.tool_aborted),
+                str(abort_reason).strip() or None if abort_reason else None,
+            )
+        )
     if pending_onto_heals and can_write_ontology_store(onto_svc):
         with contextlib.suppress(Exception):
             await asyncio.to_thread(onto_svc.store.batch_reconcile_states, pending_onto_heals)
@@ -578,7 +594,16 @@ async def collect_workbench_session_rows(
         callback_inbox_map = _callback_inbox_summaries_by_caller()
         effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
-        for card, name, alive, status, is_alive, lifecycle_state in computed_states:
+        for (
+            card,
+            name,
+            alive,
+            status,
+            is_alive,
+            lifecycle_state,
+            tool_aborted,
+            abort_reason,
+        ) in computed_states:
             employee_id = _resolve_employee_id(card)
             if filter_employee_id is not None and employee_id != filter_employee_id:
                 continue
@@ -611,7 +636,7 @@ async def collect_workbench_session_rows(
                 is_local_ops=is_local_ops,
             )
             card_data = asdict(card)
-            card_data.pop("last_kind", None)
+            last_kind_val = card_data.pop("last_kind", None)
             matched_post = posts_by_id.get(employee_id) if employee_id else None
             employee_title = (
                 matched_post.title if matched_post is not None else employee_id
@@ -640,6 +665,9 @@ async def collect_workbench_session_rows(
                     if status == "error"
                     else ("running" if status == "running" else "completed")
                 ),
+                "last_kind": last_kind_val,
+                "tool_aborted": tool_aborted,
+                "abort_reason": abort_reason,
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,

@@ -722,10 +722,23 @@ def _resolve_session_via_record_reader(
     mapped_agent = family_to_agent.get(str(family), AgentType.CLAUDE)
 
     if card is not None:
-        if card.status == "running":
-            mapped_status = SessionStatus.RUNNING
+        onto_lifecycle = str(getattr(card, "lifecycle_state", "") or "").strip().lower()
+        lifecycle_to_status = {
+            "error": SessionStatus.ERROR,
+            "running": SessionStatus.RUNNING,
+            "awaiting_input": SessionStatus.AWAITING_INPUT,
+            "queued": SessionStatus.QUEUED,
+            "cancelled": SessionStatus.CANCELLED,
+            "completed": SessionStatus.COMPLETED,
+        }
+        if onto_lifecycle in lifecycle_to_status:
+            mapped_status = lifecycle_to_status[onto_lifecycle]
         elif card.status == "error":
             mapped_status = SessionStatus.ERROR
+        elif card.status == "running":
+            mapped_status = SessionStatus.RUNNING
+        elif card.status == "awaiting_input":
+            mapped_status = SessionStatus.AWAITING_INPUT
         else:
             mapped_status = SessionStatus.COMPLETED
         started_dt = (
