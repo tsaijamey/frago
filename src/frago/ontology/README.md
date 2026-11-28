@@ -293,7 +293,7 @@ flowchart TD
 | `RulePolicy` | `RecipeExposurePolicy` | 4. 配方 | `recipes/publish.py`、`server/routes/app_pages.py` | 配方页面开放策略（正交裁决谁能打开、从哪个数据根读、允许触发哪些 `@action`） |
 | `RulePolicy` | `TeamPairingSecurityPolicy` | 5. 边界 | `team/state.py` | 结对协作三档安全策略（只读请求、改动请求、绝对红线请求） |
 | `RulePolicy` | `SyncConflictPolicy` | 跨层底座 | `tools/sync_repo.py`、`frago-home-gitignore.template` | 家目录多设备同步边界与冲突自动裁决策略 |
-| `RulePolicy` | `ModuleImportBoundaryRule` | 跨层底座 | `.importlinter`、`.claude/docs/architecture-north-star.md` | 架构分层依赖契约 |
+| `RulePolicy` | `ModuleImportBoundaryRule` | 跨层底座 | `.importlinter`、`docs/architecture-north-star.md` | 架构分层依赖契约 |
 | `Contract` | `RecipeModuleContract` | 4. 配方 | `recipes/contract.py`、`recipes/metadata.py` | 配方的声明式模块契约（输入输出签名、`shares` 与 `reads_common` 双向握手、`uses_commands`） |
 | `Contract` | `CliCommandActionContract` | 跨层底座 | `cli/main.py`、`cli/commands.py` | `frago` CLI 系统调用契约 |
 | `Specification` | `ScheduleRuleSpec` | 5. 边界 | `recipes/schedule.py`、`cli/schedule_commands.py` | 定时任务规格定义（cron、直跑命令/直跑配方/自然语言交主控、`--notify-on change`） |

@@ -934,7 +934,7 @@
         "mutability": "versioned_immutable",
         "current_code_locations": [
           ".importlinter",
-          ".claude/docs/architecture-north-star.md"
+          "docs/architecture-north-star.md"
         ],
         "description": "架构分层依赖契约：规范 cli / server / ontology / domains / adapters / core 之间的合法引用方向。"
       },

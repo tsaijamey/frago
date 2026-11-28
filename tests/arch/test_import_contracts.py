@@ -54,7 +54,7 @@ def test_import_linter_runs() -> None:
 
 def test_north_star_doc_exists() -> None:
     """The north-star architecture doc must exist as the contract source-of-truth."""
-    doc = REPO_ROOT / ".claude" / "docs" / "architecture-north-star.md"
+    doc = REPO_ROOT / "docs" / "architecture-north-star.md"
     assert doc.exists(), f"Missing north-star doc at {doc}"
 
 
