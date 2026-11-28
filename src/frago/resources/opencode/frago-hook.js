@@ -514,6 +514,10 @@ function runHook(payload) {
     }, HOOK_TIMEOUT_MS)
 
     child.on("error", () => finish(null))
+    // A fast-exiting child that does not drain stdin closes its pipe before
+    // write finishes, emitting an async EPIPE that try/catch cannot intercept.
+    // Swallow stdin stream errors without aborting stdout parsing on `close`.
+    child.stdin.on("error", () => {})
     child.stdout.on("data", (chunk) => {
       stdout += chunk
     })

@@ -441,6 +441,44 @@ class TestBuiltinRuleAndFiveKernelHooks:
         assert "保留规则" in text
         assert "请回答" in text
 
+    def test_opencode_frago_hook_js_tolerates_stdin_epipe_on_fast_exit(self, tmp_path: Path) -> None:
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node not available in test environment")
+
+        hook_js = (
+            Path(__file__).resolve().parents[3]
+            / "src"
+            / "frago"
+            / "resources"
+            / "opencode"
+            / "frago-hook.js"
+        )
+        stub_engine = tmp_path / "stub-core-fast-exit.sh"
+        stub_engine.write_text(
+            "#!/bin/sh\n"
+            "exec 0<&-\n"
+            'printf \'{"hookSpecificOutput":{"additionalContext":"快速退出仍保留规则"}}\'\n',
+            encoding="utf-8",
+        )
+        stub_engine.chmod(0o755)
+
+        driver = tmp_path / "run-epipe.mjs"
+        driver.write_text(
+            f'import {{ FragoHookPlugin }} from {json.dumps(hook_js.as_uri())};\n'
+            'const hooks = await FragoHookPlugin({ directory: "/tmp" });\n'
+            'const output = { parts: [{ type: "text", text: "X".repeat(262144) }] };\n'
+            'await hooks["chat.message"]({ sessionID: "ses_opencode_epipe", model: { providerID: "x", modelID: "y" } }, output);\n'
+            'console.log(JSON.stringify({ ok: output.parts[0].text.includes("快速退出仍保留规则") }));\n',
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["FRAGO_HOOK_BINARY"] = str(stub_engine)
+
+        proc = subprocess.run([node, str(driver)], env=env, capture_output=True, text=True, check=True)
+        parsed = json.loads(proc.stdout.strip())
+        assert parsed["ok"] is True
+
     def test_coreagent_runner_sets_frago_session_id_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from frago.server.services import coreagent_runner
 
