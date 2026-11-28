@@ -132,6 +132,7 @@ export default function StackPopover({
 
   const singleMark =
     state?.mode === 'item' ? (markById.get(state.markId) ?? null) : null;
+  const singleMarkId = singleMark?.id ?? null;
 
   const editingNoteIdRef = useRef<string | null>(null);
   editingNoteIdRef.current = editingNoteId;
@@ -141,8 +142,8 @@ export default function StackPopover({
   useEffect(() => {
     skipBlurCommitRef.current = false;
     setEditingNoteId(null);
-    setNoteDraft(singleMark?.note ?? '');
-  }, [state?.mode, singleMark?.id]);
+    setNoteDraft(singleMarkRef.current?.note ?? '');
+  }, [state?.mode, singleMarkId]);
 
   useEffect(() => {
     if (editingNoteId === null) {
@@ -151,7 +152,7 @@ export default function StackPopover({
   }, [singleMark?.note, editingNoteId]);
 
   useEffect(() => {
-    if (editingNoteId && singleMark && editingNoteId === singleMark.id) {
+    if (editingNoteId && singleMarkId && editingNoteId === singleMarkId) {
       const ta = noteTextareaRef.current;
       if (ta) {
         ta.focus();
@@ -159,7 +160,7 @@ export default function StackPopover({
         ta.setSelectionRange(len, len);
       }
     }
-  }, [editingNoteId, singleMark?.id]);
+  }, [editingNoteId, singleMarkId]);
 
   useEffect(
     () => () => {

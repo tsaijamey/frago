@@ -553,23 +553,25 @@ class SchedulerService:
 
     async def _loop(self) -> None:
         await asyncio.sleep(INITIAL_DELAY_S)  # 服务刚起来那一下先让别的初始化跑完
-        last_staleness_check = 0.0
-        last_watchdog_check = 0.0
+        last_staleness_check: float | None = None
+        last_watchdog_check: float | None = None
         while not self._stop_event.is_set():
             # Reload schedules each tick (CLI may have added new ones)
             self._load()
             now = _now_utc()
 
             # 逾期巡检半小时一次就够——它盯的是「几个周期都没跑」这种慢故障
-            if time.monotonic() - last_staleness_check > 1800:
-                last_staleness_check = time.monotonic()
+            mono = time.monotonic()
+            if last_staleness_check is None or mono - last_staleness_check > 1800:
+                last_staleness_check = mono
                 with contextlib.suppress(Exception):
                     await self._check_staleness()
 
             # 长跑会话的看护：没人看页面时也按节拍投一次旁路观察，静默太久推一条通知。
             # 判据那条路要读会话文件、问 tmux，丢进工作线程，别把调度循环卡住。
-            if time.monotonic() - last_watchdog_check > WATCHDOG_EVERY_S:
-                last_watchdog_check = time.monotonic()
+            mono = time.monotonic()
+            if last_watchdog_check is None or mono - last_watchdog_check > WATCHDOG_EVERY_S:
+                last_watchdog_check = mono
                 with contextlib.suppress(Exception):
                     from frago.server.services.session_watchdog import get_watchdog
 

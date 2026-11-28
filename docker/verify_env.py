@@ -58,7 +58,15 @@ def run_cli(args: list[str]) -> tuple[int, str, str]:
     """Run frago CLI via python -m frago.cli.main and return (code, stdout, stderr)."""
     cmd = [sys.executable, "-m", "frago.cli.main", *args]
     env = {**os.environ, "FRAGO_ALLOW_CHECKOUT_CLI": "1"}
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=env,
+    )
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
@@ -97,6 +105,12 @@ def main() -> int:
         cft_clean_ok = not cft_state["found_cft_dirs"] if in_gha_vm else not cft_state["preinstalled"]
     else:
         cft_clean_ok = True
+    def _check_entry(code: int, stderr: str, **extra: object) -> dict[str, object]:
+        entry: dict[str, object] = {"code": code, **extra}
+        if code != 0 and stderr:
+            entry["stderr"] = stderr[:400]
+        return entry
+
     ok = ver_code == 0 and book_code == 0 and recipe_code == 0 and cft_clean_ok
     report = {
         "ok": ok,
@@ -108,9 +122,9 @@ def main() -> int:
         "mnt_c_exists": Path("/mnt/c").exists() if detected == "wsl2" else None,
         "browser_clean_state": cft_state,
         "checks": {
-            "version": {"code": ver_code, "output": ver_out or ver_err},
-            "book_brief": {"code": book_code, "lines": len((book_out or "").splitlines())},
-            "recipe_list": {"code": recipe_code, "lines": len((recipe_out or "").splitlines())},
+            "version": _check_entry(ver_code, ver_err, output=ver_out or ver_err),
+            "book_brief": _check_entry(book_code, book_err, lines=len((book_out or "").splitlines())),
+            "recipe_list": _check_entry(recipe_code, recipe_err, lines=len((recipe_out or "").splitlines())),
         },
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

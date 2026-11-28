@@ -302,6 +302,102 @@ class TestTheMountsLinuxIsHeldTo:
             ["uv", "run", "x.py", "{}"], isolation.View(), cwd=tmp_path)
         assert argv[argv.index("--") + 1:] == ["uv", "run", "x.py", "{}"]
 
+    def test_usrmerge_root_symlinks_use_symlink_and_skip_redundant_usr_binds(self, monkeypatch):
+        """在 Ubuntu 24.04/26.04 等 usrmerge 系统上，/bin、/lib、/lib64 是指向 usr/*
+        的根级符号链接，bwrap 必须用 --symlink 复原而非 --ro-bind-try，以确保 ELF
+        PT_INTERP（/lib64/ld-linux-x86-64.so.2）及相对路径链接均可解析。"""
+        usrmerge_map = {
+            Path("/bin"): ("usr/bin", Path("/usr/bin")),
+            Path("/sbin"): ("usr/sbin", Path("/usr/sbin")),
+            Path("/lib"): ("usr/lib", Path("/usr/lib")),
+            Path("/lib64"): ("usr/lib64", Path("/usr/lib64")),
+        }
+        orig_is_symlink = Path.is_symlink
+        orig_resolve = Path.resolve
+        orig_readlink = os.readlink
+
+        def fake_is_symlink(self: Path) -> bool:
+            if self in usrmerge_map:
+                return True
+            return orig_is_symlink(self)
+
+        def fake_resolve(self: Path, strict: bool = False) -> Path:
+            if self in usrmerge_map:
+                return usrmerge_map[self][1]
+            return orig_resolve(self, strict=strict)
+
+        def fake_readlink(path):
+            p = Path(path)
+            if p in usrmerge_map:
+                return usrmerge_map[p][0]
+            return orig_readlink(path)
+
+        monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+        monkeypatch.setattr(Path, "resolve", fake_resolve)
+        monkeypatch.setattr(os, "readlink", fake_readlink)
+
+        view = isolation.View(
+            readable=(
+                Path("/usr"),
+                Path("/bin"), Path("/usr/bin"),
+                Path("/sbin"), Path("/usr/sbin"),
+                Path("/lib"), Path("/usr/lib"),
+                Path("/lib64"), Path("/usr/lib64"),
+                Path("/etc"),
+            )
+        )
+        argv = isolation.Bubblewrap().wrap(["python"], view, cwd=None)
+        triples = list(zip(argv, argv[1:], argv[2:], strict=False))
+        assert ("--ro-bind-try", "/usr", "/usr") in triples
+        assert ("--ro-bind-try", "/etc", "/etc") in triples
+        for link, (raw_target, resolved) in usrmerge_map.items():
+            assert ("--symlink", raw_target, str(link)) in triples
+            assert ("--ro-bind-try", str(link), str(link)) not in triples
+            assert ("--ro-bind-try", str(resolved), str(resolved)) not in triples
+
+    def test_interpreter_readable_follows_multihop_symlinks_under_monkeypatched_home(
+        self, tmp_path, monkeypatch
+    ):
+        """即使测试将 Path.home() 覆写到临时目录，沿 sys.executable 的逐跳符号链接链
+        （含同目录相对链接、中间别名目录符号链接与最终真实前缀目录）也必须全部纳入只读视图，
+        且绝不暴露用户主目录或 ~/.ssh。"""
+        real_uv = tmp_path / "host_uv" / "python"
+        real_prefix = real_uv / "cpython-3.13.18-linux-x86_64-gnu"
+        (real_prefix / "bin").mkdir(parents=True)
+        real_bin = real_prefix / "bin" / "python3.13"
+        real_bin.write_text("#!/bin/sh\n")
+
+        alias_prefix = real_uv / "cpython-3.13-linux-x86_64-gnu"
+        os.symlink(real_prefix.name, alias_prefix)
+
+        hop_dir = tmp_path / "mid_shim" / "bin"
+        hop_dir.mkdir(parents=True)
+        hop_link = hop_dir / "python3"
+        os.symlink(alias_prefix / "bin" / "python3.13", hop_link)
+
+        venv_bin = tmp_path / "project" / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        venv_py3 = venv_bin / "python3"
+        os.symlink(hop_link, venv_py3)
+        venv_py = venv_bin / "python"
+        os.symlink("python3", venv_py)
+
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        (fake_home / ".ssh").mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr(isolation.sys, "executable", str(venv_py))
+        monkeypatch.setattr(isolation.sys, "prefix", str(tmp_path / "project" / ".venv"))
+        monkeypatch.setattr(isolation.sys, "base_prefix", str(real_prefix))
+
+        readable = isolation._interpreter_readable()
+        assert venv_bin in readable or (tmp_path / "project" / ".venv") in readable
+        assert hop_dir in readable
+        assert alias_prefix in readable
+        assert real_prefix in readable
+        assert fake_home not in readable
+        assert (fake_home / ".ssh") not in readable
+
 
 class TestAMachineThatCannotConfineARecipe:
     def test_it_refuses_rather_than_running_one_unconfined(self, monkeypatch):
@@ -625,6 +721,7 @@ class TestWhatTheKernelActuallyRefuses:
         cmd, _ = isolation.wrap(
             [sys.executable, str(probe), str(ssh)], view, cwd=land)
         done = subprocess.run(cmd, cwd=land, capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
         assert "READABLE" not in done.stdout
 
     @pytest.mark.skipif(platform.system() != "Darwin", reason="macOS preferences")

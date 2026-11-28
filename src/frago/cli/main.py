@@ -495,20 +495,24 @@ cli.add_command(install_group, name="install")
 
 
 
+# 若回退路径使用 TextIOWrapper 重新包装了外部非 UTF-8 流，保留旧流对象引用，
+# 防止旧包装器立即被 GC 析构而关闭共享底层 buffer。
+_RETAINED_STDIO_STREAMS: list[object] = []
+
+
 def _force_utf8_stdio_on_windows() -> None:
-    """Replace sys.stdout/stderr with explicit UTF-8 TextIOWrapper on Windows.
+    """Ensure sys.stdout/stderr emit UTF-8 on Windows idempotently.
 
     Japanese/Chinese/Korean Windows editions default console codepage to
     cp932/cp936/cp949, which can't encode the CJK text and box-drawing
     characters frago CLI emits (recipe list tables, def find output, book
     content). English Windows uses cp1252, equally CJK-unfriendly.
 
-    The simpler `sys.stdout.reconfigure(encoding='utf-8')` silently fails
-    when stdout is a pipe captured by a parent process (Claude Code →
-    Git Bash → frago.exe), leaving Python encoding at locale default.
-    Replacing the stream object with a fresh TextIOWrapper on top of the
-    raw buffer is the robust path: no hidden wrapper intercepts it, and
-    every subsequent write() goes through UTF-8 regardless of TTY state.
+    Prefer in-place ``reconfigure()`` so repeated calls (``main()`` followed
+    by ``cli()``) never construct a second ``TextIOWrapper`` over the same
+    underlying buffer — doing so causes the first wrapper's GC finalizer to
+    close the shared buffer, raising ``ValueError: I/O operation on closed
+    file.`` on the next write.
     """
     import contextlib
     import io
@@ -517,17 +521,39 @@ def _force_utf8_stdio_on_windows() -> None:
         return
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        encoding = (getattr(stream, "encoding", "") or "").lower().replace("_", "-")
+        if encoding == "utf-8":
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(
+                    encoding="utf-8",
+                    errors="replace",
+                    line_buffering=True,
+                    write_through=True,
+                )
+                new_enc = (getattr(stream, "encoding", "") or "").lower().replace("_", "-")
+                if new_enc == "utf-8":
+                    continue
+        if getattr(stream, "_frago_utf8_wrapped", False):
+            continue
         buffer = getattr(stream, "buffer", None)
         if buffer is None:
             continue
         with contextlib.suppress(OSError, ValueError):
-            setattr(sys, name, io.TextIOWrapper(
+            wrapped = io.TextIOWrapper(
                 buffer,
                 encoding="utf-8",
                 errors="replace",
                 line_buffering=True,
                 write_through=True,
-            ))
+            )
+            setattr(wrapped, "_frago_utf8_wrapped", True)
+            _RETAINED_STDIO_STREAMS.append(stream)
+            setattr(sys, name, wrapped)
 
 
 def main():
