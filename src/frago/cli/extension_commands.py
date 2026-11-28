@@ -74,7 +74,10 @@ def daemon_cmd(sock):
         asyncio.run(nh.run_daemon(sock_path))
 
 
-@extension_group.command("native-host")
+@extension_group.command(
+    "native-host",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+)
 @click.option("--sock", type=click.Path(path_type=Path), default=None)
 def native_host_cmd(sock):
     """Stdio relay invoked by Chrome. Not meant to be run manually."""

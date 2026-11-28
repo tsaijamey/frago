@@ -49,8 +49,16 @@ SOCK_PATH = Path.home() / ".frago" / "chrome" / "extension.sock"
 class Daemon:
     """Singleton multiplexer between extension stdio relay and CLI clients."""
 
-    def __init__(self, *, auth_token: str | None = None) -> None:
+    HANDSHAKE_TIMEOUT_S: float = 5.0
+
+    def __init__(
+        self,
+        *,
+        auth_token: str | None = None,
+        handshake_timeout: float = HANDSHAKE_TIMEOUT_S,
+    ) -> None:
         self._auth_token = auth_token
+        self._handshake_timeout = handshake_timeout
         self._extension_writer: asyncio.StreamWriter | None = None
         self._extension_ready = asyncio.Event()
         # pending[id_from_extension] = (client_writer, original_client_id)
@@ -65,7 +73,21 @@ class Daemon:
     async def handle_conn(self, reader: asyncio.StreamReader,
                           writer: asyncio.StreamWriter) -> None:
         # First frame must be a hello identifying the role (and auth token when required).
-        hello = await read_frame_async(reader)
+        if self._auth_token is not None and self._handshake_timeout > 0:
+            try:
+                hello = await asyncio.wait_for(
+                    read_frame_async(reader),
+                    timeout=self._handshake_timeout,
+                )
+            except TimeoutError:
+                sys.stderr.write("[daemon] handshake timed out, closing connection\n")
+                sys.stderr.flush()
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+                return
+        else:
+            hello = await read_frame_async(reader)
         if hello is None:
             writer.close()
             with contextlib.suppress(Exception):

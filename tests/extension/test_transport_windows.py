@@ -23,19 +23,24 @@ import contextlib
 import io
 import json
 import os
+import platform
 import signal
 import socket
+import subprocess
 import sys
 import types
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 
+from frago.browser.backends import extension as ext_backend
 from frago.browser.extension import lifecycle as lc
 from frago.browser.extension import native_host as nh
 from frago.browser.extension import transport as tr
 from frago.browser.extension.protocol import encode_frame, read_frame_async, read_frame_sync
+from frago.cli.extension_commands import extension_group
 
 
 def _simulate_windows_no_af_unix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -444,8 +449,12 @@ def test_windows_launcher_registry_and_cft_init(
     assert launcher.name == "native_host_launcher.cmd"
     assert launcher.exists()
     launcher_raw = launcher.read_bytes()
-    assert b"@echo off\r\n" in launcher_raw
-    assert b'"C:\\Program Files\\Python312\\python.exe" -m frago.cli.main extension native-host %*\r\n' in launcher_raw
+    assert launcher_raw.startswith(b"@echo off\r\nchcp 65001 >nul\r\n")
+    assert (
+        b'"C:\\Program Files\\Python312\\python.exe" -m frago.cli.main extension native-host\r\n'
+        in launcher_raw
+    )
+    assert b"%*" not in launcher_raw
 
     manifest_path = Path(info["manifest_path"])
     assert manifest_path.exists()
@@ -463,13 +472,138 @@ def test_windows_launcher_registry_and_cft_init(
     ] == expected_val
 
 
-def test_windows_detached_subprocess_kwargs(monkeypatch: pytest.MonkeyPatch):
+def test_windows_launcher_utf8_chinese_path_and_percent_escape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P1-1: .cmd launcher switches to UTF-8 codepage silently and escapes %."""
     monkeypatch.setattr(sys, "platform", "win32")
-    kw = tr.detached_subprocess_kwargs()
+    monkeypatch.setattr(sys, "executable", r"C:\Users\张三\100%dev\Python312\python.exe")
+
+    launcher = tr.ensure_native_host_launcher(base_dir=tmp_path)
+    assert launcher.name == "native_host_launcher.cmd"
+    raw = launcher.read_bytes()
+    expected = (
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        '"C:\\Users\\张三\\100%%dev\\Python312\\python.exe" -m frago.cli.main extension native-host\r\n'
+    ).encode()
+    assert raw == expected
+    assert b"%*" not in raw
+
+
+def test_native_host_cli_accepts_chrome_windows_args(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P0-1: Click native-host command tolerates Chrome's origin + --parent-window args."""
+    called_socks: list[Path] = []
+
+    async def _fake_run_relay(sock_path: Path = nh.SOCK_PATH) -> None:
+        called_socks.append(sock_path)
+
+    monkeypatch.setattr(nh, "run_relay", _fake_run_relay)
+
+    runner = CliRunner()
+    res = runner.invoke(
+        extension_group,
+        [
+            "native-host",
+            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+            "--parent-window=12345",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert called_socks == [nh.SOCK_PATH]
+
+    # Explicit --sock still works alongside Chrome's extra native messaging args.
+    custom_sock = tmp_path / "custom.sock"
+    called_socks.clear()
+    res2 = runner.invoke(
+        extension_group,
+        [
+            "native-host",
+            "--sock",
+            str(custom_sock),
+            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+            "--parent-window=67890",
+        ],
+    )
+    assert res2.exit_code == 0, res2.output
+    assert called_socks == [custom_sock]
+
+
+def test_windows_detached_subprocess_kwargs(monkeypatch: pytest.MonkeyPatch):
+    """P1-2: hide_window=True hides daemon console; hide_window=False keeps GUI visible."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+
+    class _FakeStartupInfo:
+        def __init__(self) -> None:
+            self.dwFlags = 0
+            self.wShowWindow = None
+
+    monkeypatch.setattr(subprocess, "STARTUPINFO", _FakeStartupInfo, raising=False)
+    monkeypatch.setattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001, raising=False)
+    monkeypatch.setattr(subprocess, "SW_HIDE", 0, raising=False)
+
+    # Default (hide_window=True): background daemon hides console window.
+    kw_hidden = tr.detached_subprocess_kwargs()
+    assert "start_new_session" not in kw_hidden
+    assert "creationflags" in kw_hidden
+    assert kw_hidden["creationflags"] & 0x08000000  # CREATE_NO_WINDOW
+    assert kw_hidden["creationflags"] & 0x00000008  # DETACHED_PROCESS
+    assert "startupinfo" in kw_hidden
+    assert kw_hidden["startupinfo"].dwFlags & 0x00000001
+    assert kw_hidden["startupinfo"].wShowWindow == 0
+
+    # hide_window=False: headful GUI browser never receives CREATE_NO_WINDOW or SW_HIDE.
+    kw_gui = tr.detached_subprocess_kwargs(hide_window=False)
+    assert "start_new_session" not in kw_gui
+    assert "startupinfo" not in kw_gui
+    assert kw_gui["creationflags"] == (0x00000008 | 0x00000200)  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    assert not (kw_gui["creationflags"] & 0x08000000)  # no CREATE_NO_WINDOW
+
+
+def test_launch_chrome_with_extension_does_not_hide_window_on_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P1-2: launch_chrome_with_extension passes hide_window=False on Windows."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+
+    class _FakeStartupInfo:
+        def __init__(self) -> None:
+            self.dwFlags = 0
+            self.wShowWindow = None
+
+    monkeypatch.setattr(subprocess, "STARTUPINFO", _FakeStartupInfo, raising=False)
+    monkeypatch.setattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001, raising=False)
+    monkeypatch.setattr(subprocess, "SW_HIDE", 0, raising=False)
+
+    captured: dict[str, object] = {}
+
+    def _fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return types.SimpleNamespace(pid=4321)
+
+    monkeypatch.setattr(ext_backend.subprocess, "Popen", _fake_popen)
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    profile = tmp_path / "profile"
+
+    proc = ext_backend.launch_chrome_with_extension(
+        bundle_dir=bundle,
+        user_data_dir=profile,
+        chrome_binary=r"C:\chrome\chrome.exe",
+        brand="cft",
+    )
+    assert proc.pid == 4321
+    kw = captured["kwargs"]
+    assert isinstance(kw, dict)
+    assert "startupinfo" not in kw
     assert "start_new_session" not in kw
-    assert "creationflags" in kw
-    assert kw["creationflags"] & 0x08000000  # CREATE_NO_WINDOW
-    assert kw["creationflags"] & 0x00000008  # DETACHED_PROCESS
+    assert kw["creationflags"] == (0x00000008 | 0x00000200)
+    assert not (kw["creationflags"] & 0x08000000)
 
 
 def test_kill_with_grace_without_sigkill_uses_taskkill(monkeypatch: pytest.MonkeyPatch):
@@ -513,3 +647,110 @@ def test_read_frame_sync_rejects_oversized_and_malformed():
     # Invalid JSON payload
     bad_payload = b"not-json"
     assert read_frame_sync(io.BytesIO(len(bad_payload).to_bytes(4, "little") + bad_payload)) is None
+
+
+# ─────────────── 6. P2 hardening: fd safety, server cleanup, handshake timeout ───────────────
+
+
+def test_atomic_write_json_does_not_double_close_fd_on_write_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P2: Once os.fdopen() takes ownership of fd, write failures must not call os.close(fd)."""
+    target = tmp_path / "endpoint.json"
+    real_fdopen = os.fdopen
+    real_close = os.close
+    explicit_close_calls: list[int] = []
+
+    class _FailingStream:
+        def __init__(self, inner) -> None:
+            self._inner = inner
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self._inner.close()
+            return False
+
+        def write(self, _data: bytes) -> int:
+            raise OSError("simulated disk write failure")
+
+        def flush(self) -> None:
+            pass
+
+    def _wrapped_fdopen(fd: int, mode: str = "r", *args, **kwargs):
+        return _FailingStream(real_fdopen(fd, mode, *args, **kwargs))
+
+    def _spy_close(fd: int) -> None:
+        explicit_close_calls.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "fdopen", _wrapped_fdopen)
+    monkeypatch.setattr(os, "close", _spy_close)
+
+    with pytest.raises(OSError, match="simulated disk write failure"):
+        tr._atomic_write_json(target, {"ok": True})
+
+    # fd was owned and closed by _FailingStream.__exit__; os.close must never be called on it.
+    assert explicit_close_calls == []
+    assert not target.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.asyncio
+async def test_start_bridge_server_closes_socket_when_metadata_write_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P2: Bound TCP listener must be closed if _atomic_write_json raises."""
+    _simulate_windows_no_af_unix(monkeypatch)
+    anchor = tmp_path / "extension.sock"
+
+    bound_servers: list[asyncio.AbstractServer] = []
+    real_start_server = asyncio.start_server
+
+    async def _spy_start_server(*args, **kwargs):
+        srv = await real_start_server(*args, **kwargs)
+        bound_servers.append(srv)
+        return srv
+
+    monkeypatch.setattr(asyncio, "start_server", _spy_start_server)
+    monkeypatch.setattr(
+        tr,
+        "_atomic_write_json",
+        lambda _path, _payload: (_ for _ in ()).throw(OSError("metadata write failed")),
+    )
+
+    daemon = nh.Daemon(auth_token=tr.generate_auth_token())
+    with pytest.raises(OSError, match="metadata write failed"):
+        await tr.start_bridge_server(daemon.handle_conn, anchor)
+
+    assert len(bound_servers) == 1
+    assert bound_servers[0].is_serving() is False
+
+
+@pytest.mark.asyncio
+async def test_daemon_tcp_handshake_timeout_closes_stalled_peer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """P2: Loopback TCP mode closes peers that stall without sending the hello frame."""
+    _simulate_windows_no_af_unix(monkeypatch)
+    anchor = tmp_path / "extension.sock"
+    token = tr.generate_auth_token()
+    daemon = nh.Daemon(auth_token=token, handshake_timeout=0.15)
+    handle = await tr.start_bridge_server(daemon.handle_conn, anchor, auth_token=token)
+
+    try:
+        assert handle.endpoint.port is not None
+        reader, writer = await asyncio.open_connection("127.0.0.1", handle.endpoint.port)
+        try:
+            # Peer intentionally sends nothing; daemon must close connection after timeout.
+            data = await asyncio.wait_for(reader.read(16), timeout=2.0)
+            assert data == b""
+        finally:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+    finally:
+        handle.server.close()
+        await handle.server.wait_closed()
+        handle.close_cleanup()

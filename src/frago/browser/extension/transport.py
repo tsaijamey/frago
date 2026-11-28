@@ -135,21 +135,29 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
     raw = json.dumps(payload, indent=2).encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd: int | None = None
     try:
         fd = os.open(str(tmp_path), flags, 0o600)
         try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(raw)
-                f.flush()
+            f = os.fdopen(fd, "wb")
         except Exception:
             with contextlib.suppress(OSError):
                 os.close(fd)
+            fd = None
             raise
+        # os.fdopen() now owns the file descriptor; clear fd to avoid double-close.
+        fd = None
+        with f:
+            f.write(raw)
+            f.flush()
         if sys.platform != "win32":
             with contextlib.suppress(OSError):
                 os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, path)
     except Exception:
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         with contextlib.suppress(OSError):
             if tmp_path.exists():
                 tmp_path.unlink()
@@ -351,18 +359,26 @@ async def start_bridge_server(
 
     if chosen_mode == "unix":
         server = await asyncio.start_unix_server(client_connected_cb, path=str(anchor))
-        with contextlib.suppress(OSError):
-            os.chmod(anchor, 0o600)
-        ep = BridgeEndpoint(transport="unix", sock_path=anchor, pid=os.getpid())
-        _atomic_write_json(
-            meta_path,
-            {
-                "version": ENDPOINT_VERSION,
-                "transport": "unix",
-                "path": str(anchor),
-                "pid": os.getpid(),
-            },
-        )
+        try:
+            with contextlib.suppress(OSError):
+                os.chmod(anchor, 0o600)
+            ep = BridgeEndpoint(transport="unix", sock_path=anchor, pid=os.getpid())
+            _atomic_write_json(
+                meta_path,
+                {
+                    "version": ENDPOINT_VERSION,
+                    "transport": "unix",
+                    "path": str(anchor),
+                    "pid": os.getpid(),
+                },
+            )
+        except Exception:
+            server.close()
+            await server.wait_closed()
+            with contextlib.suppress(OSError):
+                if anchor.exists():
+                    anchor.unlink()
+            raise
         return BridgeServerHandle(
             server=server,
             endpoint=ep,
@@ -372,30 +388,33 @@ async def start_bridge_server(
 
     token = auth_token or generate_auth_token()
     server = await asyncio.start_server(client_connected_cb, host=LOOPBACK_HOST, port=0)
-    sockets = server.sockets
-    if not sockets:
+    try:
+        sockets = server.sockets
+        if not sockets:
+            raise OSError("failed to bind loopback TCP socket for extension daemon")
+        port = int(sockets[0].getsockname()[1])
+        ep = BridgeEndpoint(
+            transport="tcp",
+            host=LOOPBACK_HOST,
+            port=port,
+            token=token,
+            pid=os.getpid(),
+        )
+        _atomic_write_json(
+            meta_path,
+            {
+                "version": ENDPOINT_VERSION,
+                "transport": "tcp",
+                "host": LOOPBACK_HOST,
+                "port": port,
+                "token": token,
+                "pid": os.getpid(),
+            },
+        )
+    except Exception:
         server.close()
         await server.wait_closed()
-        raise OSError("failed to bind loopback TCP socket for extension daemon")
-    port = int(sockets[0].getsockname()[1])
-    ep = BridgeEndpoint(
-        transport="tcp",
-        host=LOOPBACK_HOST,
-        port=port,
-        token=token,
-        pid=os.getpid(),
-    )
-    _atomic_write_json(
-        meta_path,
-        {
-            "version": ENDPOINT_VERSION,
-            "transport": "tcp",
-            "host": LOOPBACK_HOST,
-            "port": port,
-            "token": token,
-            "pid": os.getpid(),
-        },
-    )
+        raise
     return BridgeServerHandle(
         server=server,
         endpoint=ep,
@@ -437,16 +456,20 @@ def ensure_native_host_launcher(base_dir: Path | None = None) -> Path:
     """Write the native-messaging launcher Chrome/CfT spawns for ``com.frago.bridge``.
 
     POSIX: executable bash script ``native_host_launcher.sh``.
-    Windows: batch launcher ``native_host_launcher.cmd`` quoting ``sys.executable``
-    so paths containing spaces (e.g. ``C:\\Program Files\\Python312\\python.exe``)
-    execute cleanly under Chrome's ``CreateProcess``.
+    Windows: UTF-8 batch launcher ``native_host_launcher.cmd`` that switches
+    ``cmd.exe`` to codepage 65001 silently (``>nul`` so stdout framing is never
+    polluted), escapes ``%`` in ``sys.executable``, and omits ``%*`` so Chrome's
+    native-messaging origin and ``--parent-window`` arguments are not forwarded
+    to the CLI parser.
     """
     launcher = native_host_launcher_path(base_dir)
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
+        escaped_exe = sys.executable.replace("%", "%%")
         content = (
             "@echo off\r\n"
-            f'"{sys.executable}" -m frago.cli.main extension native-host %*\r\n'
+            "chcp 65001 >nul\r\n"
+            f'"{escaped_exe}" -m frago.cli.main extension native-host\r\n'
         )
         with open(launcher, "w", encoding="utf-8", newline="") as f:
             f.write(content)
@@ -480,9 +503,22 @@ def configure_stdio_binary_mode() -> None:
             msvcrt.setmode(stream.fileno(), o_binary)
 
 
-def detached_subprocess_kwargs() -> dict[str, Any]:
-    """Return cross-platform ``subprocess.Popen`` kwargs for detached processes."""
+def detached_subprocess_kwargs(*, hide_window: bool = True) -> dict[str, Any]:
+    """Return cross-platform ``subprocess.Popen`` kwargs for detached processes.
+
+    Args:
+        hide_window: When ``True`` (default, for headless background daemons),
+            suppresses any console window on Windows. When ``False`` (for
+            headful GUI browsers like Chrome/CfT), detaches the process group
+            without passing ``CREATE_NO_WINDOW`` or ``SW_HIDE`` so the browser
+            window displays normally.
+    """
     if sys.platform == "win32":
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        if not hide_window:
+            return {"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
+
         from frago.compat import get_windows_subprocess_kwargs
 
         kwargs = get_windows_subprocess_kwargs(detach=True)
@@ -490,6 +526,5 @@ def detached_subprocess_kwargs() -> dict[str, Any]:
             return kwargs
         # Fallback when sys.platform is monkeypatched to win32 during tests on POSIX.
         CREATE_NO_WINDOW = 0x08000000
-        DETACHED_PROCESS = 0x00000008
         return {"creationflags": CREATE_NO_WINDOW | DETACHED_PROCESS}
     return {"start_new_session": True}

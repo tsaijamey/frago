@@ -859,4 +859,4 @@ def launch_chrome_with_extension(bundle_dir: Path,
     if log_path:
         stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
     return subprocess.Popen(args, stdout=stdio, stderr=stdio,
-                            **detached_subprocess_kwargs())
+                            **detached_subprocess_kwargs(hide_window=False))
