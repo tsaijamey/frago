@@ -157,6 +157,14 @@
   /* Status badge backgrounds */
   --status-running-bg: rgba(21, 179, 77, 0.14);
   --status-completed-bg: rgba(255, 255, 255, 0.07);
+
+  /* 数字员工 Micah / 上传头像双主题令牌（与主原型 1:1 对齐） */
+  --av-bg: #2a2d34;
+  --av-ring: rgba(255, 255, 255, 0.16);
+  --av-ring-hover: rgba(255, 255, 255, 0.42);
+  --av-cutout: #1a1a1a;
+  --av-badge-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --av-done-dot: #6c737f;
   --status-error-bg: rgba(240, 89, 107, 0.14);
 
   /* Spacing system (8px grid, fixed values) */
@@ -396,6 +404,14 @@
   --status-running-bg: rgba(10, 143, 51, 0.1);
   --status-completed-bg: rgba(0, 0, 0, 0.05);
   --status-error-bg: rgba(196, 43, 69, 0.1);
+
+  /* 数字员工 Micah / 上传头像浅色主题令牌（与主原型 1:1 对齐） */
+  --av-bg: #eaedf2;
+  --av-ring: rgba(0, 0, 0, 0.11);
+  --av-ring-hover: rgba(0, 0, 0, 0.34);
+  --av-cutout: #f7f7f7;
+  --av-badge-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --av-done-dot: #8b93a0;
 
   /* Elevation — 浅色下阴影是层级的主要线索，但压到最轻。 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);

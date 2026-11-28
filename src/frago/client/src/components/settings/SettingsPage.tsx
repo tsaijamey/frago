@@ -158,6 +158,7 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
                 key={tab.id}
                 type="button"
                 className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
+                data-testid={`settings-nav-${tab.id}`}
                 onClick={() => setActive(tab.id)}
                 /* 描述搬到了右侧面板的标题下面。这里留一份 title，
                    鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
@@ -179,6 +180,24 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               </button>
             );
           })}
+
+          <div className="snav-attr" data-testid="settings-snav-attribution">
+            <div className="snav-attr-t">{t('settings.about.avatarCreditsShortTitle')}</div>
+            <div>
+              <strong>Avatar Illustration System</strong> by Micah Lanier (CC BY 4.0)
+            </div>
+            <div>
+              Engine: DiceBear (MIT) ·{' '}
+              <button
+                type="button"
+                className="snav-attr-link"
+                data-testid="settings-snav-about-link"
+                onClick={() => setActive('about')}
+              >
+                {t('settings.tabs.about')}
+              </button>
+            </div>
+          </div>
         </nav>
 
         <section className="settings-panel">
