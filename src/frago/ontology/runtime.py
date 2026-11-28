@@ -1856,9 +1856,27 @@ def build_record_callback_delivery_outcome_contract(
 ) -> OntologicalActionContract:
     """Build the `record_callback_delivery_outcome` contract with Ring 3 state transition checks."""
     from frago.ontology.projectors import (
+        CALLBACK_DELIVERY_FAILURE_KINDS,
         CALLBACK_DELIVERY_STATES,
         is_legal_callback_delivery_transition,
     )
+
+    def _valid_failure_kind(args: Mapping[str, Any]) -> bool:
+        raw = args.get("failure_kind")
+        if raw is None:
+            return True
+        norm = str(raw).strip().lower()
+        return not norm or norm in CALLBACK_DELIVERY_FAILURE_KINDS
+
+    def _controlled_recovery_guard(args: Mapping[str, Any]) -> bool:
+        state = _persisted_delivery_state(args)
+        if state != "failed":
+            return True
+        if args.get("to_state") != "queued":
+            return False
+        reason = str(args.get("reason") or "").strip()
+        failure_kind = str(args.get("failure_kind") or "").strip().lower()
+        return bool(reason) and failure_kind != "permanent"
 
     insp = introspector if introspector is not None else OntologyIntrospector()
     return insp.build_action_contract(
@@ -1876,18 +1894,26 @@ def build_record_callback_delivery_outcome_contract(
                 ),
             ),
             ConditionCheck(
-                description="(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed.",
+                description="(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed, or controlled recovery failed→queued.",
                 predicate=lambda args: is_legal_callback_delivery_transition(
                     str(args.get("from_state", "")), str(args.get("to_state", ""))
                 ),
             ),
             ConditionCheck(
-                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match from_state and not be terminal (delivered/failed).",
+                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match from_state and MUST NOT be terminal (delivered).",
                 predicate=lambda args: (
                     (state := _persisted_delivery_state(args)) is not None
-                    and state not in ("delivered", "failed")
+                    and state != "delivered"
                     and state == args.get("from_state")
                 ),
+            ),
+            ConditionCheck(
+                description="Controlled recovery failed→queued REQUIRES a non-empty reason and failure_kind != 'permanent'.",
+                predicate=_controlled_recovery_guard,
+            ),
+            ConditionCheck(
+                description="When failure_kind is provided (non-empty), it MUST be one of {'transient', 'permanent'}.",
+                predicate=_valid_failure_kind,
             ),
         ),
         invariants=(

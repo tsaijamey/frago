@@ -656,19 +656,21 @@ def project_session_process_dict(
 # ============================================================================
 
 CALLBACK_DELIVERY_STATES: tuple[str, ...] = ("queued", "delivering", "delivered", "failed")
+CALLBACK_DELIVERY_FAILURE_KINDS: frozenset[str] = frozenset({"transient", "permanent"})
 CALLBACK_DELIVERY_TRANSITIONS: Mapping[str, frozenset[str]] = {
     "queued": frozenset({"delivering", "failed"}),
     "delivering": frozenset({"delivered", "queued", "failed"}),
     "delivered": frozenset(),
-    "failed": frozenset(),
+    "failed": frozenset({"queued"}),
 }
 """Legal callback-delivery transitions.
 
-``queued → delivering → delivered`` is the only road to ``delivered``; a failed injection
-goes ``delivering → queued`` (put back at the head of the queue); ``failed`` is reachable
-from ``queued`` or ``delivering`` once retries are exhausted or the target is unreachable.
-``delivered`` and ``failed`` are terminal. The registry's generic state table is a full
-mesh, so the narrower contract is pinned here.
+``queued → delivering → delivered`` is the only road to ``delivered``; a transient delivery
+failure goes ``delivering → queued`` (re-queued with backoff); ``failed`` is reachable from
+``queued`` or ``delivering`` once retries are exhausted or the target is unreachable;
+``failed → queued`` is a controlled recovery edge (enforced by Gate 3 contract: requires
+non-empty ``reason`` and ``failure_kind != 'permanent'``). ``delivered`` is strictly terminal.
+The registry's generic state table is a full mesh, so the narrower contract is pinned here.
 """
 
 
@@ -715,6 +717,8 @@ class CallbackDeliveryProjection:
     state: QualityState
     worker_succeeded: bool | None
     graph: OntologyGraph
+    delivery_failure_kind: str | None = None
+    next_retry_at: str | None = None
 
 
 def project_callback_delivery_dict(
@@ -795,6 +799,11 @@ def project_callback_delivery_dict(
             assert isinstance(worker_proc, Process)
         g.link(process, "dispatched_from_worker", worker_proc)
 
+    raw_failure_kind = raw_job.get("delivery_failure_kind")
+    delivery_failure_kind = str(raw_failure_kind).strip().lower() if raw_failure_kind else None
+    raw_next_retry = raw_job.get("next_retry_at")
+    next_retry_at = str(raw_next_retry).strip() if raw_next_retry else None
+
     return CallbackDeliveryProjection(
         job_id=job_id,
         caller_session_id=caller,
@@ -803,6 +812,8 @@ def project_callback_delivery_dict(
         state=state,
         worker_succeeded=worker_succeeded,
         graph=g,
+        delivery_failure_kind=delivery_failure_kind,
+        next_retry_at=next_retry_at,
     )
 
 
