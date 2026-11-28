@@ -18,8 +18,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronLeft, ChevronRight, Repeat, Search } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Pencil, Repeat, Search } from 'lucide-react';
 import type { EmployeePost } from '@/hooks/useEmployees';
+import EmployeeAvatar from './EmployeeAvatar';
 import {
   employeeInitials,
   employeeSummary,
@@ -161,6 +162,8 @@ export interface EmployeeCardDeckProps {
   onSelect: (memberPostId: string) => void;
   /** 点击已居中的卡片或按 Enter 时聚焦下方首条会话入口。 */
   onActivateCenter?: () => void;
+  /** 点击卡片 48px 头像或「更换头像」入口时打开自定义头像弹窗。 */
+  onChangeAvatar?: (post: EmployeePost) => void;
   /** 外部模态窗打开时暂停全局键盘切卡。 */
   modalOpen?: boolean;
 }
@@ -175,6 +178,7 @@ export default function EmployeeCardDeck({
   activeId,
   onSelect,
   onActivateCenter,
+  onChangeAvatar,
   modalOpen = false,
 }: EmployeeCardDeckProps) {
   const { t } = useTranslation();
@@ -604,22 +608,69 @@ export default function EmployeeCardDeck({
                 >
                   <div className="card-top-band">
                     <span className="card-abbr">{initials}</span>
+                    {onChangeAvatar ? (
+                      <button
+                        type="button"
+                        className="card-avbtn"
+                        data-testid={`emp-card-change-avatar-${post.member_post_id}`}
+                        title={t('employees.avatar.changeCardTitle')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onChangeAvatar(post);
+                        }}
+                      >
+                        {t('employees.avatar.changeBtn')}
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="card-body">
-                    <div className="card-title">{post.title}</div>
+                    <div className="card-head-row">
+                      <EmployeeAvatar
+                        asButton={Boolean(onChangeAvatar)}
+                        employeeId={post.member_post_id}
+                        avatar={post.avatar_resolved}
+                        size={48}
+                        className="emp-av-card"
+                        testId={`emp-card-avatar-${post.member_post_id}`}
+                        title={
+                          onChangeAvatar
+                            ? t('employees.avatar.changeCardTitle')
+                            : post.title
+                        }
+                        ariaLabel={
+                          onChangeAvatar
+                            ? t('employees.avatar.changeCardTitle')
+                            : post.title
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onChangeAvatar?.(post);
+                        }}
+                        overlay={
+                          onChangeAvatar ? (
+                            <span className="emp-av-card-badge" aria-hidden="true">
+                              <Pencil size={9} strokeWidth={2.2} />
+                            </span>
+                          ) : undefined
+                        }
+                      />
+                      <div className="card-head-meta">
+                        <div className="card-title">{post.title}</div>
 
-                    {summaryParts.length > 0 ? (
-                      <div className="card-desc">
-                        {summaryParts.map((part, i) =>
-                          part.code ? (
-                            <code key={i}>{part.text}</code>
-                          ) : (
-                            <span key={i}>{part.text}</span>
-                          )
-                        )}
+                        {summaryParts.length > 0 ? (
+                          <div className="card-desc">
+                            {summaryParts.map((part, i) =>
+                              part.code ? (
+                                <code key={i}>{part.text}</code>
+                              ) : (
+                                <span key={i}>{part.text}</span>
+                              )
+                            )}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
 
                     <div className="card-status-row">
                       {activeCount > 0 ? (

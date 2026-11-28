@@ -6,6 +6,11 @@
  * (`import type { ... } from '@/api/client'` and the unified `api` barrel).
  */
 
+import type {
+  EmployeeAvatarResolved,
+  EmployeeAvatarSpec,
+} from '@/utils/employeeAvatar';
+
 export interface ServerInfo {
   name: string;
   version: string;
@@ -192,6 +197,8 @@ export interface EmployeeItem {
   recipes?: string[];
   knowledge_domains?: string[];
   color?: string | null;
+  avatar?: EmployeeAvatarSpec | null;
+  avatar_resolved?: EmployeeAvatarResolved | null;
   last_used_at?: string | null;
 }
 

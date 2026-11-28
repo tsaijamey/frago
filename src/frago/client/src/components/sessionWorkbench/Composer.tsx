@@ -54,7 +54,6 @@ import {
   Clock,
   CornerUpLeft,
   GitBranch,
-  GitBranchPlus,
   ListOrdered,
   Loader2,
   RotateCcw,
@@ -159,17 +158,6 @@ export interface ComposerProps {
    */
   directSend?: { text: string; at: number } | null;
   /**
-   * 这场此刻的上下文水位（最后一道用量刻度报的提示词大小）。null = 还没读到刻度。
-   *
-   * 「交接到新会话」只在它到了 {@link HANDOFF_MIN_CONTEXT} 才放开：没那么长的会话换场只会
-   * 丢细节，换不来速度。
-   */
-  contextTokens?: number | null;
-  /** 按下「交接到新会话」。不给就不画那个按钮。 */
-  onHandoff?: () => void;
-  /** 交接请求还在路上。 */
-  handingOff?: boolean;
-  /**
    * 输入框上方那一行原地提示，与「↑ … moved up into the conversation · Show」同一个位置、同一种
    * 写法。起分支之后用它说「已在新会话处理：<标题> · 打开」，起失败时换成失败原因。
    * 页面切走会话或人点了关闭，页面就把它撤掉。
@@ -233,18 +221,6 @@ export interface ComposerUsage {
   context: number | null;
   /** 这场一路烧掉的累计。null = 同上。 */
   total: number | null;
-}
-
-/**
- * 上下文到多大才放开「交接到新会话」。
- *
- * 到十八万 token 上下放开交接入口，让人可以在上下文明显变重前换一场接着做。
- */
-export const HANDOFF_MIN_CONTEXT = 180_000;
-
-/** 悬停说明里那种 k 为单位的写法：312k。 */
-function formatK(n: number): string {
-  return `${Math.round(n / 1000)}k`;
 }
 
 /**
@@ -371,9 +347,6 @@ export default function Composer({
   packedPrompt = null,
   answer = null,
   directSend = null,
-  contextTokens = null,
-  onHandoff,
-  handingOff = false,
   notice = null,
   onBringBack,
   queueItems = [],
@@ -1208,49 +1181,6 @@ export default function Composer({
                     t('workbench.branch.bringBack')
                   ) : (
                     <span className="sr-only">{t('workbench.branch.bringBack')}</span>
-                  )}
-                </button>
-              ) : null}
-              {onHandoff && !blocked ? (
-                <button
-                  type="button"
-                  data-testid="composer-handoff"
-                  aria-label={t('workbench.composer.handoff')}
-                  disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
-                  onClick={onHandoff}
-                  title={
-                    contextTokens === null
-                      ? t('workbench.composer.handoffLockedUnknown', {
-                          limit: formatK(HANDOFF_MIN_CONTEXT),
-                        })
-                      : contextTokens < HANDOFF_MIN_CONTEXT
-                        ? t('workbench.composer.handoffLocked', {
-                            limit: formatK(HANDOFF_MIN_CONTEXT),
-                            now: formatK(contextTokens),
-                          })
-                        : t('workbench.composer.handoffHint')
-                  }
-                  className={
-                    isExpanded
-                      ? 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent'
-                      : 'flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-border-accent text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-transparent disabled:text-text-dim disabled:opacity-45 disabled:hover:bg-transparent'
-                  }
-                >
-                  {handingOff ? (
-                    <Loader2 size={isExpanded ? 13 : 15} className="animate-spin" />
-                  ) : (
-                    <GitBranchPlus size={isExpanded ? 13 : 15} strokeWidth={1.5} />
-                  )}
-                  {isExpanded ? (
-                    handingOff ? (
-                      t('workbench.composer.handingOff')
-                    ) : (
-                      t('workbench.composer.handoff')
-                    )
-                  ) : (
-                    <span className="sr-only">
-                      {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
-                    </span>
                   )}
                 </button>
               ) : null}

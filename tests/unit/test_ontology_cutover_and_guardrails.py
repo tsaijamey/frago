@@ -308,7 +308,8 @@ class TestMonotonicTurnSeqGuard:
         assert rec_ok is not None and rec_ok.lifecycle_state == "completed"
         assert store.get("s_turn_guard").lifecycle_state == "completed"  # type: ignore[union-attr]
 
-        # async_dispatch supersedes older turn_seq
+        # async_dispatch: turn_seq bump alone must NOT falsely supersede an in-flight job;
+        # explicit human stop / abort_epoch bump supersedes it.
         job = AsyncDispatchJob(
             job_id="job_t1",
             kind="worker",
@@ -324,12 +325,17 @@ class TestMonotonicTurnSeqGuard:
             prompt="test",
             task_summary="test",
             turn_seq=1,
+            abort_epoch=0,
         )
         monkeypatch.setattr("frago.session.service.get_default_session_service", lambda: svc)
         save_dispatch_job(job)
         superseded, reason = is_job_superseded(job)
+        assert superseded is False
+        assert reason is None
+        svc.bump_abort_epoch("s_turn_guard")
+        superseded, reason = is_job_superseded(job)
         assert superseded is True
-        assert reason and "turn_seq" in reason
+        assert reason and "abort_epoch" in reason
 
         # workbench_queue drops stale settle callback
         called: list[str] = []

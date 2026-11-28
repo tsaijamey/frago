@@ -141,6 +141,9 @@ class TestSessionList:
             # 编号是机器认的，名字才是人认的；只给编号，界面上就只剩一串字母。
             "employee_title",
             "employee_color",
+            # 岗位的头像解析态（默认确定性 Micah / 内置选定 / 受控上传图及降级标记），
+            # 左栏据此渲染员工头像并与员工页保持一致。
+            "employee_avatar",
             # 异步派发聚合态：是否有运行中子 Worker、是否有排队/投递中回调、是否真有待拍板事项。
             "has_running_worker",
             "callback_queued",

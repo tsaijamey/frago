@@ -658,19 +658,21 @@ def project_session_process_dict(
 CALLBACK_DELIVERY_STATES: tuple[str, ...] = ("queued", "delivering", "delivered", "failed")
 CALLBACK_DELIVERY_CHANNELS: tuple[str, ...] = ("idle_batch", "hook_piggyback")
 CALLBACK_INBOX_PENDING_STATES: frozenset[str] = frozenset({"queued", "delivering"})
+CALLBACK_DELIVERY_FAILURE_KINDS: frozenset[str] = frozenset({"transient", "permanent"})
 CALLBACK_DELIVERY_TRANSITIONS: Mapping[str, frozenset[str]] = {
     "queued": frozenset({"delivering", "failed"}),
     "delivering": frozenset({"delivered", "queued", "failed"}),
     "delivered": frozenset(),
-    "failed": frozenset(),
+    "failed": frozenset({"queued"}),
 }
 """Legal callback-delivery transitions.
 
-``queued → delivering → delivered`` is the only road to ``delivered``; a failed injection
-goes ``delivering → queued`` (put back at the head of the queue); ``failed`` is reachable
-from ``queued`` or ``delivering`` once retries are exhausted or the target is unreachable.
-``delivered`` and ``failed`` are terminal. The registry's generic state table is a full
-mesh, so the narrower contract is pinned here.
+``queued → delivering → delivered`` is the only road to ``delivered``; a transient delivery
+failure goes ``delivering → queued`` (re-queued with backoff); ``failed`` is reachable from
+``queued`` or ``delivering`` once retries are exhausted or the target is unreachable;
+``failed → queued`` is a controlled recovery edge (enforced by Gate 3 contract: requires
+non-empty ``reason`` and ``failure_kind != 'permanent'``). ``delivered`` is strictly terminal.
+The registry's generic state table is a full mesh, so the narrower contract is pinned here.
 """
 
 
@@ -718,6 +720,8 @@ class CallbackDeliveryProjection:
     worker_succeeded: bool | None
     graph: OntologyGraph
     delivery_channel: str | None = None
+    delivery_failure_kind: str | None = None
+    next_retry_at: str | None = None
 
 
 def project_callback_delivery_dict(
@@ -807,6 +811,10 @@ def project_callback_delivery_dict(
                 f"Unknown callback delivery_channel '{ch}'. Allowed: {list(CALLBACK_DELIVERY_CHANNELS)}."
             )
         delivery_channel = ch
+    raw_failure_kind = raw_job.get("delivery_failure_kind")
+    delivery_failure_kind = str(raw_failure_kind).strip().lower() if raw_failure_kind else None
+    raw_next_retry = raw_job.get("next_retry_at")
+    next_retry_at = str(raw_next_retry).strip() if raw_next_retry else None
 
     return CallbackDeliveryProjection(
         job_id=job_id,
@@ -817,6 +825,8 @@ def project_callback_delivery_dict(
         worker_succeeded=worker_succeeded,
         graph=g,
         delivery_channel=delivery_channel,
+        delivery_failure_kind=delivery_failure_kind,
+        next_retry_at=next_retry_at,
     )
 
 
@@ -1546,6 +1556,59 @@ def project_employee_post_dict(
             sched_spec = created_sched
         g.link(emp_role, "governed_by", sched_spec)
         schedules.append(sched_spec)
+
+    # Optional anti-rigid (~R) visual avatar configuration on EmployeePostResource
+    raw_avatar = raw_post.get("avatar")
+    if raw_avatar is not None:
+        if not isinstance(raw_avatar, Mapping):
+            raise ProjectionValidationError(
+                "EmployeePost 'avatar' must be a mapping when provided."
+            )
+        avatar_kind = str(raw_avatar.get("kind", "default") or "default").strip().lower()
+        if avatar_kind not in ("default", "micah", "upload"):
+            raise ProjectionValidationError(
+                f"EmployeePost 'avatar.kind' must be one of ('default', 'micah', 'upload'), got '{avatar_kind}'."
+            )
+        raw_bg = raw_avatar.get("bg_color")
+        if raw_bg not in (None, ""):
+            bg_str = str(raw_bg).strip()
+            if (
+                len(bg_str) != 7
+                or not bg_str.startswith("#")
+                or any(ch not in "0123456789abcdefABCDEF" for ch in bg_str[1:])
+            ):
+                raise ProjectionValidationError(
+                    f"EmployeePost 'avatar.bg_color' must be a #RRGGBB hex color, got '{bg_str}'."
+                )
+        if avatar_kind == "micah":
+            seed_str = str(raw_avatar.get("seed", "") or "").strip()
+            if not seed_str:
+                raise ProjectionValidationError(
+                    "EmployeePost 'avatar.seed' must be non-empty when avatar.kind is 'micah'."
+                )
+        elif avatar_kind == "upload":
+            fname = raw_avatar.get("file_name")
+            if (
+                not isinstance(fname, str)
+                or not fname
+                or "/" in fname
+                or "\\" in fname
+                or ".." in fname
+                or "\x00" in fname
+                or not fname.lower().endswith((".png", ".jpg", ".webp"))
+            ):
+                raise ProjectionValidationError(
+                    "EmployeePost 'avatar.file_name' must be a safe single raster filename (.png/.jpg/.webp) when avatar.kind is 'upload'."
+                )
+            mime_val = raw_avatar.get("mime_type")
+            if mime_val not in (None, "") and str(mime_val).strip().lower() not in (
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+            ):
+                raise ProjectionValidationError(
+                    f"EmployeePost 'avatar.mime_type' must be PNG/JPEG/WebP, got '{mime_val}'."
+                )
 
     return EmployeePostProjection(
         post=post_res,

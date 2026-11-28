@@ -9,8 +9,9 @@
 
 import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Loader2, Pencil, Plus, RotateCw } from 'lucide-react';
+import { ArrowRight, Image, Loader2, Pencil, Plus, RotateCw } from 'lucide-react';
 import type { EmployeePost } from '@/hooks/useEmployees';
+import EmployeeAvatar from './EmployeeAvatar';
 import type { EmployeeSessionFilter } from '@/hooks/useEmployeeSessions';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { FAMILY_ICON, shortAge } from '@/components/sessionWorkbench/SessionItem';
@@ -67,6 +68,7 @@ export interface EmployeeSessionsPanelProps {
   onRetry: () => void;
   onLoadMore: () => void;
   onEditEmployee: (post: EmployeePost) => void;
+  onChangeAvatar?: (post: EmployeePost) => void;
   onLaunchSession: (post: EmployeePost) => void;
   onOpenSession: (sessionId: string) => void;
   firstEnterButtonRef?: RefObject<HTMLButtonElement>;
@@ -87,6 +89,7 @@ export default function EmployeeSessionsPanel({
   onRetry,
   onLoadMore,
   onEditEmployee,
+  onChangeAvatar,
   onLaunchSession,
   onOpenSession,
   firstEnterButtonRef,
@@ -107,6 +110,25 @@ export default function EmployeeSessionsPanel({
       <div className="roster-inner">
         <div className="roster-head">
           <div className="roster-head-left">
+            <EmployeeAvatar
+              asButton={Boolean(onChangeAvatar)}
+              employeeId={employee.member_post_id}
+              avatar={employee.avatar_resolved}
+              size={32}
+              className="emp-av-roster"
+              testId="employee-roster-avatar"
+              title={
+                onChangeAvatar
+                  ? t('employees.avatar.changeCardTitle')
+                  : employee.title
+              }
+              ariaLabel={
+                onChangeAvatar
+                  ? t('employees.avatar.changeCardTitle')
+                  : employee.title
+              }
+              onClick={() => onChangeAvatar?.(employee)}
+            />
             <h2 className="roster-title" data-testid="employee-sessions-title">
               {t('employees.sessions.titleOf', { name: employee.title })}
             </h2>
@@ -147,6 +169,18 @@ export default function EmployeeSessionsPanel({
           </div>
 
           <div className="roster-actions">
+            {onChangeAvatar ? (
+              <button
+                type="button"
+                className="emp-btn"
+                onClick={() => onChangeAvatar(employee)}
+                data-testid="employee-change-avatar-btn"
+              >
+                <Image size={13} strokeWidth={1.5} />
+                {t('employees.avatar.changeBtn')}
+              </button>
+            ) : null}
+
             <button
               type="button"
               className="emp-btn"

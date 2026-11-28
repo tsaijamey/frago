@@ -38,8 +38,10 @@ from frago.agent_driver.tmux_session import TmuxSendError
 from frago.employee import (
     EmployeeOntologyService,
     default_employee_color,
+    employees_dir,
     get_post,
     list_posts,
+    resolve_avatar_state,
     resolve_session_employee_id,
     save_post,
 )
@@ -619,6 +621,15 @@ async def collect_workbench_session_rows(
                 if matched_post is not None
                 else (default_employee_color(employee_id) if employee_id else None)
             )
+            employee_avatar = (
+                resolve_avatar_state(
+                    employee_id,
+                    matched_post.avatar if matched_post is not None else None,
+                    employees_base_dir=employees_dir(),
+                )
+                if employee_id
+                else None
+            )
             row = {
                 **card_data,
                 "origin": effective_origin,
@@ -632,6 +643,7 @@ async def collect_workbench_session_rows(
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,
+                "employee_avatar": employee_avatar,
                 "raw_title": card.title,
                 "custom_title": titles.get(card.session_id),
                 "in_tmux": alive,
@@ -925,72 +937,80 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     相同的一条路，回的形状也相同——页面接过去就是一次普通的「正在启动」。原会话不动。
 
     拒绝的几档与发送那条接口同义：编号不认 404；记录没了、问不出目录、接不上话、还没有
-    任何记录 409；那一家此刻挑不了 400。
+    任何记录或同一会话此刻正在交接中 409；那一家此刻挑不了 400。
 
     **两场各起一个带序号的名字**（原会话「甲 #1」、新会话「甲 #2」），不然左栏并排两场
     说同一件事的会话，人分不清。起名只写 frago 自己那份名字表，原会话的档案一个字不动。
     编号要等认领的那两家（codex / opencode），新会话的名字等认到编号再起。
     """
     try:
-        handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
-    except UnknownSessionFamily as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except (
-        session_send.SessionGone,
-        session_send.SessionNotResumable,
-        workbench_handoff.HandoffUnavailable,
-    ) as e:
+        workbench_handoff.acquire_handoff(sid)
+    except workbench_handoff.HandoffInProgress as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
-    employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
-    if employee_record is not None:
-        effective_skills = [
-            str(sk).strip() for sk in employee_record.skills if str(sk).strip()
-        ]
-        wrapped_text = _with_skills(
-            _with_employee_context(handoff.text, employee_record.member_post_id),
-            effective_skills,
-            "",
-        )
-        if wrapped_text != handoff.text:
-            handoff = replace(handoff, text=wrapped_text)
-
     try:
-        launch = await asyncio.to_thread(
-            workbench_new_session.start_with_id,
-            handoff.agent_type,
-            handoff.cwd,
-            handoff.text,
-            session_id=str(uuid.uuid4()),
+        try:
+            handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
+        except UnknownSessionFamily as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except (
+            session_send.SessionGone,
+            session_send.SessionNotResumable,
+            workbench_handoff.HandoffUnavailable,
+        ) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+        employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
+        if employee_record is not None:
+            effective_skills = [
+                str(sk).strip() for sk in employee_record.skills if str(sk).strip()
+            ]
+            wrapped_text = _with_skills(
+                _with_employee_context(handoff.text, employee_record.member_post_id),
+                effective_skills,
+                "",
+            )
+            if wrapped_text != handoff.text:
+                handoff = replace(handoff, text=wrapped_text)
+
+        try:
+            launch = await asyncio.to_thread(
+                workbench_new_session.start_with_id,
+                handoff.agent_type,
+                handoff.cwd,
+                handoff.text,
+                session_id=str(uuid.uuid4()),
+            )
+        except workbench_agents.AgentUnavailable as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if employee_record is not None:
+            await asyncio.to_thread(
+                workbench_new_session.bind_employee,
+                launch.handle,
+                employee_record.member_post_id,
+            )
+            if (
+                launch.session_id
+                and launch.session_id not in employee_record.active_session_ids
+            ):
+                employee_record.active_session_ids.append(launch.session_id)
+                await asyncio.to_thread(save_post, employee_record)
+            from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+            invalidate_employee_usage_cache(employee_record.member_post_id)
+
+        old_title, new_title = await asyncio.to_thread(
+            workbench_handoff.name_pair, sid, launch, handoff=handoff
         )
-    except workbench_agents.AgentUnavailable as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    if employee_record is not None:
-        await asyncio.to_thread(
-            workbench_new_session.bind_employee,
-            launch.handle,
-            employee_record.member_post_id,
-        )
-        if (
-            launch.session_id
-            and launch.session_id not in employee_record.active_session_ids
-        ):
-            employee_record.active_session_ids.append(launch.session_id)
-            await asyncio.to_thread(save_post, employee_record)
-        from frago.server.services.employee_usage import invalidate_employee_usage_cache
-
-        invalidate_employee_usage_cache(employee_record.member_post_id)
-
-    old_title, new_title = await asyncio.to_thread(
-        workbench_handoff.name_pair, sid, launch, handoff=handoff
-    )
-    return {
-        **_launch_payload(launch),
-        "text": handoff.text,
-        "old_title": old_title,
-        "new_title": new_title,
-    }
+        return {
+            **_launch_payload(launch),
+            "text": handoff.text,
+            "old_title": old_title,
+            "new_title": new_title,
+        }
+    finally:
+        workbench_handoff.release_handoff(sid)
 
 
 class UpdateTitleRequest(BaseModel):
@@ -2336,6 +2356,12 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
     from frago.server.services import stage_orchestrator
     from frago.server.services import tmux_sessions_service as svc
 
+    def _bump_abort_epoch_safe(target_sid: str) -> None:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            get_default_session_service().bump_abort_epoch(target_sid)
+
     def _stop() -> dict[str, Any]:
         if request.stage_reset or sid == "__stage_reset__":
             target_sid = None if sid == "__stage_reset__" else sid
@@ -2343,6 +2369,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             stopped_any = bool(
                 stage_info["stopped_presenters"] or stage_info["stopped_sessions"]
             )
+            if stopped_any and target_sid:
+                _bump_abort_epoch_safe(target_sid)
             return {
                 "sid": sid,
                 "alive": stopped_any,
@@ -2373,6 +2401,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             outcome = coreagent_runner.stop(sid, by="页面上的人")
             core_dropped = int(outcome.get("dropped", 0))
             if outcome.get("running"):
+                if outcome.get("stopped"):
+                    _bump_abort_epoch_safe(sid)
                 return {
                     "sid": sid,
                     # `alive` 与另外几家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
@@ -2412,6 +2442,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
                 "error": None,
             }
         result = svc.close_sessions([link.name])[0]
+        if result["ok"]:
+            _bump_abort_epoch_safe(sid)
         return {
             "sid": sid,
             "alive": True,

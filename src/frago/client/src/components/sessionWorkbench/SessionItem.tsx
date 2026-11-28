@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
+import EmployeeAvatar, { type AvatarStatusBadge } from '@/components/employees/EmployeeAvatar';
 import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { formatClock } from './RecordCard';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
@@ -531,6 +532,16 @@ export default function SessionItem({
         ? 'workbench.status.running'
         : 'workbench.status.done'
   );
+  const railStatusBadge: AvatarStatusBadge =
+    life.key === 'running'
+      ? 'running'
+      : life.key === 'waiting'
+        ? 'waiting'
+        : life.key === 'error'
+          ? 'error'
+          : life.key === 'callback'
+            ? 'callback'
+            : 'completed';
   const lifeColorCls =
     life.key === 'waiting'
       ? 'text-accent-warning font-semibold'
@@ -610,12 +621,26 @@ export default function SessionItem({
             aria-label={t('workbench.rail.employeeSession', { id: empTitle })}
             className="si-emp-bar"
           >
-            <span className="emp-dot" aria-hidden="true" />
             <span className="emp-name">{empTitle}</span>
           </div>
         ) : null}
 
-        <div className={hasEmpBar ? bodyPadding : undefined}>
+        <div className={hasEmpBar ? `${bodyPadding} si-grid` : undefined}>
+          {hasEmpBar && session.employee_id ? (
+            <EmployeeAvatar
+              employeeId={session.employee_id}
+              avatar={session.employee_avatar}
+              size={24}
+              statusBadge={railStatusBadge}
+              statusLabel={signalLabel}
+              statusSignal={signal}
+              statusTestId="session-signal"
+              className="emp-av-rail"
+              testId={`emp-avatar-${session.employee_id}`}
+              ariaLabel={empTitle}
+            />
+          ) : null}
+          <div className={hasEmpBar ? 'si-body' : undefined}>
           {/* 分支只留一枚 branched 微标：无底无框的行内小字，出处全称放进悬停提示，不占正文。
               从前它是一枚灰底胶囊，和下面 For you 的胶囊叠在一起成了双重盒感。 */}
           {branchOf ? (
@@ -813,18 +838,17 @@ export default function SessionItem({
               onCopy={onCopy}
               copied={copied}
             />
-            {/* 状态信号点：整列扫下来一眼看清谁在等我、谁在跑、谁已经停了。
-                它与满幅员工色带并存——色带说的是「这属于哪个员工」，点说的是
-                「这一场此刻什么状态」，两件事，不互相替代。放在「…」菜单右边、
-                内核图标左边，与状态行右端对齐。 */}
-            <span
-              data-testid="session-signal"
-              data-signal={signal}
-              title={signalLabel}
-              aria-label={signalLabel}
-              role="img"
-              className={`wb-rail-signal wb-rail-signal--${signal}`}
-            />
+            {/* 状态信号点：非员工会话沿用右端信号点；员工会话已由 24px 头像右下角 8.5px 镂空状态角标承载。 */}
+            {!hasEmpBar ? (
+              <span
+                data-testid="session-signal"
+                data-signal={signal}
+                title={signalLabel}
+                aria-label={signalLabel}
+                role="img"
+                className={`wb-rail-signal wb-rail-signal--${signal}`}
+              />
+            ) : null}
             {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
                 OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、
                 压低对比退到后面，鼠标经过这张卡或它被选中时才恢复辨识度。 */}
@@ -842,6 +866,7 @@ export default function SessionItem({
                 }`}
               />
             ) : null}
+          </div>
           </div>
         </div>
       </div>

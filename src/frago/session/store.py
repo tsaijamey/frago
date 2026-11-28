@@ -71,6 +71,7 @@ class SessionOntologyRecord:
     transcript_uri: str = ""
     step_count: int = 0
     turn_seq: int = 0
+    abort_epoch: int = 0
     employee_id: str | None = None
     prompt_head: str = ""
     summary: str | None = None
@@ -83,6 +84,7 @@ class SessionOntologyRecord:
         self.origin = normalize_session_origin(self.origin, is_worker=self.is_worker)
         self.lifecycle_state = normalize_session_lifecycle_state(self.lifecycle_state)
         self.turn_seq = max(0, int(self.turn_seq or 0))
+        self.abort_epoch = max(0, int(self.abort_epoch or 0))
         self.employee_id = str(self.employee_id).strip() or None if self.employee_id else None
         # 先认 worker 身份：worker 就是 worker，出身一律写 worker。
         if self.is_worker or self.origin == "worker":
@@ -181,6 +183,7 @@ class SessionOntologyRecord:
             transcript_uri=str(d.get("transcript_uri") or d.get("source_file") or ""),
             step_count=int(d.get("step_count", 0)),
             turn_seq=max(0, int(d.get("turn_seq") or 0)),
+            abort_epoch=max(0, int(d.get("abort_epoch") or 0)),
             employee_id=clean_employee,
             prompt_head=str(d.get("prompt_head") or ""),
             summary=d.get("summary"),
@@ -422,6 +425,8 @@ class SessionOntologyStore:
             existing = records.get(record.session_id)
             if existing is not None and record.turn_seq < existing.turn_seq:
                 record.turn_seq = existing.turn_seq
+            if existing is not None and record.abort_epoch < existing.abort_epoch:
+                record.abort_epoch = existing.abort_epoch
             if existing is not None and not record.employee_id and existing.employee_id:
                 record.employee_id = existing.employee_id
             record.updated_at = int(time.time())
@@ -545,6 +550,24 @@ class SessionOntologyStore:
                 raise FileGuardError(f"Failed to persist start_turn for session '{clean_id}'")
             return rec
 
+    def bump_abort_epoch(self, session_id: str) -> SessionOntologyRecord | None:
+        """Atomically increment monotonic ``abort_epoch`` when a session is explicitly stopped/aborted."""
+        clean_id = str(session_id or "").strip()
+        if not clean_id:
+            return None
+        with self._locked():
+            records = self._read_disk_unlocked(raise_on_error=True)
+            rec = records.get(clean_id)
+            if rec is None:
+                return None
+            rec.abort_epoch = max(0, int(rec.abort_epoch)) + 1
+            rec.updated_at = int(time.time())
+            if not self._write_disk_unlocked(records):
+                raise FileGuardError(
+                    f"Failed to persist bump_abort_epoch for session '{clean_id}'"
+                )
+            return rec
+
     def update_lifecycle_state(
         self,
         session_id: str,
@@ -574,6 +597,8 @@ class SessionOntologyStore:
                     f"event turn_seq={expected_turn_seq} < current turn_seq={rec.turn_seq}"
                 )
             normalized = normalize_session_lifecycle_state(new_state)
+            if normalized == "cancelled" and rec.lifecycle_state != "cancelled":
+                rec.abort_epoch = max(0, int(rec.abort_epoch)) + 1
             rec.lifecycle_state = normalized
             rec.updated_at = int(time.time())
             if waiting_reason is not None:

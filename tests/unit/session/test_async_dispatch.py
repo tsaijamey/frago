@@ -1631,6 +1631,296 @@ def test_five_kernels_error_timeout_and_needs_input_never_marked_completed_or_de
     assert 'status="completed"' in async_dispatch.format_callback_prompt(done_job)
 
 
+def test_wave_b1_concurrent_dispatches_and_turn_seq_bump_do_not_falsely_supersede(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wave B1 子问题 A：同目标会话并行派发与全局 turn_seq 正常推进，绝不得误标 superseded。"""
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+    spawned: list[Path] = []
+    monkeypatch.setattr(
+        async_dispatch,
+        "_spawn_detached_watcher",
+        lambda job_path, **_kw: spawned.append(job_path),
+    )
+
+    target_sid = "peer-emp-concurrent-01"
+    job_a = async_dispatch.dispatch_employee_turn_async(
+        mode="ask",
+        caller_session_id="caller-main",
+        caller_cwd=str(isolated_frago_env),
+        employee_id="lenovo",
+        target_session_id=target_sid,
+        agent="coreagent",
+        cwd=str(isolated_frago_env),
+        prompt="任务 A",
+        task_summary="任务 A",
+        resume=None,
+        model=None,
+    )
+    job_b = async_dispatch.dispatch_employee_turn_async(
+        mode="ask",
+        caller_session_id="caller-main",
+        caller_cwd=str(isolated_frago_env),
+        employee_id="lenovo",
+        target_session_id=target_sid,
+        agent="coreagent",
+        cwd=str(isolated_frago_env),
+        prompt="任务 B",
+        task_summary="任务 B",
+        resume=None,
+        model=None,
+    )
+
+    # 并行派发彼此共存，均未被误标 superseded
+    assert len(spawned) == 2
+    disk_a = async_dispatch.load_dispatch_job(job_a.job_id)
+    disk_b = async_dispatch.load_dispatch_job(job_b.job_id)
+    assert disk_a is not None and disk_a.status == "running"
+    assert disk_b is not None and disk_b.status == "running"
+    assert job_b.turn_seq > job_a.turn_seq
+
+    # 目标会话正常推进多轮 turn_seq（模拟常规对话或其他派发），仍不得触发 superseded
+    svc.start_turn(target_sid, agent_kernel_id="coreagent", origin="worker")
+    svc.start_turn(target_sid, agent_kernel_id="coreagent", origin="worker")
+    sup_a, reason_a = async_dispatch.is_job_superseded(disk_a)
+    sup_b, reason_b = async_dispatch.is_job_superseded(disk_b)
+    assert (sup_a, reason_a) == (False, None)
+    assert (sup_b, reason_b) == (False, None)
+
+    # 两条任务依次执行完结并成功回投，绝不丢结论
+    delivered_ids: list[str] = []
+    monkeypatch.setattr(async_dispatch, "wait_for_pending_child_dispatches", lambda *_a, **_kw: "")
+    monkeypatch.setattr(
+        async_dispatch,
+        "_execute_employee_job",
+        lambda j: (0, f"output for {j.job_id}", ""),
+    )
+    monkeypatch.setattr(
+        async_dispatch,
+        "deliver_callback_to_session",
+        lambda _sid, _prompt, **kw: delivered_ids.append(str(kw.get("job_id"))) or True,
+    )
+
+    res_a = async_dispatch.execute_dispatch_job(spawned[0])
+    res_b = async_dispatch.execute_dispatch_job(spawned[1])
+    assert res_a is not None and res_a.status == "completed" and res_a.delivery_state == "delivered"
+    assert res_b is not None and res_b.status == "completed" and res_b.delivery_state == "delivered"
+    assert delivered_ids == [job_a.job_id, job_b.job_id]
+
+
+def test_wave_b1_explicit_supersede_key_replace_active_and_resume_supersede(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wave B1 子问题 A：仅显式同 supersede_key、replace_active=True 或 worker mode=resume 才会顶替同目标活跃单。"""
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+    monkeypatch.setattr(async_dispatch, "_spawn_detached_watcher", lambda *_a, **_kw: None)
+
+    target_sid = "worker-explicit-key-01"
+    j_unkeyed = async_dispatch.dispatch_worker_turn_async(
+        mode="new",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="unkeyed",
+        task_summary="unkeyed",
+    )
+    j_key_a1 = async_dispatch.dispatch_worker_turn_async(
+        mode="new",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="key-a-1",
+        task_summary="key-a-1",
+        supersede_key="sync-report",
+    )
+    j_key_b = async_dispatch.dispatch_worker_turn_async(
+        mode="new",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="key-b",
+        task_summary="key-b",
+        supersede_key="other-key",
+    )
+    # 同 supersede_key="sync-report" 的新派发只顶替 j_key_a1，不波及无 key 与不同 key 任务
+    j_key_a2 = async_dispatch.dispatch_worker_turn_async(
+        mode="new",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="key-a-2",
+        task_summary="key-a-2",
+        supersede_key="sync-report",
+    )
+
+    assert async_dispatch.load_dispatch_job(j_key_a1.job_id).status == "superseded"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_key_a1.job_id).superseded_by == j_key_a2.job_id  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_unkeyed.job_id).status == "running"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_key_b.job_id).status == "running"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_key_a2.job_id).status == "running"  # type: ignore[union-attr]
+
+    # 显式 mode="resume" 续跑同一目标会话，顶替该目标下其余活跃任务
+    j_resume = async_dispatch.dispatch_worker_turn_async(
+        mode="resume",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="resume-now",
+        task_summary="resume-now",
+        resume=target_sid,
+    )
+    assert async_dispatch.load_dispatch_job(j_unkeyed.job_id).status == "superseded"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_key_b.job_id).status == "superseded"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_key_a2.job_id).status == "superseded"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_resume.job_id).status == "running"  # type: ignore[union-attr]
+
+    # 显式 replace_active=True 也会顶替当前活跃任务
+    j_replace = async_dispatch.dispatch_employee_turn_async(
+        mode="invoke",
+        caller_session_id="caller-1",
+        caller_cwd=str(isolated_frago_env),
+        employee_id="lenovo",
+        target_session_id=target_sid,
+        agent="claude",
+        cwd=str(isolated_frago_env),
+        prompt="replace-all",
+        task_summary="replace-all",
+        resume=None,
+        model=None,
+        replace_active=True,
+    )
+    assert async_dispatch.load_dispatch_job(j_resume.job_id).status == "superseded"  # type: ignore[union-attr]
+    assert async_dispatch.load_dispatch_job(j_replace.job_id).status == "running"  # type: ignore[union-attr]
+
+
+def test_wave_b1_abort_epoch_stop_supersedes_inflight_and_post_output_protection_holds(
+    isolated_frago_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wave B1 子问题 A：人类显式 stop / cancelled 推进 abort_epoch 才废止执行中单据；
+    一旦 execution_completed_at 已落盘，迟到的 abort_epoch 或 supersede 绝不得吞掉已产出结论。
+    """
+    from frago.session import service as session_service_mod
+    from frago.session.service import SessionOntologyService
+    from frago.session.store import SessionOntologyStore
+
+    store = SessionOntologyStore(
+        isolated_frago_env / "session-ontology-store.json",
+        legacy_ledger_path=isolated_frago_env / "agent-launches.json",
+    )
+    svc = SessionOntologyService(store=store)
+    monkeypatch.setattr(session_service_mod, "get_default_session_service", lambda: svc)
+
+    sid = "sess-abort-guard-01"
+    svc.start_turn(sid, agent_kernel_id="coreagent", origin="worker")
+
+    inflight = async_dispatch.AsyncDispatchJob(
+        job_id="disp-inflight-abort",
+        kind="worker",
+        mode="new",
+        caller_session_id="caller-1",
+        caller_employee_id=None,
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=sid,
+        target_name=sid,
+        employee_id=None,
+        agent="coreagent",
+        cwd=str(isolated_frago_env),
+        prompt="still running",
+        task_summary="still running",
+        status="running",
+        turn_seq=1,
+        abort_epoch=0,
+    )
+    finished_output = async_dispatch.AsyncDispatchJob(
+        job_id="disp-finished-protected",
+        kind="worker",
+        mode="new",
+        caller_session_id="caller-1",
+        caller_employee_id=None,
+        caller_cwd=str(isolated_frago_env),
+        target_session_id=sid,
+        target_name=sid,
+        employee_id=None,
+        agent="coreagent",
+        cwd=str(isolated_frago_env),
+        prompt="already produced output",
+        task_summary="already produced output",
+        status="running",
+        turn_seq=1,
+        abort_epoch=0,
+        output="precious final conclusion",
+        execution_completed_at=async_dispatch._utc_now(),
+    )
+    async_dispatch.save_dispatch_job(inflight)
+    async_dispatch.save_dispatch_job(finished_output)
+
+    # 1) 生命周期切至 cancelled 自动推进 abort_epoch
+    svc.transition_state(sid, "cancelled", reason="user clicked stop")
+    rec_after_cancel = svc.get_session(sid)
+    assert rec_after_cancel is not None and rec_after_cancel.abort_epoch == 1
+
+    # 执行中的单据被合法判定为 superseded（含 abort_epoch 原因）
+    sup_in, reason_in = async_dispatch.is_job_superseded(inflight)
+    assert sup_in is True
+    assert reason_in is not None and "abort_epoch" in reason_in
+
+    # 2) 已产出结论（execution_completed_at 非空）的单据受保护，绝不因迟到的 abort_epoch 被吞
+    sup_fin, reason_fin = async_dispatch.is_job_superseded(finished_output)
+    assert (sup_fin, reason_fin) == (False, None)
+
+    # 3) 即使显式调用 supersede_active_jobs_for_target，也会跳过已有 execution_completed_at 的单据
+    sup_ids = async_dispatch.supersede_active_jobs_for_target(
+        sid,
+        new_job_id="disp-brand-new",
+        caller_session_id="caller-1",
+    )
+    assert "disp-inflight-abort" in sup_ids
+    assert "disp-finished-protected" not in sup_ids
+    still_protected = async_dispatch.load_dispatch_job("disp-finished-protected")
+    assert still_protected is not None and still_protected.status == "running"
+
+    # 4) abort_epoch 在 store.save 中保持单调不倒退
+    svc.bump_abort_epoch(sid)
+    rec_bumped = svc.get_session(sid)
+    assert rec_bumped is not None and rec_bumped.abort_epoch == 2
+    rec_bumped.abort_epoch = 0
+    store.save(rec_bumped)
+    assert store.get(sid).abort_epoch == 2  # type: ignore[union-attr]
+
+
+
 
 
 

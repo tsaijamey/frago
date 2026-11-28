@@ -1,7 +1,6 @@
 """default_manifest_dir / install_manifest cross-OS tests."""
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -43,16 +42,36 @@ def test_default_manifest_dir_macos_chromium():
     assert "Library/Application Support/Chromium/NativeMessagingHosts" in str(p)
 
 
-def test_default_manifest_dir_windows_raises():
+def test_default_manifest_dir_windows_returns_user_dir():
     with patch("platform.system", return_value="Windows"):
-        with pytest.raises(NotImplementedError, match="registry"):
-            nh.default_manifest_dir("edge")
+        p = nh.default_manifest_dir("edge")
+    assert p.name == "NativeMessagingHosts"
+    assert "edge" in str(p).lower()
+    assert ".frago" in str(p)
+
+
+def test_install_manifest_windows_registers_hkcu(tmp_path):
+    """On Windows, install_manifest writes the manifest JSON and registers HKCU."""
+    target = tmp_path / "win-nmh"
+    with patch("platform.system", return_value="Windows"), patch.object(
+        nh, "_register_windows_native_host"
+    ) as mock_reg:
+        result = nh.install_manifest(
+            r"C:\Users\demo\.frago\chrome\native_host.cmd",
+            extension_id="abc",
+            brand="chrome",
+            target_dir=target,
+        )
+    assert result == target / f"{nh.HOST_NAME}.json"
+    assert result.exists()
+    mock_reg.assert_called_once_with(result, brand="chrome")
 
 
 def test_default_manifest_dir_unknown_brand_raises():
-    with patch("platform.system", return_value="Linux"):
-        with pytest.raises(ValueError, match="unknown browser brand"):
-            nh.default_manifest_dir("safari")
+    with patch("platform.system", return_value="Linux"), pytest.raises(
+        ValueError, match="unknown browser brand"
+    ):
+        nh.default_manifest_dir("safari")
 
 
 def test_install_manifest_uses_brand_when_no_target_dir(tmp_path):

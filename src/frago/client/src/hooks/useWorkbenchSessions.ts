@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 
 import i18n from '@/i18n';
 import type { CallbackInboxSummary } from '@/types/api';
+import type { EmployeeAvatarResolved } from '@/utils/employeeAvatar';
 import { pageCache } from './pageCache';
 import { useAutoRefresh } from './useAutoRefresh';
 
@@ -140,6 +141,10 @@ export interface WorkbenchSession {
    * 员工岗位配置的双色系颜色名（如 `amber` / `ocean`）。服务端联表补齐；缺省时按 `employee_id` 确定性回退。
    */
   employee_color?: string | null;
+  /**
+   * 员工当前解析后的头像状态（确定性默认 Micah / 内置 Micah / 安全上传栅格图 + 损坏回退）。
+   */
+  employee_avatar?: EmployeeAvatarResolved | null;
   /** 该会话存在尚未送达或投递中的异步回调（服务端下发）。 */
   callback_queued?: boolean;
   /** 该会话待消化的异步回执收件箱摘要（服务端下发，只读聚合）。 */

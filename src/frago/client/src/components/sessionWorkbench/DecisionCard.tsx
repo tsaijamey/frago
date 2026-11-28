@@ -126,7 +126,16 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // ── 卡片 ──────────────────────────────────────────────────────────────
-export function DecisionCard({ block, recordId }: { block: DecisionBlock; recordId: string }) {
+export function DecisionCard({
+  block,
+  recordId,
+  reveal = false,
+}: {
+  block: DecisionBlock;
+  recordId: string;
+  /** 由暂存隐藏态随 Stop 消息或回合终态释放时为 true，触发柔和渐显过渡。 */
+  reveal?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const isZh = i18n.language?.startsWith('zh');
   const host = useContext(DecisionCardContext);
@@ -533,7 +542,8 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
         data-testid="decision-card-answered"
         data-type={T}
         data-state={answered.kind}
-        className="dcard is-answered mt-2 flex min-w-0 flex-col"
+        data-reveal={reveal ? 'true' : undefined}
+        className={`dcard is-answered mt-2 flex min-w-0 flex-col${reveal ? ' is-reveal' : ''}`}
       >
         <div className="dc-ans-row">
           <span className="dc-ans-pill" data-testid="decision-answered-pill">
@@ -566,9 +576,10 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
       data-testid="decision-card"
       data-type={T}
       data-state={done ? answered.kind : live ? 'open' : 'read-only'}
+      data-reveal={reveal ? 'true' : undefined}
       className={`dcard mt-2 flex min-w-0 flex-col gap-2.5 text-[13px] leading-[1.6] ${
         !done ? 'is-pending ' : ''
-      }${
+      }${reveal ? 'is-reveal ' : ''}${
         live
           ? 'ui-decision-spotlight'
           : 'rounded-[10px] bg-bg-card px-3.5 pb-3.5 pt-3 [box-shadow:inset_0_0_0_1px_var(--border-card)]'

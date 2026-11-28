@@ -71,6 +71,7 @@ import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import type { DecisionInboxHookState } from '@/hooks/useDecisionInbox';
+import EmployeeAvatar from '@/components/employees/EmployeeAvatar';
 import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
 import { stripWebBridgeContext } from '@/utils/webBridgeContext';
@@ -1524,12 +1525,20 @@ export default function SessionRail({
                 })}
                 className="si-emp-bar"
               >
-                <span className="emp-dot" aria-hidden="true" />
                 <span className="emp-name">{launch.employeeTitle || launch.employeeId}</span>
               </div>
             ) : null}
 
-            <div className={launch.employeeId ? 'px-3 pb-[7px] pt-[7px]' : undefined}>
+            <div className={launch.employeeId ? 'px-3 pb-[7px] pt-[7px] si-grid' : undefined}>
+              {launch.employeeId ? (
+                <EmployeeAvatar
+                  employeeId={launch.employeeId}
+                  size={24}
+                  statusBadge={launch.phase === 'failed' ? 'error' : 'running'}
+                  className="emp-av-rail"
+                />
+              ) : null}
+              <div className={launch.employeeId ? 'si-body' : undefined}>
               {/* 第 1 行：标题（首条消息或「新会话」） */}
               <div className="flex min-w-0 items-start gap-1.5">
                 <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
@@ -1582,6 +1591,7 @@ export default function SessionRail({
                     <X size={13} />
                   </button>
                 ) : null}
+              </div>
               </div>
             </div>
           </div>

@@ -21,9 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
-import os
-import struct
 import sys
 from pathlib import Path
 
@@ -31,6 +30,14 @@ from .protocol import (
     RPC_ERROR_CODES,
     encode_frame,
     read_frame_async,
+    read_frame_sync,
+)
+from .transport import (
+    configure_stdio_binary_mode,
+    generate_auth_token,
+    open_bridge_connection,
+    resolve_transport_mode,
+    start_bridge_server,
 )
 
 SOCK_PATH = Path.home() / ".frago" / "chrome" / "extension.sock"
@@ -42,7 +49,16 @@ SOCK_PATH = Path.home() / ".frago" / "chrome" / "extension.sock"
 class Daemon:
     """Singleton multiplexer between extension stdio relay and CLI clients."""
 
-    def __init__(self) -> None:
+    HANDSHAKE_TIMEOUT_S: float = 5.0
+
+    def __init__(
+        self,
+        *,
+        auth_token: str | None = None,
+        handshake_timeout: float = HANDSHAKE_TIMEOUT_S,
+    ) -> None:
+        self._auth_token = auth_token
+        self._handshake_timeout = handshake_timeout
         self._extension_writer: asyncio.StreamWriter | None = None
         self._extension_ready = asyncio.Event()
         # pending[id_from_extension] = (client_writer, original_client_id)
@@ -56,12 +72,46 @@ class Daemon:
 
     async def handle_conn(self, reader: asyncio.StreamReader,
                           writer: asyncio.StreamWriter) -> None:
-        # First frame must be a hello identifying the role.
-        hello = await read_frame_async(reader)
+        # First frame must be a hello identifying the role (and auth token when required).
+        if self._auth_token is not None and self._handshake_timeout > 0:
+            try:
+                hello = await asyncio.wait_for(
+                    read_frame_async(reader),
+                    timeout=self._handshake_timeout,
+                )
+            except TimeoutError:
+                sys.stderr.write("[daemon] handshake timed out, closing connection\n")
+                sys.stderr.flush()
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+                return
+        else:
+            hello = await read_frame_async(reader)
         if hello is None:
             writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
             return
+        if self._auth_token is not None:
+            provided = hello.get("token")
+            if not isinstance(provided, str) or not hmac.compare_digest(
+                provided, self._auth_token
+            ):
+                sys.stderr.write("[daemon] rejected unauthorized peer connection\n")
+                sys.stderr.flush()
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+                return
         role = hello.get("role")
+        if role == "ping":
+            writer.write(encode_frame({"ok": True}))
+            await writer.drain()
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            return
         if role == "extension":
             await self._handle_extension(reader, writer)
         else:
@@ -155,31 +205,29 @@ class Daemon:
 
 
 async def run_daemon(sock_path: Path = SOCK_PATH) -> None:
-    sock_path.parent.mkdir(parents=True, exist_ok=True)
-    if sock_path.exists():
-        sock_path.unlink()
-    daemon = Daemon()
-    server = await asyncio.start_unix_server(daemon.handle_conn,
-                                             path=str(sock_path))
-    os.chmod(sock_path, 0o600)
-    sys.stderr.write(f"[frago-extension-daemon] listening on {sock_path}\n")
+    mode = resolve_transport_mode()
+    auth_token = generate_auth_token() if mode == "tcp" else None
+    daemon = Daemon(auth_token=auth_token)
+    handle = await start_bridge_server(
+        daemon.handle_conn,
+        sock_path,
+        auth_token=auth_token,
+        mode=mode,
+    )
+    sys.stderr.write(f"[frago-extension-daemon] listening on {handle.describe()}\n")
     sys.stderr.flush()
-    async with server:
-        await server.serve_forever()
+    try:
+        async with handle.server:
+            await handle.server.serve_forever()
+    finally:
+        handle.close_cleanup()
 
 
 # ═══════════════════════════ Relay ═══════════════════════════════
 
 
 def _read_stdio_frame() -> dict | None:
-    header = sys.stdin.buffer.read(4)
-    if not header or len(header) < 4:
-        return None
-    (length,) = struct.unpack("<I", header)
-    body = sys.stdin.buffer.read(length)
-    if len(body) < length:
-        return None
-    return json.loads(body.decode("utf-8"))
+    return read_frame_sync(sys.stdin.buffer)
 
 
 def _write_stdio_frame(obj: dict) -> None:
@@ -188,19 +236,18 @@ def _write_stdio_frame(obj: dict) -> None:
 
 
 async def run_relay(sock_path: Path = SOCK_PATH) -> None:
-    """Relay stdio ↔ unix socket for the Chrome-spawned native host."""
+    """Relay Chrome native-messaging stdio ↔ extension daemon transport."""
+    configure_stdio_binary_mode()
     try:
-        reader, writer = await asyncio.open_unix_connection(str(sock_path))
+        reader, writer = await open_bridge_connection(sock_path, role="extension")
     except Exception as e:
         sys.stderr.write(f"[relay] cannot connect daemon at {sock_path}: {e!r}\n")
         sys.stderr.flush()
         raise
-    writer.write(encode_frame({"role": "extension"}))
-    await writer.drain()
 
     loop = asyncio.get_running_loop()
 
-    async def stdio_to_uds() -> None:
+    async def stdio_to_daemon() -> None:
         while True:
             msg = await loop.run_in_executor(None, _read_stdio_frame)
             if msg is None:
@@ -209,14 +256,14 @@ async def run_relay(sock_path: Path = SOCK_PATH) -> None:
             writer.write(encode_frame(msg))
             await writer.drain()
 
-    async def uds_to_stdio() -> None:
+    async def daemon_to_stdio() -> None:
         while True:
             msg = await read_frame_async(reader)
             if msg is None:
                 return
             await loop.run_in_executor(None, _write_stdio_frame, msg)
 
-    await asyncio.gather(stdio_to_uds(), uds_to_stdio(),
+    await asyncio.gather(stdio_to_daemon(), daemon_to_stdio(),
                          return_exceptions=True)
 
 
@@ -234,11 +281,10 @@ class DaemonClient:
         self._next_id = 0
 
     async def _connect(self) -> None:
-        self._reader, self._writer = await asyncio.open_unix_connection(
-            str(self.sock_path))
-        # Hello as client.
-        self._writer.write(encode_frame({"role": "client"}))
-        await self._writer.drain()
+        self._reader, self._writer = await open_bridge_connection(
+            self.sock_path,
+            role="client",
+        )
 
     async def call_async(self, method: str, params: dict,
                          timeout: float = 30.0) -> dict:
@@ -345,12 +391,89 @@ _MANIFEST_ROOTS_MACOS = {
 }
 
 
+_MANIFEST_ROOTS_WINDOWS = {
+    "edge":          "~/.frago/chrome/manifests/edge",
+    "edge-beta":     "~/.frago/chrome/manifests/edge-beta",
+    "edge-dev":      "~/.frago/chrome/manifests/edge-dev",
+    "chromium":      "~/.frago/chrome/manifests/chromium",
+    "chrome":        "~/.frago/chrome/manifests/chrome",
+    "chrome-beta":   "~/.frago/chrome/manifests/chrome-beta",
+    "chrome-dev":    "~/.frago/chrome/manifests/chrome-dev",
+    "chrome-canary": "~/.frago/chrome/manifests/chrome-canary",
+    "brave":         "~/.frago/chrome/manifests/brave",
+    "vivaldi":       "~/.frago/chrome/manifests/vivaldi",
+    "cft":           "~/.frago/profiles/cft/extension",
+}
+
+# Windows Chromium-class browsers discover native messaging hosts via HKCU
+# registry keys whose default REG_SZ value points to com.frago.bridge.json.
+# Chrome for Testing shares Chrome/Chromium lookup paths on Windows.
+_WINDOWS_REGISTRY_SUBKEYS: dict[str, tuple[str, ...]] = {
+    "cft": (
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Chromium\NativeMessagingHosts\{HOST_NAME}",
+    ),
+    "chrome": (rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",),
+    "chrome-beta": (rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",),
+    "chrome-dev": (rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",),
+    "chrome-canary": (rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",),
+    "chromium": (rf"Software\Chromium\NativeMessagingHosts\{HOST_NAME}",),
+    "edge": (
+        rf"Software\Microsoft\Edge\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+    ),
+    "edge-beta": (
+        rf"Software\Microsoft\Edge\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+    ),
+    "edge-dev": (
+        rf"Software\Microsoft\Edge\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+    ),
+    "brave": (
+        rf"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+    ),
+    "vivaldi": (
+        rf"Software\Vivaldi\NativeMessagingHosts\{HOST_NAME}",
+        rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+    ),
+}
+
+
+def _is_windows() -> bool:
+    import platform as _pl
+
+    return sys.platform == "win32" or _pl.system() == "Windows"
+
+
+def _register_windows_native_host(manifest_path: Path, brand: str = "cft") -> list[str]:
+    """Register ``manifest_path`` under HKCU NativeMessagingHosts on Windows."""
+    import winreg  # type: ignore[import-not-found]
+
+    subkeys = _WINDOWS_REGISTRY_SUBKEYS.get(
+        brand,
+        (
+            rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}",
+            rf"Software\Chromium\NativeMessagingHosts\{HOST_NAME}",
+        ),
+    )
+    resolved = str(manifest_path.resolve())
+    written: list[str] = []
+    for subkey in subkeys:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, resolved)
+        written.append(f"HKCU\\{subkey}")
+    return written
+
+
 def default_manifest_dir(brand: str = "edge") -> Path:
     """Per-user native-messaging manifest dir for a Chromium brand.
 
-    Returns ``<brand-default-profile-root>/NativeMessagingHosts/``.
-    Cross-OS for Linux/macOS. Windows uses registry-based registration
-    (not implemented yet — D2 task); raises NotImplementedError there.
+    Returns ``<brand-default-profile-root>/NativeMessagingHosts/`` on Linux and
+    macOS, and a stable per-user directory under ``~/.frago/`` on Windows
+    (where :func:`install_manifest` additionally registers the JSON path under
+    ``HKCU\\Software\\...\\NativeMessagingHosts\\com.frago.bridge``).
 
     For frago's isolated-profile model the caller passes
     ``--user-data-dir`` to the browser and should write the manifest
@@ -358,18 +481,17 @@ def default_manifest_dir(brand: str = "edge") -> Path:
     :func:`install_manifest`'s ``target_dir`` argument.
     """
     import platform as _pl
-    system = _pl.system()
-    if system == "Linux":
-        roots = _MANIFEST_ROOTS_LINUX
-    elif system == "Darwin":
-        roots = _MANIFEST_ROOTS_MACOS
-    elif system == "Windows":
-        raise NotImplementedError(
-            "Windows native messaging manifests are registered via the "
-            "HKCU registry, not the filesystem. See D2 task."
-        )
+
+    if _is_windows():
+        roots = _MANIFEST_ROOTS_WINDOWS
     else:
-        raise NotImplementedError(f"unsupported OS: {system}")
+        system = _pl.system()
+        if system == "Linux":
+            roots = _MANIFEST_ROOTS_LINUX
+        elif system == "Darwin":
+            roots = _MANIFEST_ROOTS_MACOS
+        else:
+            raise NotImplementedError(f"unsupported OS: {system}")
     if brand not in roots:
         raise ValueError(
             f"unknown browser brand: {brand!r}; known: {sorted(roots)}"
@@ -390,7 +512,7 @@ def install_manifest(executable: str,
                      extension_id: str = STABLE_EXTENSION_ID,
                      target_dir: Path | None = None,
                      brand: str = "edge") -> Path:
-    """Write the native-messaging host manifest.
+    """Write the native-messaging host manifest (and register HKCU on Windows).
 
     Args:
         executable: Absolute path to the host launcher (the script Chrome
@@ -401,8 +523,8 @@ def install_manifest(executable: str,
             falls back to ``default_manifest_dir(brand)`` — pass an
             explicit ``<udd>/NativeMessagingHosts/`` when running with
             ``--user-data-dir`` overridden (frago's normal mode).
-        brand: Browser brand for the default-dir lookup. Ignored if
-            ``target_dir`` is given. See :func:`default_manifest_dir`.
+        brand: Browser brand for the default-dir and Windows registry lookup.
+            See :func:`default_manifest_dir`.
 
     Returns the absolute path of the written manifest file.
     """
@@ -411,5 +533,10 @@ def install_manifest(executable: str,
     target_dir.mkdir(parents=True, exist_ok=True)
     allowed = [f"chrome-extension://{extension_id}/"]
     path = target_dir / f"{HOST_NAME}.json"
-    path.write_text(json.dumps(manifest_dict(executable, allowed), indent=2))
+    path.write_text(
+        json.dumps(manifest_dict(executable, allowed), indent=2),
+        encoding="utf-8",
+    )
+    if _is_windows():
+        _register_windows_native_host(path, brand=brand)
     return path
