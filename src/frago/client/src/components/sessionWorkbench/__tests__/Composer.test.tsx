@@ -760,44 +760,16 @@ describe('Composer 小人的走法', () => {
   });
 });
 
-describe('交接到新会话', () => {
-  it('上下文不到十八万时置灰，悬停说明还差多少', () => {
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={120_000} onHandoff={NOOP} />);
-    const btn = screen.getByTestId('composer-handoff');
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
-    expect(btn.getAttribute('title')).toBe('上下文到 180k 才需要换场（现在 120k）');
-  });
-
-  it('还没读到用量刻度时也置灰', () => {
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={null} onHandoff={NOOP} />);
-    expect((screen.getByTestId('composer-handoff') as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('到了十八万放开，按下去交给页面', () => {
-    const onHandoff = vi.fn();
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={180_000} onHandoff={onHandoff} />);
-    const btn = screen.getByTestId('composer-handoff');
-    expect((btn as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(btn);
-    expect(onHandoff).toHaveBeenCalledTimes(1);
-  });
-
-  it('比发送低一档：空态发送静默中性，有字时发送亮绿、交接只描边不填色', () => {
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
+describe('交接到新会话（按钮已降级至页头更多菜单）', () => {
+  it('输入区不再渲染一级交接按钮，避免在发送按钮旁误触', () => {
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} />);
+    expect(screen.queryByTestId('composer-handoff')).toBeNull();
     const emptySend = screen.getByTestId('composer-send').className;
     expect(emptySend).not.toContain('bg-accent-primary');
     expect(emptySend).toContain('bg-bg-active');
 
     fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '继续' } });
-    const handoff = screen.getByTestId('composer-handoff').className;
-    const send = screen.getByTestId('composer-send').className;
-    expect(send).toContain('bg-accent-primary');
-    expect(handoff).not.toMatch(/(^|\s)bg-accent-primary(\s|$)/);
-    expect(handoff).toContain('border-border-accent');
-  });
-
-  it('一场都没选时不画', () => {
-    render(<Composer sessionId={null} family={null} onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
+    expect(screen.getByTestId('composer-send').className).toContain('bg-accent-primary');
     expect(screen.queryByTestId('composer-handoff')).toBeNull();
   });
 });
