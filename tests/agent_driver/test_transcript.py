@@ -136,3 +136,138 @@ def test_write_turn_persists_terminal_status_and_ended_at(
     else:
         assert meta["ended_at"] is None
 
+
+@pytest.mark.parametrize("agent_type", ["claude", "codex", "opencode", "agy", "coreagent"])
+def test_persist_turn_result_skips_native_transcript_drivers(
+    storage_base, agent_type: str
+) -> None:
+    """AC-1：具备原生持久化转录的驱动严禁由外层再写 tmux:// 合成双轨目录。"""
+    from frago.agent_driver.transcript import persist_turn_result
+
+    raw_sid = "62d0beb0-d029-4820-8a79-c7727b7dd7cb"
+    res = TurnResult(text="ok", raw_delta="", status="ok", duration_ms=1500)
+    written = persist_turn_result(
+        session_id=raw_sid,
+        agent_type=agent_type,
+        project_path="/w",
+        user_prompt="scheduled run",
+        result=res,
+        native_session_id=False,
+        source="schedule-employee",
+    )
+    assert written is False
+    assert not (storage_base / agent_type / raw_sid).exists()
+
+
+def test_persist_turn_result_writes_non_native_driver_with_canonical_sid(
+    storage_base,
+) -> None:
+    """无原生转录驱动经统一出口落盘时，强制复用唯一规范会话编号（不分裂 raw_sid 目录）。"""
+    from frago.agent_driver.driver import AgentDriver, PaneMatcher
+    from frago.agent_driver.transcript import persist_turn_result
+
+    non_native_driver = AgentDriver(
+        agent_type="claude",
+        launch_command=lambda _ctx: "echo ok",
+        ready_signal=PaneMatcher(name="ready", pattern=r"."),
+        submit=lambda _s, _p: None,
+        done_signal=PaneMatcher(name="done", pattern=r"."),
+        extract=lambda s: s,
+        transcript_source=None,
+        native_transcript=False,
+    )
+    raw_sid = "62d0beb0-d029-4820-8a79-c7727b7dd7cb"
+    from frago.agent_driver.drivers.claude import session_id_for
+
+    expected_canonical = session_id_for(raw_sid, native=False)
+    res = TurnResult(text="hello", raw_delta="", status="ok", duration_ms=5000)
+
+    written = persist_turn_result(
+        session_id=raw_sid,
+        agent_type="claude",
+        project_path="/w",
+        user_prompt="ping",
+        result=res,
+        native_session_id=False,
+        source="schedule-employee",
+        driver=non_native_driver,
+    )
+    assert written is True
+    assert not (storage_base / "claude" / raw_sid).exists()
+    assert (storage_base / "claude" / expected_canonical / "metadata.json").exists()
+
+
+def test_write_turn_timeout_honest_system_event_timestamps_and_schedule_source(
+    storage_base,
+) -> None:
+    """AC-4：>70KB 超长提示词超时不伪造 assistant 答复，保留 started_at < ended_at 与 schedule 来源。"""
+    import json
+    from datetime import datetime, timedelta
+
+    from frago.session.models import SessionSource, StepType
+
+    long_prompt = "<frago-employee>" + ("A" * 75_000) + "</frago-employee>"
+    t0 = datetime(2026, 11, 28, 9, 0, 0)
+    t1 = t0 + timedelta(seconds=120)
+    # 即便 result.text 误带残片，超时状态也绝不写入 role="assistant"
+    res = TurnResult(
+        text="<frago-employee>屏抓残片",
+        raw_delta="raw pane",
+        status="timeout",
+        duration_ms=120_000,
+        started_at=t0,
+        ended_at=t1,
+    )
+    sid = "sess-long-timeout"
+    assert (
+        write_turn(sid, "claude", "/w", long_prompt, res, source="schedule-employee")
+        is True
+    )
+
+    meta = json.loads(
+        (storage_base / "claude" / sid / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert meta["source"] == SessionSource.SCHEDULE.value
+    assert meta["status"] == "error"
+    started_at = datetime.fromisoformat(meta["started_at"])
+    ended_at = datetime.fromisoformat(meta["ended_at"])
+    assert started_at < ended_at
+    assert (ended_at - started_at).total_seconds() == pytest.approx(120.0, abs=1.0)
+
+    steps_raw = [
+        json.loads(line)
+        for line in (storage_base / "claude" / sid / "steps.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(steps_raw) == 2
+    assert steps_raw[0]["type"] == StepType.USER_MESSAGE.value
+    assert steps_raw[1]["type"] == StepType.SYSTEM_EVENT.value
+    assert all(s["type"] != StepType.ASSISTANT_MESSAGE.value for s in steps_raw)
+    assert "屏抓残片" not in steps_raw[1]["content_summary"]
+    assert "[timeout]" in steps_raw[1]["content_summary"]
+
+
+@pytest.mark.parametrize(
+    ("raw_source", "expected"),
+    [
+        ("schedule-employee", "schedule"),
+        ("schedule_employee", "schedule"),
+        ("schedule", "schedule"),
+        ("employee-invoke", "worker"),
+        ("worker", "worker"),
+        ("web", "web"),
+        ("terminal", "terminal"),
+        ("feishu", "channel"),
+        ("unknown", "unknown"),
+    ],
+)
+def test_coerce_source_preserves_canonical_origins(
+    raw_source: str, expected: str
+) -> None:
+    from frago.agent_driver.transcript import _coerce_source
+
+    assert _coerce_source(raw_source).value == expected
+
+
