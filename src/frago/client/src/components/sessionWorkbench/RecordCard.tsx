@@ -716,7 +716,7 @@ function Prose({ text }: { text: string }) {
  * 排过版的正文。agent 的回复本来就是 Markdown 写的——标题、清单、表格、代码块，
  * 照字面铺开等于把排版信息当噪音丢掉，一屏井号和星号读起来比什么都累。
  */
-function Rich({ text }: { text: string }) {
+function Rich({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const { t } = useTranslation();
   if (!text) {
     return <p className="text-scaled-prose italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
@@ -724,6 +724,7 @@ function Rich({ text }: { text: string }) {
   return (
     <MarkdownContent
       content={text}
+      streaming={streaming}
       className="text-scaled-prose min-w-0 max-w-full break-words [overflow-wrap:anywhere] leading-[1.72] text-text-primary"
     />
   );
@@ -1433,7 +1434,7 @@ function RectifyStrip({ meta }: { meta: RectifyMeta }) {
  * 只认主会话的回复：子 agent 问的是主控，主控看的是 tmux 会话、看不到页面上的卡片，
  * 画成可点的卡只会让人替主控作答。子 agent 那一块照普通代码块显示。
  */
-function AgentSay({ record }: { record: WorkbenchRecord }) {
+function AgentSay({ record, streaming = false }: { record: WorkbenchRecord; streaming?: boolean }) {
   const { t } = useTranslation();
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
@@ -1490,13 +1491,13 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         <>
           {rectifyMeta ? (
             <>
-              <Rich text={trailing.body} />
+              <Rich text={trailing.body} streaming={streaming} />
               <RectifyStrip meta={rectifyMeta} />
               <DecisionReply
                 recordId={record.id}
                 text={bodyWithoutGrid}
                 split={{ ...trailing, body: '' }}
-                rich={(s) => <Rich text={s} />}
+                rich={(s) => <Rich text={s} streaming={streaming} />}
               />
             </>
           ) : (
@@ -1504,7 +1505,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
               recordId={record.id}
               text={bodyWithoutGrid}
               split={trailing}
-              rich={(s) => <Rich text={s} />}
+              rich={(s) => <Rich text={s} streaming={streaming} />}
             />
           )}
           {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
@@ -1514,7 +1515,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         </>
       ) : (
         <>
-          <Rich text={displayText} />
+          <Rich text={displayText} streaming={streaming} />
           {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
@@ -3078,6 +3079,8 @@ export interface RecordCardProps {
   record: WorkbenchRecord;
   /** 取原文要带会话编号——记录编号自己定位不到档案。 */
   sessionId: string;
+  /** 仅当前会话处于流式输出且为末尾 `agent.say` 时传 `true`。 */
+  streaming?: boolean;
 }
 
 /**
@@ -3085,7 +3088,7 @@ export interface RecordCardProps {
  * 重渲染一次整栏；不记忆化的话那两百张全部重跑一遍分发与格式化，追加越密越卡，正是
  * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
  */
-function RecordCardInner({ record, sessionId }: RecordCardProps) {
+function RecordCardInner({ record, sessionId, streaming = false }: RecordCardProps) {
   const override = useContext(RecordOverrideContext);
   const special = override ? override(record) : null;
   if (special) return <>{special}</>;
@@ -3094,7 +3097,7 @@ function RecordCardInner({ record, sessionId }: RecordCardProps) {
     case 'user.say':
       return <UserSay record={record} />;
     case 'agent.say':
-      return <AgentSay record={record} />;
+      return <AgentSay record={record} streaming={streaming} />;
     case 'agent.think':
       return <AgentThink record={record} />;
     case 'context.inject':

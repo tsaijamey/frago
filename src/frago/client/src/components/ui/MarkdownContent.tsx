@@ -6,23 +6,28 @@ import {
   isValidElement,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import MermaidDiagram from './MermaidDiagram';
+import {
+  CitationInteractionContext,
+  createRemarkCitationsPlugin,
+  parseFileUrl,
+  parseFootnoteDefinitionsFromMarkdown,
+  type CiteDefinition,
+  type FileLinkTarget,
+} from './citations';
 
-export interface FileLinkTarget {
-  /** 解码后的本地文件绝对路径（不含 `file://` 前缀与 `#L...` 行号锚点）。 */
-  path: string;
-  /** 链接末尾附带的行号锚点（如 `L84`、`L314-L368`）。 */
-  line?: string;
-}
+export { parseFileUrl, type FileLinkTarget };
 
 /**
  * 会话记录流等宿主向内层 Markdown 注入的本地文件链接打开回调。
@@ -30,10 +35,14 @@ export interface FileLinkTarget {
  */
 export const FileLinkContext = createContext<((target: FileLinkTarget) => void) | null>(null);
 
+const CitationDefsContext = createContext<Map<string, CiteDefinition>>(new Map());
+
 interface MarkdownContentProps {
   content: string;
   className?: string;
   onFileLinkClick?: (target: FileLinkTarget) => void;
+  /** 仅最后一条仍在流式输出的 agent 消息传 `true`，启用未定义 `[^N]` 中性占位。 */
+  streaming?: boolean;
 }
 
 /**
@@ -45,54 +54,6 @@ export function markdownUrlTransform(value: string): string {
   const trimmed = value.trim();
   if (/^file:\/\//i.test(trimmed)) return trimmed;
   return defaultUrlTransform(value);
-}
-
-function safeDecodeUri(raw: string): string {
-  return raw.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
-    try {
-      return decodeURIComponent(seq);
-    } catch {
-      return seq;
-    }
-  });
-}
-
-/**
- * 从 `file://` 链接里拆出本地文件路径与可选的行号锚点（`#L84`、`#L314-L368` 或末尾 `:42`）。
- */
-export function parseFileUrl(href: string | undefined): FileLinkTarget | null {
-  if (!href) return null;
-  const trimmed = href.trim();
-  if (!/^file:\/\//i.test(trimmed)) return null;
-  let rest = trimmed.replace(/^file:\/\/(?:localhost)?/i, '');
-  let hash = '';
-  const hashIdx = rest.indexOf('#');
-  if (hashIdx !== -1) {
-    hash = rest.slice(hashIdx + 1);
-    rest = rest.slice(0, hashIdx);
-  }
-  const queryIdx = rest.indexOf('?');
-  if (queryIdx !== -1) {
-    rest = rest.slice(0, queryIdx);
-  }
-  rest = safeDecodeUri(rest);
-  if (/^\/[A-Za-z]:[\\/]/.test(rest)) {
-    rest = rest.slice(1);
-  }
-  let line: string | undefined;
-  if (hash) {
-    const m = /^L?(\d+(?:-L?\d+)?)$/i.exec(hash.trim());
-    if (m) line = `L${m[1].toUpperCase()}`;
-  } else {
-    const suffix = /:(\d+)(?::\d+)?$/.exec(rest);
-    if (suffix) {
-      line = `L${suffix[1]}`;
-      rest = rest.slice(0, suffix.index);
-    }
-  }
-  const path = rest.trim();
-  if (!path) return null;
-  return line ? { path, line } : { path };
 }
 
 function MarkdownLink({
@@ -260,9 +221,118 @@ function renderCellChildren(children: ReactNode): ReactNode {
   });
 }
 
-const components: Components = {
+function CiteSpanComponent({
+  children,
+  node: _node,
+  ...props
+}: ComponentPropsWithoutRef<'span'> & {
+  node?: unknown;
+  'data-cite-id'?: string;
+}) {
+  const citeId = props['data-cite-id'] ?? '';
+  const defsById = useContext(CitationDefsContext);
+  const interaction = useContext(CitationInteractionContext);
+  const onFileLink = useContext(FileLinkContext);
+  const def = citeId ? defsById.get(citeId) : undefined;
+  const isActive = Boolean(def && interaction?.activeCiteId === def.id);
+  const className = `cite-span${isActive ? ' active' : ''}`;
+
+  return (
+    <span
+      className={className}
+      data-cite-id={citeId}
+      onMouseEnter={(e) => {
+        if (def) interaction?.onCiteHover(def, e.currentTarget);
+      }}
+      onMouseLeave={() => {
+        interaction?.onCiteLeave();
+      }}
+      onClick={(e) => {
+        if (!def) return;
+        e.stopPropagation();
+        if (interaction) {
+          interaction.onCiteClick(def, e.currentTarget);
+        } else if (def.kind === 'local' && def.filePath) {
+          onFileLink?.({ path: def.filePath, line: def.line });
+        }
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function CitePillComponent({
+  node: _node,
+  ...props
+}: {
+  node?: unknown;
+  'data-cite-id'?: string;
+  'data-cite-label'?: string;
+  'data-cite-kind'?: string;
+}) {
+  const citeId = props['data-cite-id'] ?? '';
+  const label = props['data-cite-label'] ?? citeId;
+  const defsById = useContext(CitationDefsContext);
+  const interaction = useContext(CitationInteractionContext);
+  const onFileLink = useContext(FileLinkContext);
+  const def = citeId ? defsById.get(citeId) : undefined;
+  const kind = def?.kind ?? props['data-cite-kind'];
+  const isWeb = kind === 'web';
+  const isActive = Boolean(def && interaction?.activeCiteId === def.id);
+  const className = `cite-pill${isWeb ? ' web' : ''}${isActive ? ' active' : ''}`;
+
+  return (
+    <button
+      type="button"
+      className={className}
+      data-cite-id={citeId}
+      data-testid={`cite-pill-${citeId}`}
+      aria-label={def ? `[${label}] ${def.title}` : `[${label}]`}
+      onMouseEnter={(e) => {
+        if (def) interaction?.onCiteHover(def, e.currentTarget);
+      }}
+      onMouseLeave={() => {
+        interaction?.onCiteLeave();
+      }}
+      onClick={(e) => {
+        if (!def) return;
+        e.stopPropagation();
+        if (interaction) {
+          interaction.onCiteClick(def, e.currentTarget);
+        } else if (def.kind === 'local' && def.filePath) {
+          onFileLink?.({ path: def.filePath, line: def.line });
+        }
+      }}
+    >
+      {label}
+      {isWeb ? ' ↗' : ''}
+    </button>
+  );
+}
+
+function CitePendingComponent({
+  node: _node,
+  ...props
+}: {
+  node?: unknown;
+  'data-cite-pending'?: string;
+}) {
+  const label = props['data-cite-pending'] ?? '';
+  return (
+    <span
+      className="cite-pill pending"
+      data-cite-pending={label}
+      data-testid={`cite-pill-pending-${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+const components = {
   pre: CodeBlockPre,
-  blockquote({ children, node: _node, className, ...props }) {
+  blockquote({ children, node: _node, className, ...props }: ComponentPropsWithoutRef<'blockquote'> & { node?: unknown }) {
     return (
       <blockquote
         className={`min-w-0 max-w-full break-words [overflow-wrap:anywhere]${className ? ` ${className}` : ''}`}
@@ -272,7 +342,7 @@ const components: Components = {
       </blockquote>
     );
   },
-  code({ children, className, ...props }) {
+  code({ children, className, ...props }: ComponentPropsWithoutRef<'code'> & { node?: unknown }) {
     const isInline = !className;
     if (isInline) {
       return (
@@ -294,39 +364,97 @@ const components: Components = {
     );
   },
   // 表格外包一层能横向滚的框：窄栏里放不下时在框内滚，不撑宽整栏。
-  table({ children, node: _node, ...props }) {
+  table({ children, node: _node, ...props }: ComponentPropsWithoutRef<'table'> & { node?: unknown }) {
     return (
       <div className="table-scroll">
         <table {...props}>{children}</table>
       </div>
     );
   },
-  th({ children, node: _node, ...props }) {
+  th({ children, node: _node, ...props }: ComponentPropsWithoutRef<'th'> & { node?: unknown }) {
     return <th {...props}>{renderCellChildren(children)}</th>;
   },
-  td({ children, node: _node, ...props }) {
+  td({ children, node: _node, ...props }: ComponentPropsWithoutRef<'td'> & { node?: unknown }) {
     return <td {...props}>{renderCellChildren(children)}</td>;
   },
   a: MarkdownLink,
-};
+  'frago-cite-span': CiteSpanComponent,
+  'frago-cite-pill': CitePillComponent,
+  'frago-cite-pending': CitePendingComponent,
+} as Components;
 
 export default function MarkdownContent({
   content,
   className = '',
   onFileLinkClick,
+  streaming = false,
 }: MarkdownContentProps) {
+  const { t } = useTranslation();
   const inherited = useContext(FileLinkContext);
   const handler = onFileLinkClick ?? inherited;
+  const citeInteraction = useContext(CitationInteractionContext);
+
+  const definitions = useMemo(() => parseFootnoteDefinitionsFromMarkdown(content), [content]);
+  const defsById = useMemo(() => new Map(definitions.map((d) => [d.id, d])), [definitions]);
+  const remarkPlugins = useMemo(
+    () => [remarkGfm, createRemarkCitationsPlugin({ definitions, streaming, rawSource: content })],
+    [definitions, streaming, content]
+  );
+
   const body = (
-    <div className={`markdown-content ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={markdownUrlTransform}
-        components={components}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <CitationDefsContext.Provider value={defsById}>
+      <div className={`markdown-content ${className}`}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          urlTransform={markdownUrlTransform}
+          components={components}
+        >
+          {content}
+        </ReactMarkdown>
+        {definitions.length > 0 ? (
+          <div className="cite-sources-foot" data-testid="cite-sources-foot">
+            <span className="cite-sources-label">
+              {t('workbench.citations.sourcesLabel', { count: definitions.length })}
+            </span>
+            {definitions.map((def) =>
+              def.kind === 'invalid' ? (
+                <span
+                  key={def.id}
+                  className="cite-src-chip invalid"
+                  data-testid={`cite-src-chip-${def.id}`}
+                  title={t('workbench.citations.unsafeBadge')}
+                >
+                  <span className="cite-src-num">[{def.label}]</span>
+                  <span className="cite-src-name">{def.title}</span>
+                </span>
+              ) : (
+                <button
+                  key={def.id}
+                  type="button"
+                  className={`cite-src-chip${citeInteraction?.activeCiteId === def.id ? ' active' : ''}`}
+                  data-testid={`cite-src-chip-${def.id}`}
+                  onMouseEnter={(e) => citeInteraction?.onCiteHover(def, e.currentTarget)}
+                  onMouseLeave={() => citeInteraction?.onCiteLeave()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (citeInteraction) {
+                      citeInteraction.onCiteClick(def, e.currentTarget);
+                    } else if (def.kind === 'local' && def.filePath) {
+                      handler?.({ path: def.filePath, line: def.line });
+                    }
+                  }}
+                >
+                  <span className="cite-src-num">[{def.label}]</span>
+                  <span className="cite-src-name">{def.title}</span>
+                  {def.line ? <span className="cite-src-loc">:{def.line}</span> : null}
+                  {def.kind === 'web' ? <span className="cite-src-loc">↗</span> : null}
+                </button>
+              )
+            )}
+          </div>
+        ) : null}
+      </div>
+    </CitationDefsContext.Provider>
   );
   return handler ? (
     <FileLinkContext.Provider value={handler}>{body}</FileLinkContext.Provider>

@@ -874,3 +874,94 @@ async def test_endpoints_never_call_list_sessions(session_dir, touched, opened, 
             "sid-1", workbench_routes.RevealPathRequest(path="a.py")
         )
     )["status"] == "ok"
+
+
+# ---------- scope=cited 引用溯源沙箱预览 ----------
+
+
+@pytest.mark.asyncio
+async def test_cited_scope_allows_session_cwd_and_frago_home_but_keeps_touched_default(
+    session_dir, touched, tmp_path_factory, monkeypatch
+):
+    """默认 scope='touched' 仍拒未改文件；scope='cited' 放行会话工作目录与 FRAGO_HOME 下的可读文件。"""
+    unmodified = session_dir / "README.md"
+    unmodified.write_text("# Doc\nline 2\n", encoding="utf-8")
+    touched([])
+
+    # Default scope="touched" remains 403
+    with pytest.raises(HTTPException) as err_default:
+        await workbench_routes.read_session_file("sid-1", str(unmodified))
+    assert err_default.value.status_code == 403
+
+    # scope="cited" reads unmodified file inside session_dir
+    body = await workbench_routes.read_session_file("sid-1", str(unmodified), scope="cited")
+    assert body["text"] == "# Doc\nline 2\n"
+    assert body["reason"] is None
+
+    # scope="cited" also reads files inside FRAGO_HOME (e.g. ~/.frago/data/...)
+    frago_home = tmp_path_factory.mktemp("frago-home")
+    monkeypatch.setenv("FRAGO_HOME", str(frago_home))
+    artifact = frago_home / "data" / "report.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("report line 1\n", encoding="utf-8")
+
+    art_body = await workbench_routes.read_session_file("sid-1", str(artifact), scope="cited")
+    assert art_body["text"] == "report line 1\n"
+    assert art_body["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_cited_scope_blocks_outside_sandbox_and_sensitive_files(
+    session_dir, touched, tmp_path_factory, monkeypatch
+):
+    """scope=cited 必须拒绝沙箱外文件与敏感凭证文件（.env、.ssh、*.pem/*.key、secrets）。"""
+    frago_home = tmp_path_factory.mktemp("frago-home")
+    monkeypatch.setenv("FRAGO_HOME", str(frago_home))
+
+    outside = tmp_path_factory.mktemp("outside") / "etc.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    touched([])
+
+    with pytest.raises(HTTPException) as err_out:
+        await workbench_routes.read_session_file("sid-1", str(outside), scope="cited")
+    assert err_out.value.status_code == 403
+
+    # Sensitive files even inside session_dir or FRAGO_HOME must be 403
+    for rel in (".env", ".env.local", ".ssh/id_rsa", "certs/server.pem", "certs/priv.key"):
+        target = session_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("SECRET=1\n", encoding="utf-8")
+        with pytest.raises(HTTPException) as err_sec:
+            await workbench_routes.read_session_file("sid-1", str(target), scope="cited")
+        assert err_sec.value.status_code == 403, f"Expected 403 for sensitive {rel}"
+
+    frago_secret = frago_home / "secrets" / "token.json"
+    frago_secret.parent.mkdir(parents=True)
+    frago_secret.write_text('{"token":"x"}\n', encoding="utf-8")
+    with pytest.raises(HTTPException) as err_fsec:
+        await workbench_routes.read_session_file("sid-1", str(frago_secret), scope="cited")
+    assert err_fsec.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cited_scope_handles_404_too_large_and_not_text(
+    session_dir, touched, monkeypatch
+):
+    """scope=cited 缺文件返回 404，超大或二进制返回 reason 字段而非 500。"""
+    touched([])
+    with pytest.raises(HTTPException) as err_missing:
+        await workbench_routes.read_session_file(
+            "sid-1", str(session_dir / "missing.md"), scope="cited"
+        )
+    assert err_missing.value.status_code == 404
+
+    binary = session_dir / "img.bin"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
+    bin_body = await workbench_routes.read_session_file("sid-1", str(binary), scope="cited")
+    assert bin_body == {"path": str(binary), "size": 10, "text": None, "reason": "not-text"}
+
+    big = session_dir / "big.txt"
+    big.write_text("x" * 32, encoding="utf-8")
+    monkeypatch.setattr(workbench_routes, "_PREVIEW_MAX_BYTES", 8)
+    big_body = await workbench_routes.read_session_file("sid-1", str(big), scope="cited")
+    assert big_body == {"path": str(big), "size": 32, "text": None, "reason": "too-large"}

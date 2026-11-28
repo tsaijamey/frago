@@ -594,6 +594,33 @@ def test_载荷里没有编号就不动账本(ledger):
     assert not session_origin.LAUNCH_LEDGER.exists()
 
 
+def test_call_engine注入agy身份且PreToolUse传回引用注入(monkeypatch):
+    """_call_engine 必须带 FRAGO_HARNESS=agy 调引擎，PreToolUse 才把 citation 规则经 reason 递出。"""
+    import subprocess
+    from types import SimpleNamespace
+
+    captured_env: dict[str, str] = {}
+
+    def fake_run(argv, *, input, capture_output, text, encoding, timeout, env):  # noqa: A002
+        captured_env.update(env)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"hookSpecificOutput": {"additionalContext": "【引用规范】[^1]"}}),
+        )
+
+    monkeypatch.delenv("FRAGO_HARNESS", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("frago.init.hook_binary.get_hook_binary_path", lambda: "/usr/local/bin/frago-core")
+    monkeypatch.setattr("frago.init.hook_binary.get_engine_argv", lambda: ["--engine"])
+
+    engine_out = agy_hook._call_engine(
+        {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {"file_path": "/tmp/a.md"}}
+    )
+    assert captured_env.get("FRAGO_HARNESS") == "agy"
+    translated = agy_hook.translate_output("PreToolUse", engine_out)
+    assert translated == {"decision": "ask", "reason": "【引用规范】[^1]"}
+
+
 def test_session_start_binds_webui_launch_handle_without_marking_worker(
     runner, ledger, monkeypatch
 ):

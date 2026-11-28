@@ -217,5 +217,140 @@ describe('MarkdownContent — quote 与 code 自动按页面宽度换行（防�
   });
 });
 
+describe('MarkdownContent — 标准 GFM 脚注句段引用溯源（[^N]）', () => {
+  it('解析标准 GFM [^N] 并渲染 .cite-span、.cite-pill 与 .cite-sources-foot，禁止输出原生 <section data-footnotes>', () => {
+    const md = [
+      '服务端对路径进行了沙箱校验[^1]，外部文档说明见 RFC[^2]。',
+      '',
+      '[^1]: [workbench.py](file:///Users/frago/Repos/frago/src/frago/server/routes/workbench.py#L1430-L1455 "仅放行会话触达文件或引用路径")',
+      '[^2]: [MDN Security](https://developer.mozilla.org/en-US/docs/Web/Security "同源与外链隔离说明")',
+    ].join('\n');
+
+    const { container } = render(<MarkdownContent content={md} />);
+
+    expect(container.querySelector('section[data-footnotes]')).toBeNull();
+
+    const spans = container.querySelectorAll('.cite-span');
+    expect(spans.length).toBe(2);
+    expect(spans[0].textContent).toContain('服务端对路径进行了沙箱校验');
+
+    const pills = container.querySelectorAll('.cite-pill');
+    expect(pills.length).toBe(2);
+    expect(pills[0].textContent).toBe('1');
+    expect(pills[1].textContent).toBe('2 ↗');
+    expect(pills[1].classList.contains('web')).toBe(true);
+
+    const foot = container.querySelector('[data-testid="cite-sources-foot"]');
+    expect(foot).not.toBeNull();
+    const chips = container.querySelectorAll('.cite-src-chip');
+    expect(chips.length).toBe(2);
+    expect(chips[0].textContent).toContain('workbench.py');
+    expect(chips[1].textContent).toContain('MDN Security');
+  });
+
+  it('严格执行 URI 白名单，拦截 javascript:/data:/vbscript: 为不可点击的 .cite-src-chip.invalid，行内退化为纯文本 [N]', () => {
+    const md = [
+      '危险脚本测试[^1]，数据协议测试[^2]，VBS 测试[^3]，合法协议[^4]。',
+      '',
+      '[^1]: [XSS](javascript:alert(1) "bad")',
+      '[^2]: [DataURI](data:text/html,<script>alert(1)</script>)',
+      '[^3]: [VBS](vbscript:msgbox(1))',
+      '[^4]: [LocalFile](file:///tmp/safe.ts#L10)',
+    ].join('\n');
+
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const validPills = container.querySelectorAll('.cite-pill');
+    expect(validPills.length).toBe(1);
+    expect(validPills[0].textContent).toBe('4');
+
+    const invalidChips = container.querySelectorAll('.cite-src-chip.invalid');
+    expect(invalidChips.length).toBe(3);
+    expect(invalidChips[0].tagName).toBe('SPAN');
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(container.querySelector('a[href^="data:"]')).toBeNull();
+    expect(container.querySelector('a[href^="vbscript:"]')).toBeNull();
+    expect(container.textContent).toContain('[1]');
+    expect(container.textContent).toContain('[2]');
+    expect(container.textContent).toContain('[3]');
+  });
+
+  it('隔离 fenced 代码块、缩进代码块、行内反引号 `[^1]` 与反斜杠转义 \\[^1]，均不解析为引用气泡', () => {
+    const md = [
+      '行内代码 `[^1]` 与转义 \\[^1] 不解析，下面代码块也不解析：',
+      '',
+      '```markdown',
+      '代码里的句子[^1]',
+      '[^1]: [ignored.py](file:///tmp/ignored.py#L1)',
+      '```',
+      '',
+      '    缩进代码块里的[^1]',
+      '',
+      '正文里的合法引用[^2]。',
+      '',
+      '[^2]: [real.py](file:///tmp/real.py#L3)',
+    ].join('\n');
+
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const pills = container.querySelectorAll('.cite-pill');
+    expect(pills.length).toBe(1);
+    expect(pills[0].textContent).toBe('2');
+    expect(container.querySelectorAll('.cite-src-chip').length).toBe(1);
+    expect(container.querySelector('pre.code-block code')?.textContent).toContain('[^1]');
+    expect(container.querySelector('code.inline-code')?.textContent).toBe('[^1]');
+  });
+
+  it('流式阶段未定义 [^1] 渲染为 .cite-pill.pending；流式结束后未定义退化为纯文本 [^1]；孤立定义仍在底部展示索引条', () => {
+    const streamingMd = '正在流式输出[^1]，且转义 \\[^2] 不变。';
+    const { container, rerender } = render(
+      <MarkdownContent content={streamingMd} streaming={true} />
+    );
+
+    const pendingPills = container.querySelectorAll('.cite-pill.pending');
+    expect(pendingPills.length).toBe(1);
+    expect(pendingPills[0].textContent).toBe('1');
+
+    rerender(<MarkdownContent content={streamingMd} streaming={false} />);
+    expect(container.querySelectorAll('.cite-pill').length).toBe(0);
+    expect(container.textContent).toContain('[^1]');
+
+    const orphanDefMd = [
+      '正文没有引用脚注。',
+      '',
+      '[^9]: [orphan.ts](file:///tmp/orphan.ts#L5 "孤立定义")',
+    ].join('\n');
+    rerender(<MarkdownContent content={orphanDefMd} streaming={false} />);
+    expect(container.querySelectorAll('.cite-pill').length).toBe(0);
+    const footChips = container.querySelectorAll('.cite-src-chip');
+    expect(footChips.length).toBe(1);
+    expect(footChips[0].textContent).toContain('orphan.ts');
+  });
+
+  it('严禁支持已废止的私有标签 [[[!ref_1]]]', () => {
+    const legacy = '旧语法 [[[!ref_1]]] 绝不解析为引用胶囊。';
+    const { container } = render(<MarkdownContent content={legacy} />);
+    expect(container.querySelectorAll('.cite-pill').length).toBe(0);
+    expect(container.querySelectorAll('.cite-span').length).toBe(0);
+    expect(container.textContent).toContain('[[[!ref_1]]]');
+  });
+
+  it('标题中的 [^1] 正常转为引用胶囊，绝不残留指向失效 #user-content-fn-1 的死锚点', () => {
+    const md = [
+      '## 核心发现[^1]',
+      '',
+      '[^1]: [summary.md](file:///tmp/summary.md#L12 "标题来源说明")',
+    ].join('\n');
+    const { container } = render(<MarkdownContent content={md} />);
+    expect(container.querySelector('a[href*="user-content-fn"]')).toBeNull();
+    const heading = container.querySelector('h2');
+    expect(heading).not.toBeNull();
+    const pill = heading?.querySelector('.cite-pill');
+    expect(pill).not.toBeNull();
+    expect(pill?.textContent).toBe('1');
+  });
+});
+
+
 
 

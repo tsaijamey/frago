@@ -17,7 +17,8 @@ const putSessionFileAnnotations = vi.fn();
 const probeSessionPath = vi.fn();
 const listDirectory = vi.fn();
 vi.mock('@/api', () => ({
-  getSessionFileContent: (sid: string, path: string) => getSessionFileContent(sid, path),
+  getSessionFileContent: (sid: string, path: string, scope?: 'touched' | 'cited') =>
+    scope !== undefined ? getSessionFileContent(sid, path, scope) : getSessionFileContent(sid, path),
   getSessionFileDiff: (sid: string, path: string) => getSessionFileDiff(sid, path),
   putSessionFileContent: (sid: string, path: string, text: string) =>
     putSessionFileContent(sid, path, text),
@@ -1084,4 +1085,45 @@ describe('FileViewer 目录浏览与原位预览', () => {
     expect(dirView.textContent).toContain('brief.md');
   });
 });
+
+describe('FileViewer #L 行号高亮滚动与 scope="cited"', () => {
+  it('传入 line="L2-L3" 与 scope="cited" 时默认进入 file 代码视图、高亮 L2-L3 行、滚动至首行并透传 scope', async () => {
+    const mdFile = '/w/docs/spec.md';
+    getSessionFileContent.mockResolvedValueOnce({
+      path: mdFile,
+      size: 64,
+      text: 'line one\nline two\nline three\nline four',
+      reason: null,
+    });
+    const scrollIntoViewMock = vi.fn();
+    const origScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoViewMock;
+
+    try {
+      open({
+        files: [{ path: mdFile, action: 'modified', count: 1, first_seq: 0 }],
+        index: 0,
+        line: 'L2-L3',
+        scope: 'cited',
+      });
+
+      await waitFor(() =>
+        expect(getSessionFileContent).toHaveBeenCalledWith('sid-1', mdFile, 'cited')
+      );
+
+      const row2 = await screen.findByText('line two');
+      const line2El = row2.closest('[data-line="2"]');
+      const line3El = screen.getByText('line three').closest('[data-line="3"]');
+      const line1El = screen.getByText('line one').closest('[data-line="1"]');
+      expect(line2El?.getAttribute('data-highlighted')).toBe('true');
+      expect(line3El?.getAttribute('data-highlighted')).toBe('true');
+      expect(line1El?.getAttribute('data-highlighted')).toBeNull();
+      expect(screen.getByTestId('file-viewer-line-anchor').textContent).toBe('#L2-L3');
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'center' });
+    } finally {
+      Element.prototype.scrollIntoView = origScrollIntoView;
+    }
+  });
+});
+
 

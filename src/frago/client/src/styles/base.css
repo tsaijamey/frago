@@ -139,6 +139,7 @@
   --accent-info: #6ba3d6;
   --accent-info-10: rgba(107, 163, 214, 0.14);
   --accent-info-bg: rgba(107, 163, 214, 0.14);
+  --accent-info-border: rgba(107, 163, 214, 0.35);
   --accent-info-text: #6ba3d6;
 
   /* Border colors — neutral hairlines, accent reserved for emphasis */
@@ -382,6 +383,7 @@
   --accent-info: #2e6da8;
   --accent-info-10: rgba(46, 109, 168, 0.1);
   --accent-info-bg: rgba(46, 109, 168, 0.1);
+  --accent-info-border: rgba(46, 109, 168, 0.3);
   --accent-info-text: #2e6da8;
 
   --border-color: rgba(0, 0, 0, 0.09);
