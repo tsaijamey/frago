@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import logging
 import os
 import re
 import subprocess
@@ -51,6 +52,8 @@ from frago.session.self_id import (
     resolve_self,
 )
 
+logger = logging.getLogger(__name__)
+
 # 测试钩子：允许单测拦截后台进程拉起与回投动作
 _async_spawner_override: Callable[[Path], None] | None = None
 _callback_sender_override: Callable[[str, str, str | None], bool] | None = None
@@ -58,6 +61,7 @@ _callback_sender_override: Callable[[str, str, str | None], bool] | None = None
 CALLBACK_DELIVERY_MAX_ATTEMPTS = 8
 CALLBACK_DELIVERY_BACKOFF_SECONDS: tuple[int, ...] = (5, 15, 30, 60, 120, 300, 600, 900)
 RECOVERABLE_FAILED_WINDOW_SECONDS = 24 * 60 * 60
+_LIGHTWEIGHT_QUEUE_MAX_TEXT = 100_000
 
 _LIGHTWEIGHT_FAMILY_DIRS: tuple[str, ...] = (
     "claude",
@@ -173,7 +177,12 @@ def _lightweight_queue_dir(session_id: str) -> Path:
         return root / "coreagent" / clean_sid
     if clean_sid.startswith("ses_"):
         return root / "opencode" / clean_sid
-    store_path = frago_home() / "workbench" / "session-ontology-store.json"
+    custom_store = os.environ.get("FRAGO_SESSION_STORE_PATH", "").strip()
+    store_path = (
+        Path(custom_store).expanduser()
+        if custom_store
+        else frago_home() / "workbench" / "session-ontology-store.json"
+    )
     if store_path.is_file():
         with contextlib.suppress(Exception):
             raw = json.loads(store_path.read_text(encoding="utf-8"))
@@ -271,17 +280,17 @@ def _lightweight_has_queued_job(session_id: str, job_id: str) -> bool:
     return any(isinstance(it, dict) and it.get("job_id") == job_id for it in data["items"])
 
 
-def _lightweight_enqueue_callback(
+def _lightweight_enqueue_callback_with_status(
     session_id: str,
     *,
     prompt: str,
     job_id: str | None,
     cwd: str | None = None,
-) -> tuple[str | None, bool]:
-    """零重依赖幂等落盘入队：返回 ``(item_id, already_delivered)``。"""
+) -> tuple[str | None, bool, bool]:
+    """零重依赖幂等落盘入队：返回 ``(item_id, already_delivered, newly_enqueued)``。"""
     clean_sid = str(session_id or "").strip()
     if not clean_sid or not str(prompt or "").strip():
-        return None, False
+        return None, False, False
     directory = _lightweight_queue_dir(clean_sid)
     directory.mkdir(parents=True, exist_ok=True)
     with _lightweight_flock(directory / "workbench-queue.lock"):
@@ -290,7 +299,7 @@ def _lightweight_enqueue_callback(
             with contextlib.suppress(Exception):
                 st = json.loads(state_path.read_text(encoding="utf-8"))
                 if isinstance(st, dict) and job_id in (st.get("delivered_job_ids") or []):
-                    return None, True
+                    return None, True, False
 
         q_path = directory / "workbench-queue.json"
         items: list[dict[str, Any]] = []
@@ -304,14 +313,15 @@ def _lightweight_enqueue_callback(
             for existing in items:
                 if existing.get("job_id") == job_id:
                     _lightweight_register_active_queue(clean_sid)
-                    return str(existing.get("id") or "") or None, False
+                    return str(existing.get("id") or "") or None, False, False
 
         now_ms = int(time.time() * 1000)
         item_id = f"q-{now_ms}-{uuid.uuid4().hex[:6]}"
+        safe_text = prompt.strip()[:_LIGHTWEIGHT_QUEUE_MAX_TEXT]
         items.append(
             {
                 "id": item_id,
-                "text": prompt.strip(),
+                "text": safe_text,
                 "skills": [],
                 "image_paths": [],
                 "doc_paths": [],
@@ -329,7 +339,24 @@ def _lightweight_enqueue_callback(
         )
         os.replace(tmp, q_path)
     _lightweight_register_active_queue(clean_sid)
-    return item_id, False
+    return item_id, False, True
+
+
+def _lightweight_enqueue_callback(
+    session_id: str,
+    *,
+    prompt: str,
+    job_id: str | None,
+    cwd: str | None = None,
+) -> tuple[str | None, bool]:
+    """零重依赖幂等落盘入队：返回 ``(item_id, already_delivered)``。"""
+    item_id, already_delivered, _newly = _lightweight_enqueue_callback_with_status(
+        session_id,
+        prompt=prompt,
+        job_id=job_id,
+        cwd=cwd,
+    )
+    return item_id, already_delivered
 
 
 def _lightweight_local_server_port() -> int | None:
@@ -489,6 +516,17 @@ def record_callback_delivery_outcome(
             raise ActionContractError(
                 f"Dispatch job '{job_id}' does not exist; cannot record a delivery outcome for it."
             )
+        persisted_state = (getattr(job, "delivery_state", None) or "").strip()
+        if persisted_state == "delivered":
+            raise ActionContractError(
+                f"Dispatch job '{job_id}' is already in terminal delivery_state 'delivered'; "
+                f"cannot transition to '{to_state}'."
+            )
+        if persisted_state != from_state:
+            raise ActionContractError(
+                f"Dispatch job '{job_id}' persisted delivery_state is '{persisted_state}', "
+                f"expected '{from_state}' for transition to '{to_state}'."
+            )
         job.delivery_state = to_state
         if from_state == "delivering":
             job.delivery_attempts = getattr(job, "delivery_attempts", 0) + 1
@@ -534,15 +572,102 @@ def finalize_dispatch_job(
             raise ActionContractError(
                 f"Dispatch job '{job_id}' does not exist; cannot finalize it."
             )
+        persisted_state = (getattr(job, "delivery_state", None) or "").strip()
+        if persisted_state == "delivered" and delivery_state != "delivered":
+            raise ActionContractError(
+                f"Dispatch job '{job_id}' is already 'delivered' on disk; "
+                f"refusing to finalize as delivery_state='{delivery_state}' (job_status='{job_status}')."
+            )
+        if persisted_state != delivery_state:
+            raise ActionContractError(
+                f"Dispatch job '{job_id}' persisted delivery_state is '{persisted_state}', "
+                f"expected '{delivery_state}' for finalization."
+            )
         job.exit_code = int(exit_code or 0)
         job.delivery_state = delivery_state
         job.status = job_status
-        job.completed_at = _utc_now()
+        job.completed_at = job.completed_at or _utc_now()
         if delivery_state == "delivered":
             job.next_retry_at = None
             job.delivery_failure_kind = None
         save_dispatch_job(job)
     return job_status
+
+
+def _converge_job_to_delivered_locked(
+    job_id: str,
+    *,
+    exit_code: int | None = None,
+    allow_from_failed_reason: str | None = None,
+) -> AsyncDispatchJob | None:
+    """在持 ``locked_file(job_path)`` 临界区内依据磁盘最新真态收敛派发单至 ``delivered`` 终态。
+
+    全程不硬编码 ``prior_delivery_state``，所有跃迁均以锁内实时回读的磁盘 ``delivery_state``
+    作为权威前态；若磁盘已是 ``delivered`` 且终态一致则幂等返回。
+    """
+    job_path = dispatch_store_dir() / f"{job_id}.json"
+    with locked_file(job_path):
+        persisted = load_dispatch_job(job_path)
+        if persisted is None:
+            return None
+
+        cur_state = (getattr(persisted, "delivery_state", None) or "").strip()
+        if cur_state == "failed" and allow_from_failed_reason:
+            record_callback_delivery_outcome(
+                persisted.job_id,
+                from_state=cur_state,
+                to_state="queued",
+                reason=allow_from_failed_reason,
+                prior_delivery_state=cur_state,
+                failure_kind="transient",
+                next_retry_at=None,
+            )
+            persisted = load_dispatch_job(job_path)
+            if persisted is None:
+                return None
+            cur_state = (getattr(persisted, "delivery_state", None) or "").strip()
+
+        if cur_state == "queued":
+            record_callback_delivery_outcome(
+                persisted.job_id,
+                from_state=cur_state,
+                to_state="delivering",
+                prior_delivery_state=cur_state,
+            )
+            persisted = load_dispatch_job(job_path)
+            if persisted is None:
+                return None
+            cur_state = (getattr(persisted, "delivery_state", None) or "").strip()
+
+        if cur_state == "delivering":
+            record_callback_delivery_outcome(
+                persisted.job_id,
+                from_state=cur_state,
+                to_state="delivered",
+                prior_delivery_state=cur_state,
+            )
+            persisted = load_dispatch_job(job_path)
+            if persisted is None:
+                return None
+            cur_state = (getattr(persisted, "delivery_state", None) or "").strip()
+
+        if cur_state == "delivered":
+            final_exit = int(persisted.exit_code or 0) if exit_code is None else int(exit_code)
+            target_status = "completed" if final_exit == 0 else "failed"
+            if (
+                persisted.status != target_status
+                or persisted.completed_at is None
+                or int(persisted.exit_code or 0) != final_exit
+            ):
+                finalize_dispatch_job(
+                    persisted.job_id,
+                    exit_code=final_exit,
+                    delivery_state=cur_state,
+                    job_status=target_status,
+                    prior_delivery_state=cur_state,
+                )
+                persisted = load_dispatch_job(job_path) or persisted
+        return persisted
 
 
 def _mark_job_superseded(
@@ -559,6 +684,10 @@ def _mark_job_superseded(
             save_dispatch_job(job)
 
         persisted = load_dispatch_job(job_path) or job
+        cur_delivery = getattr(persisted, "delivery_state", "queued") or "queued"
+        if cur_delivery == "delivered":
+            return persisted
+
         sup_by = (superseded_by or persisted.superseded_by or job.superseded_by or "").strip() or None
         err_msg = (
             (reason or "").strip()
@@ -568,7 +697,6 @@ def _mark_job_superseded(
             or "Superseded"
         )
 
-        cur_delivery = getattr(persisted, "delivery_state", "queued") or "queued"
         if cur_delivery in ("queued", "delivering"):
             record_callback_delivery_outcome(
                 persisted.job_id,
@@ -1439,7 +1567,7 @@ def deliver_callback_to_session(
         try:
             item = workbench_queue.enqueue(
                 caller_session_id,
-                text=callback_prompt,
+                text=callback_prompt.strip()[:_LIGHTWEIGHT_QUEUE_MAX_TEXT],
                 prompt=callback_prompt,
                 cwd=cwd_hint,
                 job_id=jid,
@@ -2120,134 +2248,138 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
             delivery_exc = exc
             delivery_err = str(exc)
 
-        cur_job = load_dispatch_job(job.job_id) or job
-        if delivered:
-            if cur_job.delivery_state != "delivered":
-                if cur_job.delivery_state == "queued":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="queued",
-                        to_state="delivering",
-                        prior_delivery_state=cur_job.delivery_state,
-                    )
-                    cur_job = load_dispatch_job(job.job_id) or cur_job
-                if cur_job.delivery_state == "delivering":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="delivering",
-                        to_state="delivered",
-                        prior_delivery_state=cur_job.delivery_state,
-                    )
-            target_status = "completed" if job.exit_code == 0 else "failed"
-            finalize_dispatch_job(
-                job.job_id,
-                exit_code=job.exit_code,
-                delivery_state="delivered",
-                job_status=target_status,
-                prior_delivery_state="delivered",
-            )
-        else:
-            has_item = False
-            try:
-                from frago.server.services import workbench_queue
-
-                remaining = workbench_queue.list_queue(job.caller_session_id)
-                has_item = any(it.get("job_id") == job.job_id for it in remaining)
-            except Exception:
-                has_item = _lightweight_has_queued_job(job.caller_session_id, job.job_id)
-
-            is_transient_err = _is_transient_delivery_error(delivery_exc, delivery_err)
-            attempts = int(getattr(cur_job, "delivery_attempts", 0) or 0)
-            can_retry = has_item or (
-                is_transient_err and (attempts + 1) < CALLBACK_DELIVERY_MAX_ATTEMPTS
-            )
-
-            if can_retry:
-                already_delivered_on_disk = False
-                if not has_item:
-                    with contextlib.suppress(Exception):
-                        _enq_id, already_delivered_on_disk = _lightweight_enqueue_callback(
-                            job.caller_session_id,
-                            prompt=callback_prompt,
-                            job_id=job.job_id,
-                            cwd=job.caller_cwd,
-                        )
-                        if _enq_id:
-                            has_item = True
-
-                if already_delivered_on_disk:
-                    if cur_job.delivery_state == "queued":
-                        record_callback_delivery_outcome(
-                            job.job_id,
-                            from_state="queued",
-                            to_state="delivering",
-                            prior_delivery_state="queued",
-                        )
-                        cur_job = load_dispatch_job(job.job_id) or cur_job
-                    if cur_job.delivery_state == "delivering":
-                        record_callback_delivery_outcome(
-                            job.job_id,
-                            from_state="delivering",
-                            to_state="delivered",
-                            prior_delivery_state="delivering",
-                        )
-                    target_status = "completed" if job.exit_code == 0 else "failed"
-                    finalize_dispatch_job(
-                        job.job_id,
-                        exit_code=job.exit_code,
-                        delivery_state="delivered",
-                        job_status=target_status,
-                        prior_delivery_state="delivered",
-                    )
-                else:
-                    retry_at = _compute_next_retry_at(attempts) if is_transient_err else None
-                    # 若仍在队列中且已被底层回退为 queued（无新异常），直接保持 queued 交由巡检接管；
-                    # 若因瞬态异常（如 ImportError 降级直写队列）刚落盘，则经 queued -> delivering -> queued 记录退避。
-                    if cur_job.delivery_state == "queued" and is_transient_err:
-                        record_callback_delivery_outcome(
-                            job.job_id,
-                            from_state="queued",
-                            to_state="delivering",
-                            prior_delivery_state="queued",
-                        )
-                        cur_job = load_dispatch_job(job.job_id) or cur_job
-                    if cur_job.delivery_state == "delivering":
-                        record_callback_delivery_outcome(
-                            job.job_id,
-                            from_state="delivering",
-                            to_state="queued",
-                            reason=delivery_err
-                            or "Watcher wait window elapsed; retained in queue for patrol",
-                            prior_delivery_state="delivering",
-                            failure_kind="transient",
-                            next_retry_at=retry_at,
-                        )
-            else:
-                fail_kind = "transient" if is_transient_err else "permanent"
-                if cur_job.delivery_state == "queued":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="queued",
-                        to_state="delivering",
-                        prior_delivery_state=cur_job.delivery_state,
-                    )
-                    cur_job = load_dispatch_job(job.job_id) or cur_job
-                if cur_job.delivery_state == "delivering":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="delivering",
-                        to_state="failed",
-                        reason=delivery_err or "Callback delivery could not be confirmed",
-                        prior_delivery_state=cur_job.delivery_state,
-                        failure_kind=fail_kind,
-                    )
-                finalize_dispatch_job(
+        job_disk_path = dispatch_store_dir() / f"{job.job_id}.json"
+        with locked_file(job_disk_path):
+            cur_job = load_dispatch_job(job_disk_path) or job
+            if cur_job.status == "superseded":
+                pass
+            elif delivered:
+                _converge_job_to_delivered_locked(
                     job.job_id,
                     exit_code=job.exit_code,
-                    delivery_state="failed",
-                    job_status="failed",
-                    prior_delivery_state="failed",
+                    allow_from_failed_reason="Confirmed delivered by watcher callback",
                 )
+            else:
+                # 1. 权威已送达优先：锁内检查磁盘真态与发起方持久化回执，绝不倒写终态 delivered
+                receipt = _read_caller_queue_receipt(job.caller_session_id)
+                delivered_jobs = {str(j) for j in (receipt.get("delivered_job_ids") or []) if j}
+                inflight_job_id = str(receipt.get("inflight_job_id") or "").strip()
+
+                if cur_job.delivery_state == "delivered" or job.job_id in delivered_jobs:
+                    _converge_job_to_delivered_locked(
+                        job.job_id,
+                        exit_code=job.exit_code,
+                        allow_from_failed_reason="Confirmed delivered in caller queue receipt",
+                    )
+                # 2. 服务端 pop-before-send / inflight 投喂窗口保护：严禁误落 failed / permanent
+                elif cur_job.delivery_state == "delivering" or inflight_job_id == job.job_id:
+                    logger.info(
+                        "Dispatch job %s is currently delivering/inflight (disk=%s, inflight=%s); "
+                        "retaining state for server/patrol convergence",
+                        job.job_id,
+                        cur_job.delivery_state,
+                        inflight_job_id,
+                    )
+                else:
+                    has_item = False
+                    try:
+                        from frago.server.services import workbench_queue
+
+                        remaining = workbench_queue.list_queue(job.caller_session_id)
+                        has_item = any(it.get("job_id") == job.job_id for it in remaining)
+                    except Exception:
+                        has_item = _lightweight_has_queued_job(job.caller_session_id, job.job_id)
+
+                    is_transient_err = _is_transient_delivery_error(delivery_exc, delivery_err)
+                    attempts = int(getattr(cur_job, "delivery_attempts", 0) or 0)
+                    can_retry = has_item or (
+                        is_transient_err and (attempts + 1) < CALLBACK_DELIVERY_MAX_ATTEMPTS
+                    )
+
+                    if can_retry:
+                        already_delivered_on_disk = False
+                        if not has_item:
+                            with contextlib.suppress(Exception):
+                                _enq_id, already_delivered_on_disk = _lightweight_enqueue_callback(
+                                    job.caller_session_id,
+                                    prompt=callback_prompt,
+                                    job_id=job.job_id,
+                                    cwd=job.caller_cwd,
+                                )
+                                if _enq_id:
+                                    has_item = True
+
+                        if already_delivered_on_disk:
+                            _converge_job_to_delivered_locked(
+                                job.job_id,
+                                exit_code=job.exit_code,
+                                allow_from_failed_reason="Confirmed delivered in caller queue receipt",
+                            )
+                        else:
+                            retry_at = _compute_next_retry_at(attempts) if is_transient_err else None
+                            cur_job = load_dispatch_job(job_disk_path) or cur_job
+                            # 若仍在队列中且已被底层回退为 queued（无新异常），直接保持 queued 交由巡检接管；
+                            # 若因瞬态异常（如 ImportError 降级直写队列）刚落盘，则经 queued -> delivering -> queued 记录退避。
+                            if cur_job.delivery_state == "queued" and is_transient_err:
+                                record_callback_delivery_outcome(
+                                    job.job_id,
+                                    from_state="queued",
+                                    to_state="delivering",
+                                    prior_delivery_state=cur_job.delivery_state,
+                                )
+                                cur_job = load_dispatch_job(job_disk_path) or cur_job
+                                if cur_job.delivery_state == "delivering":
+                                    record_callback_delivery_outcome(
+                                        job.job_id,
+                                        from_state="delivering",
+                                        to_state="queued",
+                                        reason=delivery_err
+                                        or "Watcher wait window elapsed; retained in queue for patrol",
+                                        prior_delivery_state=cur_job.delivery_state,
+                                        failure_kind="transient",
+                                        next_retry_at=retry_at,
+                                    )
+                    else:
+                        fail_kind = "transient" if is_transient_err else "permanent"
+                        cur_job = load_dispatch_job(job_disk_path) or cur_job
+                        if cur_job.delivery_state == "delivered":
+                            _converge_job_to_delivered_locked(
+                                job.job_id,
+                                exit_code=job.exit_code,
+                            )
+                        elif cur_job.delivery_state == "delivering":
+                            logger.info(
+                                "Dispatch job %s transitioned to delivering before failure finalization; "
+                                "retaining delivering state",
+                                job.job_id,
+                            )
+                        else:
+                            if cur_job.delivery_state == "queued":
+                                record_callback_delivery_outcome(
+                                    job.job_id,
+                                    from_state="queued",
+                                    to_state="delivering",
+                                    prior_delivery_state=cur_job.delivery_state,
+                                )
+                                cur_job = load_dispatch_job(job_disk_path) or cur_job
+                            if cur_job.delivery_state == "delivering":
+                                record_callback_delivery_outcome(
+                                    job.job_id,
+                                    from_state="delivering",
+                                    to_state="failed",
+                                    reason=delivery_err or "Callback delivery could not be confirmed",
+                                    prior_delivery_state=cur_job.delivery_state,
+                                    failure_kind=fail_kind,
+                                )
+                                cur_job = load_dispatch_job(job_disk_path) or cur_job
+                            if cur_job.delivery_state == "failed":
+                                finalize_dispatch_job(
+                                    job.job_id,
+                                    exit_code=job.exit_code,
+                                    delivery_state=cur_job.delivery_state,
+                                    job_status="failed",
+                                    prior_delivery_state=cur_job.delivery_state,
+                                )
 
         reloaded = load_dispatch_job(job.job_id)
         if reloaded is not None:
@@ -2263,44 +2395,57 @@ def execute_dispatch_job(job_path: Path) -> AsyncDispatchJob | None:
         os.environ.update(orig_env)
 
 
-def _read_caller_delivered_job_ids(caller_session_id: str) -> set[str]:
+def _read_caller_queue_receipt(caller_session_id: str) -> dict[str, Any]:
     try:
         from frago.server.services import workbench_queue
 
         receipt = workbench_queue.get_queue_delivery_receipt(caller_session_id)
+        return receipt if isinstance(receipt, dict) else {}
     except Exception:
-        receipt = _lightweight_read_queue_receipt(caller_session_id)
+        return _lightweight_read_queue_receipt(caller_session_id)
+
+
+def _read_caller_delivered_job_ids(caller_session_id: str) -> set[str]:
+    receipt = _read_caller_queue_receipt(caller_session_id)
     return {str(j) for j in (receipt.get("delivered_job_ids") or []) if j}
 
 
-def _ensure_job_enqueued_idempotently(job: AsyncDispatchJob) -> tuple[str | None, bool]:
-    """确保 ``job`` 对应的回传报文幂等进入发起方队列，返回 ``(item_id, already_delivered)``。"""
+def _ensure_job_enqueued_idempotently_with_status(
+    job: AsyncDispatchJob,
+) -> tuple[str | None, bool, bool]:
+    """确保 ``job`` 对应的回传报文幂等进入发起方队列，返回 ``(item_id, already_delivered, newly_enqueued)``。"""
     prompt = format_callback_prompt(job)
     try:
         from frago.server.services import workbench_queue
 
         receipt = workbench_queue.get_queue_delivery_receipt(job.caller_session_id)
         if job.job_id in (receipt.get("delivered_job_ids") or []):
-            return None, True
+            return None, True, False
         for existing in workbench_queue.list_queue(job.caller_session_id):
             if existing.get("job_id") == job.job_id:
-                return str(existing.get("id") or "") or None, False
+                return str(existing.get("id") or "") or None, False, False
         item = workbench_queue.enqueue(
             job.caller_session_id,
-            text=prompt,
+            text=prompt.strip()[:_LIGHTWEIGHT_QUEUE_MAX_TEXT],
             prompt=prompt,
             cwd=job.caller_cwd,
             job_id=job.job_id,
             auto_schedule=False,
         )
-        return str(item.get("id") or "") or None, False
+        return str(item.get("id") or "") or None, False, True
     except Exception:
-        return _lightweight_enqueue_callback(
+        return _lightweight_enqueue_callback_with_status(
             job.caller_session_id,
             prompt=prompt,
             job_id=job.job_id,
             cwd=job.caller_cwd,
         )
+
+
+def _ensure_job_enqueued_idempotently(job: AsyncDispatchJob) -> tuple[str | None, bool]:
+    """确保 ``job`` 对应的回传报文幂等进入发起方队列，返回 ``(item_id, already_delivered)``。"""
+    item_id, already_delivered, _newly = _ensure_job_enqueued_idempotently_with_status(job)
+    return item_id, already_delivered
 
 
 def reconcile_recoverable_callback_deliveries(
@@ -2313,7 +2458,7 @@ def reconcile_recoverable_callback_deliveries(
     全程严格经 ``record_callback_delivery_outcome`` / ``finalize_dispatch_job`` 本体契约写盘，
     单派发单操作受 ``locked_file`` 保护，按 ``job_id`` 严格幂等去重：
     1. 发起方回执已确认 ``job_id`` 送达 -> 收敛为 ``delivered`` + 终态；
-    2. ``delivery_state == "queued"`` 且已完成执行（``execution_completed_at`` 非空）且退避窗口已到 -> 确保幂等入队；
+    2. ``delivery_state == "queued"`` 且已完成执行（``execution_completed_at`` 非空）且退避窗口已到 -> 确保幂等入队（已在队且无退避变更时快速跳过，不消耗变更配额）；
     3. ``delivery_state == "failed"`` 且非 ``superseded``、非 ``permanent``、``delivery_attempts <= 1``、
        ``delivery_error`` 属于瞬态故障且在 24h 恢复窗口内 -> 经受控恢复边 ``failed -> queued`` 放回排队并幂等入队。
     """
@@ -2328,145 +2473,112 @@ def reconcile_recoverable_callback_deliveries(
     for job_path in sorted(root.glob("*.json")):
         if processed >= max_jobs_per_pass:
             break
-        with contextlib.suppress(Exception), locked_file(job_path, timeout_s=1.0):
-            job = load_dispatch_job(job_path)
-            if (
-                job is None
-                or job.status == "superseded"
-                or not job.caller_session_id
-                or job.delivery_state == "delivered"
-            ):
-                continue
+        try:
+            with locked_file(job_path, timeout_s=1.0):
+                job = load_dispatch_job(job_path)
+                if (
+                    job is None
+                    or job.status == "superseded"
+                    or not job.caller_session_id
+                    or job.delivery_state == "delivered"
+                ):
+                    continue
 
-            delivered_jobs = _read_caller_delivered_job_ids(job.caller_session_id)
-            if job.job_id in delivered_jobs:
-                cur_state = job.delivery_state
-                if cur_state == "failed":
+                delivered_jobs = _read_caller_delivered_job_ids(job.caller_session_id)
+                if job.job_id in delivered_jobs:
+                    if (
+                        job.delivery_state == "failed"
+                        and (job.delivery_failure_kind or "").strip().lower() == "permanent"
+                    ):
+                        logger.warning(
+                            "Reconciling dispatch job %s marked failed(permanent) with "
+                            "authoritative caller delivered_job_ids receipt",
+                            job.job_id,
+                        )
+                    _converge_job_to_delivered_locked(
+                        job.job_id,
+                        exit_code=job.exit_code,
+                        allow_from_failed_reason="Confirmed delivered in caller queue receipt",
+                    )
+                    summary["finalized_delivered"].append(job.job_id)
+                    processed += 1
+                    continue
+
+                if job.delivery_state == "queued" and job.execution_completed_at:
+                    retry_ts = _parse_utc_ts(job.next_retry_at)
+                    if retry_ts is not None and retry_ts > now:
+                        continue
+                    _item_id, already_deliv, newly_enqueued = (
+                        _ensure_job_enqueued_idempotently_with_status(job)
+                    )
+                    if already_deliv:
+                        _converge_job_to_delivered_locked(
+                            job.job_id,
+                            exit_code=job.exit_code,
+                        )
+                        summary["finalized_delivered"].append(job.job_id)
+                        processed += 1
+                    else:
+                        cleared_retry = False
+                        if job.next_retry_at is not None:
+                            job.next_retry_at = None
+                            save_dispatch_job(job)
+                            cleared_retry = True
+                        if newly_enqueued or cleared_retry:
+                            summary["ensured_queued"].append(job.job_id)
+                            processed += 1
+                    continue
+
+                if job.delivery_state == "failed":
                     if (job.delivery_failure_kind or "").strip().lower() == "permanent":
                         continue
+                    if int(getattr(job, "delivery_attempts", 0) or 0) > 1:
+                        continue
+                    if not _is_transient_delivery_error(None, job.delivery_error):
+                        continue
+                    ref_ts = _parse_utc_ts(job.completed_at or job.updated_at or job.created_at)
+                    if ref_ts is None or (now - ref_ts) > RECOVERABLE_FAILED_WINDOW_SECONDS:
+                        continue
+
                     record_callback_delivery_outcome(
                         job.job_id,
                         from_state="failed",
                         to_state="queued",
-                        reason="Confirmed delivered in caller queue receipt",
-                        prior_delivery_state="failed",
+                        reason=f"Controlled patrol recovery of transient delivery failure: {job.delivery_error}",
+                        prior_delivery_state=job.delivery_state,
                         failure_kind="transient",
+                        next_retry_at=None,
                     )
-                    cur_state = "queued"
-                if cur_state == "queued":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="queued",
-                        to_state="delivering",
-                        prior_delivery_state="queued",
-                    )
-                    cur_state = "delivering"
-                if cur_state == "delivering":
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="delivering",
-                        to_state="delivered",
-                        prior_delivery_state="delivering",
-                    )
-                target_status = "completed" if int(job.exit_code or 0) == 0 else "failed"
-                finalize_dispatch_job(
-                    job.job_id,
-                    exit_code=job.exit_code,
-                    delivery_state="delivered",
-                    job_status=target_status,
-                    prior_delivery_state="delivered",
-                )
-                summary["finalized_delivered"].append(job.job_id)
-                processed += 1
-                continue
+                    recovered = load_dispatch_job(job_path) or job
+                    recovered.status = "running"
+                    recovered.completed_at = None
+                    recovered.execution_completed_at = recovered.execution_completed_at or _utc_now()
+                    save_dispatch_job(recovered)
 
-            if job.delivery_state == "queued" and job.execution_completed_at:
-                retry_ts = _parse_utc_ts(job.next_retry_at)
-                if retry_ts is not None and retry_ts > now:
-                    continue
-                _item_id, already_deliv = _ensure_job_enqueued_idempotently(job)
-                if already_deliv:
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="queued",
-                        to_state="delivering",
-                        prior_delivery_state="queued",
+                    _item_id, already_deliv, _newly = (
+                        _ensure_job_enqueued_idempotently_with_status(recovered)
                     )
-                    record_callback_delivery_outcome(
-                        job.job_id,
-                        from_state="delivering",
-                        to_state="delivered",
-                        prior_delivery_state="delivering",
-                    )
-                    target_status = "completed" if int(job.exit_code or 0) == 0 else "failed"
-                    finalize_dispatch_job(
-                        job.job_id,
-                        exit_code=job.exit_code,
-                        delivery_state="delivered",
-                        job_status=target_status,
-                        prior_delivery_state="delivered",
-                    )
-                    summary["finalized_delivered"].append(job.job_id)
-                else:
-                    if job.next_retry_at is not None:
-                        job.next_retry_at = None
-                        save_dispatch_job(job)
-                    summary["ensured_queued"].append(job.job_id)
-                processed += 1
-                continue
-
-            if job.delivery_state == "failed":
-                if (job.delivery_failure_kind or "").strip().lower() == "permanent":
-                    continue
-                if int(getattr(job, "delivery_attempts", 0) or 0) > 1:
-                    continue
-                if not _is_transient_delivery_error(None, job.delivery_error):
-                    continue
-                ref_ts = _parse_utc_ts(job.completed_at or job.updated_at or job.created_at)
-                if ref_ts is None or (now - ref_ts) > RECOVERABLE_FAILED_WINDOW_SECONDS:
-                    continue
-
-                record_callback_delivery_outcome(
-                    job.job_id,
-                    from_state="failed",
-                    to_state="queued",
-                    reason=f"Controlled patrol recovery of transient delivery failure: {job.delivery_error}",
-                    prior_delivery_state="failed",
-                    failure_kind="transient",
-                    next_retry_at=None,
-                )
-                recovered = load_dispatch_job(job_path) or job
-                recovered.status = "running"
-                recovered.completed_at = None
-                recovered.execution_completed_at = recovered.execution_completed_at or _utc_now()
-                save_dispatch_job(recovered)
-
-                _item_id, already_deliv = _ensure_job_enqueued_idempotently(recovered)
-                if already_deliv:
-                    record_callback_delivery_outcome(
-                        recovered.job_id,
-                        from_state="queued",
-                        to_state="delivering",
-                        prior_delivery_state="queued",
-                    )
-                    record_callback_delivery_outcome(
-                        recovered.job_id,
-                        from_state="delivering",
-                        to_state="delivered",
-                        prior_delivery_state="delivering",
-                    )
-                    target_status = "completed" if int(recovered.exit_code or 0) == 0 else "failed"
-                    finalize_dispatch_job(
-                        recovered.job_id,
-                        exit_code=recovered.exit_code,
-                        delivery_state="delivered",
-                        job_status=target_status,
-                        prior_delivery_state="delivered",
-                    )
-                    summary["finalized_delivered"].append(recovered.job_id)
-                else:
-                    summary["requeued_from_failed"].append(recovered.job_id)
-                processed += 1
+                    if already_deliv:
+                        _converge_job_to_delivered_locked(
+                            recovered.job_id,
+                            exit_code=recovered.exit_code,
+                        )
+                        summary["finalized_delivered"].append(recovered.job_id)
+                    else:
+                        summary["requeued_from_failed"].append(recovered.job_id)
+                    processed += 1
+        except ActionContractError as exc:
+            logger.warning(
+                "Callback delivery reconciliation skipped %s due to ontology contract error: %s",
+                job_path.name,
+                exc,
+            )
+        except Exception:
+            logger.debug(
+                "Callback delivery reconciliation failed for %s",
+                job_path.name,
+                exc_info=True,
+            )
     return summary
 
 

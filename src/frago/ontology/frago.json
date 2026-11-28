@@ -1568,7 +1568,7 @@
     },
     {
       "action_id": "record_callback_delivery_outcome",
-      "parameters": ["job_id", "from_state", "to_state", "reason", "prior_delivery_state", "failure_kind"],
+      "parameters": ["job_id", "from_state", "to_state", "reason", "prior_delivery_state", "failure_kind", "next_retry_at"],
       "signature": {
         "initiator_domain": "AgentKernel | SubtaskWorkerRole | PrimarySchedulerRole",
         "target_range": "CallbackDeliveryProcess",
@@ -1578,7 +1578,8 @@
           "to_state": "str",
           "reason": "str | None",
           "prior_delivery_state": "str | None",
-          "failure_kind": "str | None"
+          "failure_kind": "str | None",
+          "next_retry_at": "str | None"
         },
         "return_type": "str",
         "error_types": ["ActionContractError"]
