@@ -1,10 +1,10 @@
-"""会话页「交接到新会话」—— 把一场上下文已经太长的会话，交给一场新会话接着做。
+"""会话页「交接到新会话」—— 任何时候都可以把当前会话交给一场新会话接着做。
 
 ## 现象先说
 
-一场会话聊到三十多万 token，模型明显变慢、变笨，人想换一场接着干，但新会话什么都不知道：
-这件事是什么、做到哪了、停在哪、改过哪些文件。从前人只能自己写一段交代，或者让旧会话
-在那三十多万 token 里再费力写一份交接。
+无论是上下文变长、想换一场清爽的对话、还是会话仍在运行/等待确认中想分出干净接续，
+人都可能随时想换一场接着干，但新会话什么都不知道：这件事是什么、做到哪了、停在哪、
+改过哪些文件。从前人只能自己写一段交代，或者让旧会话再费力写一份交接。
 
 这里用**已经现成的材料**直接拼出新会话的第一句话，不再问任何模型：
 
@@ -91,6 +91,30 @@ _IMAGE_REF = re.compile(r"\[Image #\d+\]")
 
 class HandoffUnavailable(LookupError):
     """这场会话交接不了（还没有任何记录）。服务层据此回 409。"""
+
+
+class HandoffInProgress(RuntimeError):
+    """这场会话此刻正在交接中，不能并发重复发起。服务层据此回 409。"""
+
+
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT_SESSIONS: set[str] = set()
+
+
+def acquire_handoff(session_id: str) -> None:
+    """为单场会话占位，防止并发重复提交同时起多场新会话。"""
+    key = session_id.strip()
+    with _INFLIGHT_LOCK:
+        if key in _INFLIGHT_SESSIONS:
+            raise HandoffInProgress(f"会话 {session_id} 正在交接中，请稍候，勿重复提交")
+        _INFLIGHT_SESSIONS.add(key)
+
+
+def release_handoff(session_id: str) -> None:
+    """释放单场会话的交接占位。无论成功或失败都必须在 finally 里调用。"""
+    key = session_id.strip()
+    with _INFLIGHT_LOCK:
+        _INFLIGHT_SESSIONS.discard(key)
 
 
 @dataclass(frozen=True)
@@ -325,7 +349,7 @@ def render(
     label = _FAMILY_LABEL.get(family, family)
     parts = [
         f"你接手会话 {session_id}（{label}，目录 {cwd}）。"
-        "原会话上下文太长、已经变慢，换到这里接着聊。下面是原会话的现状，读完记住就行。\n\n"
+        "从这里换到新会话接着聊。下面是原会话的现状，读完记住就行。\n\n"
         "**现在不要做任何事**：不跑命令、不读文件、不翻原会话。只回一句「已接手，等你下一句」，"
         "然后停下。\n\n"
         "**人发来下一句之后**：\n"

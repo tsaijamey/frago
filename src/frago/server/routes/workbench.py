@@ -862,72 +862,80 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     相同的一条路，回的形状也相同——页面接过去就是一次普通的「正在启动」。原会话不动。
 
     拒绝的几档与发送那条接口同义：编号不认 404；记录没了、问不出目录、接不上话、还没有
-    任何记录 409；那一家此刻挑不了 400。
+    任何记录或同一会话此刻正在交接中 409；那一家此刻挑不了 400。
 
     **两场各起一个带序号的名字**（原会话「甲 #1」、新会话「甲 #2」），不然左栏并排两场
     说同一件事的会话，人分不清。起名只写 frago 自己那份名字表，原会话的档案一个字不动。
     编号要等认领的那两家（codex / opencode），新会话的名字等认到编号再起。
     """
     try:
-        handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
-    except UnknownSessionFamily as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except (
-        session_send.SessionGone,
-        session_send.SessionNotResumable,
-        workbench_handoff.HandoffUnavailable,
-    ) as e:
+        workbench_handoff.acquire_handoff(sid)
+    except workbench_handoff.HandoffInProgress as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
-    employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
-    if employee_record is not None:
-        effective_skills = [
-            str(sk).strip() for sk in employee_record.skills if str(sk).strip()
-        ]
-        wrapped_text = _with_skills(
-            _with_employee_context(handoff.text, employee_record.member_post_id),
-            effective_skills,
-            "",
-        )
-        if wrapped_text != handoff.text:
-            handoff = replace(handoff, text=wrapped_text)
-
     try:
-        launch = await asyncio.to_thread(
-            workbench_new_session.start_with_id,
-            handoff.agent_type,
-            handoff.cwd,
-            handoff.text,
-            session_id=str(uuid.uuid4()),
+        try:
+            handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
+        except UnknownSessionFamily as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except (
+            session_send.SessionGone,
+            session_send.SessionNotResumable,
+            workbench_handoff.HandoffUnavailable,
+        ) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+        employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
+        if employee_record is not None:
+            effective_skills = [
+                str(sk).strip() for sk in employee_record.skills if str(sk).strip()
+            ]
+            wrapped_text = _with_skills(
+                _with_employee_context(handoff.text, employee_record.member_post_id),
+                effective_skills,
+                "",
+            )
+            if wrapped_text != handoff.text:
+                handoff = replace(handoff, text=wrapped_text)
+
+        try:
+            launch = await asyncio.to_thread(
+                workbench_new_session.start_with_id,
+                handoff.agent_type,
+                handoff.cwd,
+                handoff.text,
+                session_id=str(uuid.uuid4()),
+            )
+        except workbench_agents.AgentUnavailable as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if employee_record is not None:
+            await asyncio.to_thread(
+                workbench_new_session.bind_employee,
+                launch.handle,
+                employee_record.member_post_id,
+            )
+            if (
+                launch.session_id
+                and launch.session_id not in employee_record.active_session_ids
+            ):
+                employee_record.active_session_ids.append(launch.session_id)
+                await asyncio.to_thread(save_post, employee_record)
+            from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+            invalidate_employee_usage_cache(employee_record.member_post_id)
+
+        old_title, new_title = await asyncio.to_thread(
+            workbench_handoff.name_pair, sid, launch, handoff=handoff
         )
-    except workbench_agents.AgentUnavailable as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    if employee_record is not None:
-        await asyncio.to_thread(
-            workbench_new_session.bind_employee,
-            launch.handle,
-            employee_record.member_post_id,
-        )
-        if (
-            launch.session_id
-            and launch.session_id not in employee_record.active_session_ids
-        ):
-            employee_record.active_session_ids.append(launch.session_id)
-            await asyncio.to_thread(save_post, employee_record)
-        from frago.server.services.employee_usage import invalidate_employee_usage_cache
-
-        invalidate_employee_usage_cache(employee_record.member_post_id)
-
-    old_title, new_title = await asyncio.to_thread(
-        workbench_handoff.name_pair, sid, launch, handoff=handoff
-    )
-    return {
-        **_launch_payload(launch),
-        "text": handoff.text,
-        "old_title": old_title,
-        "new_title": new_title,
-    }
+        return {
+            **_launch_payload(launch),
+            "text": handoff.text,
+            "old_title": old_title,
+            "new_title": new_title,
+        }
+    finally:
+        workbench_handoff.release_handoff(sid)
 
 
 class UpdateTitleRequest(BaseModel):

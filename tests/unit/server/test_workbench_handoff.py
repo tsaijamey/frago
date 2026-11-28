@@ -12,6 +12,9 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -196,7 +199,42 @@ class TestCompose:
     def test_every_registered_record_family_has_a_handoff_label(self):
         from frago.session.unified_record import RECORD_FAMILIES
 
-        assert RECORD_FAMILIES <= set(workbench_handoff._FAMILY_LABEL)
+        assert set(workbench_handoff._FAMILY_LABEL) >= RECORD_FAMILIES
+
+    def test_低上下文仅一句人话时也能交接(self, monkeypatch, patched):
+        patched.clear()
+        monkeypatch.setattr(
+            record_reader,
+            "read_records",
+            lambda sid, after=0, limit=200, tail=False: [
+                _rec(0, "user.say", {"text": "刚开场，帮我查下配置"}),
+            ],
+        )
+        handoff = workbench_handoff.compose(SID)
+        assert handoff.agent_type == "claude"
+        assert handoff.cwd == CWD
+        assert "刚开场，帮我查下配置" in handoff.text
+        assert "## 原会话最后一段回复" not in handoff.text
+        assert "原会话上下文太长" not in handoff.text
+
+    def test_运行中会话正在执行工具调用时也能交接当前快照(self, monkeypatch, patched):
+        patched.clear()
+        monkeypatch.setattr(
+            record_reader,
+            "read_records",
+            lambda sid, after=0, limit=200, tail=False: [
+                _rec(0, "user.say", {"text": "跑一下全量回归测试"}),
+                _rec(
+                    1,
+                    "tool.call",
+                    {"tool_name": "Edit", "tool_family": "file-write", "args": {"file_path": "src/a.py"}},
+                ),
+            ],
+        )
+        handoff = workbench_handoff.compose(SID)
+        assert "跑一下全量回归测试" in handoff.text
+        assert "src/a.py" in handoff.text
+        assert "## 原会话最后一段回复" not in handoff.text
 
 
 class TestNumberedPair:
@@ -355,3 +393,54 @@ class TestRoute:
     def test_编号不认回404(self, client):
         response = client.post("/api/workbench/sessions/not-a-session/handoff")
         assert response.status_code == 404
+
+    def test_并发重复交接同一会话返回409_完成后释放(self, client, monkeypatch, patched):
+        entered = threading.Event()
+        release = threading.Event()
+        started: list[str] = []
+
+        def slow_start(agent_type, cwd, prompt, *, session_id):
+            started.append(session_id)
+            entered.set()
+            assert release.wait(timeout=5.0)
+            return workbench_new_session.PendingLaunch(
+                handle=session_id,
+                agent_type=agent_type,
+                display_name="Claude Code",
+                cwd=cwd,
+                session_id=session_id,
+            )
+
+        monkeypatch.setattr(workbench_new_session, "start_with_id", slow_start)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(client.post, f"/api/workbench/sessions/{SID}/handoff")
+            assert entered.wait(timeout=5.0)
+            second_resp = client.post(f"/api/workbench/sessions/{SID}/handoff")
+            assert second_resp.status_code == 409
+            assert "正在交接中" in second_resp.json()["detail"]
+
+            release.set()
+            first_resp = first_future.result(timeout=5.0)
+            assert first_resp.status_code == 201
+
+        assert len(started) == 1
+
+        # 首个请求释放后，允许再次发起新的交接
+        third_resp = client.post(f"/api/workbench/sessions/{SID}/handoff")
+        assert third_resp.status_code == 201
+        assert len(started) == 2
+
+    def test_不同会话并发交接互不阻塞(self):
+        sid_a = "11111111-1111-4111-8111-111111111111"
+        sid_b = "22222222-2222-4222-8222-222222222222"
+        workbench_handoff.acquire_handoff(sid_a)
+        try:
+            workbench_handoff.acquire_handoff(sid_b)
+            try:
+                with pytest.raises(workbench_handoff.HandoffInProgress):
+                    workbench_handoff.acquire_handoff(sid_a)
+            finally:
+                workbench_handoff.release_handoff(sid_b)
+        finally:
+            workbench_handoff.release_handoff(sid_a)

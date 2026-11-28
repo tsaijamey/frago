@@ -762,7 +762,6 @@ export default function SessionWorkbenchPage() {
     }
     return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
-  const contextTokens = usageReadout?.context ?? null;
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -1109,8 +1108,10 @@ export default function SessionWorkbenchPage() {
    * 左栏「正在启动」、认到编号自动切过去，都走新建会话那一条路。
    */
   const [handingOff, setHandingOff] = useState(false);
+  const handingOffRef = useRef(false);
   const handoff = async () => {
-    if (!selectedId || handingOff) return;
+    if (!selectedId || handingOffRef.current) return;
+    handingOffRef.current = true;
     setHandingOff(true);
     try {
       const pending = await handoffSession(selectedId);
@@ -1128,6 +1129,7 @@ export default function SessionWorkbenchPage() {
         'error'
       );
     } finally {
+      handingOffRef.current = false;
       setHandingOff(false);
     }
   };
@@ -1490,6 +1492,8 @@ export default function SessionWorkbenchPage() {
               busyTurn={inFlight}
               onCopy={handleCopy}
               copied={copiedId === selected.session_id}
+              onHandoff={() => void handoff()}
+              handingOff={handingOff}
               onStopped={() => {
                 forYou.refresh();
                 void sessions.reload();
@@ -1647,9 +1651,6 @@ export default function SessionWorkbenchPage() {
           showStackPill={streamNonRail || isNarrowViewport}
           onOpenStackSummary={handleOpenStackSummaryFromComposer}
           packedPrompt={packedPrompt}
-          contextTokens={contextTokens}
-          onHandoff={() => void handoff()}
-          handingOff={handingOff}
           notice={composerNotice}
           onBringBack={canBringBack ? bringBack : undefined}
           queueItems={sessionQueue.items}
