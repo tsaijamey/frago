@@ -656,6 +656,8 @@ def project_session_process_dict(
 # ============================================================================
 
 CALLBACK_DELIVERY_STATES: tuple[str, ...] = ("queued", "delivering", "delivered", "failed")
+CALLBACK_DELIVERY_CHANNELS: tuple[str, ...] = ("idle_batch", "hook_piggyback")
+CALLBACK_INBOX_PENDING_STATES: frozenset[str] = frozenset({"queued", "delivering"})
 CALLBACK_DELIVERY_FAILURE_KINDS: frozenset[str] = frozenset({"transient", "permanent"})
 CALLBACK_DELIVERY_TRANSITIONS: Mapping[str, frozenset[str]] = {
     "queued": frozenset({"delivering", "failed"}),
@@ -717,6 +719,7 @@ class CallbackDeliveryProjection:
     state: QualityState
     worker_succeeded: bool | None
     graph: OntologyGraph
+    delivery_channel: str | None = None
     delivery_failure_kind: str | None = None
     next_retry_at: str | None = None
 
@@ -799,6 +802,15 @@ def project_callback_delivery_dict(
             assert isinstance(worker_proc, Process)
         g.link(process, "dispatched_from_worker", worker_proc)
 
+    raw_channel = raw_job.get("delivery_channel")
+    delivery_channel: str | None = None
+    if raw_channel is not None and str(raw_channel).strip():
+        ch = str(raw_channel).strip()
+        if ch not in CALLBACK_DELIVERY_CHANNELS:
+            raise ProjectionValidationError(
+                f"Unknown callback delivery_channel '{ch}'. Allowed: {list(CALLBACK_DELIVERY_CHANNELS)}."
+            )
+        delivery_channel = ch
     raw_failure_kind = raw_job.get("delivery_failure_kind")
     delivery_failure_kind = str(raw_failure_kind).strip().lower() if raw_failure_kind else None
     raw_next_retry = raw_job.get("next_retry_at")
@@ -812,6 +824,7 @@ def project_callback_delivery_dict(
         state=state,
         worker_succeeded=worker_succeeded,
         graph=g,
+        delivery_channel=delivery_channel,
         delivery_failure_kind=delivery_failure_kind,
         next_retry_at=next_retry_at,
     )

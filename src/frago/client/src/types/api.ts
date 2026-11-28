@@ -1684,4 +1684,44 @@ export interface RejectDecisionRequest {
   actor?: string;
 }
 
+export type CallbackInboxBlockedReason =
+  | 'blocked_by_card'
+  | 'human_queue_pending'
+  | 'injecting'
+  | 'session_busy'
+  | 'not_stopped'
+  | 'invalid_session'
+  | string
+  | null;
+
+export interface CallbackInboxItem {
+  job_id: string;
+  kind: 'worker' | 'employee' | string;
+  mode: string;
+  target_session_id: string;
+  target_name: string | null;
+  employee_id: string | null;
+  task_summary: string;
+  exit_code: number | null;
+  delivery_state: 'queued' | 'delivering' | string;
+  worker_finished_at: string | null;
+  updated_at: string;
+}
+
+export interface CallbackInboxSummary {
+  count: number;
+  blocked_reason: CallbackInboxBlockedReason;
+  items: CallbackInboxItem[];
+}
+
+export interface CallbackInboxResponse extends CallbackInboxSummary {
+  sid: string;
+}
+
+export interface DrainCallbackInboxResponse extends CallbackInboxResponse {
+  delivered?: boolean;
+  reason?: string | null;
+  delivered_job_ids?: string[];
+}
+
 

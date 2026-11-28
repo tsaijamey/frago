@@ -628,6 +628,27 @@
       "description": "每一条队友消息在 UserPromptSubmit 阶段直接由钩子调 team verify --for-hook 核对本机投递账并注入按当前设置生成的唯一动作指令（dedup always）：0 轮手工核实、0 轮翻手册，伪造或重放旧核实行当场拦截。认的是投递时强制附加的核实行字面，前缀被人改掉也认得出。"
     },
     {
+      "id": "builtin-prompt-async-callback-hitchhike",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "always"
+      },
+      "action": {
+        "type": "run_command_and_inject_stdout",
+        "command": [
+          "session",
+          "callback-claim",
+          "--for-hook"
+        ],
+        "execute_on_user_prompt": true
+      },
+      "dedup_scope": "always",
+      "priority": 190,
+      "created_at": "2026-11-27T00:00:00",
+      "description": "PM-RELEASE-20261127-ASYNC-CALLBACK-HOOK-1: 5 内核统一 TurnSubmit Hook 搭便车，从 CallbackInbox 原子认领当前会话已就绪的异步回执并按 <=5500 字符安全上限顺带注入。"
+    },
+    {
       "id": "builtin-prompt-team-message-book",
       "source": "builtin",
       "event": "UserPromptSubmit",
