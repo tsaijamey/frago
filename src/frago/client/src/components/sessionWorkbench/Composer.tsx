@@ -42,6 +42,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -53,7 +54,6 @@ import {
   Clock,
   CornerUpLeft,
   GitBranch,
-  GitBranchPlus,
   ListOrdered,
   Loader2,
   RotateCcw,
@@ -67,12 +67,15 @@ import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import PromptComposerBox, { directiveQuery, mentionQuery, slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
+import type { CallbackInboxSummary } from '@/types/api';
+import { splitAllLeadingBlocks } from '@/utils/asyncCallbackBlocks';
 import {
   parseTextQuoteBlocks,
   serializeQuotesWithPrompt,
   stripTextQuoteBlocks,
   type ComposerQuoteItem,
 } from '@/utils/textQuoteBlocks';
+import CallbackInboxSlot from './CallbackInboxSlot';
 import SendProgress, { resolveStepLabel } from './SendProgress';
 import { TextQuoteBlocksView } from './TextQuote';
 
@@ -143,6 +146,11 @@ export interface ComposerProps {
    */
   packedPrompt?: { text: string; count: number; tracePath: string; at: number } | null;
   /**
+   * 外部按钮（如异常中断警示条「从断点续跑」）预填到输入框的纯文本草稿。
+   * 不产生引用胶囊，也不静默发送，交由用户检视编辑后自行发送。
+   */
+  draftPrefill?: { text: string; at: number } | null;
+  /**
    * 人在决定卡片上点出来的那一句答复，等着整句投出。
    *
    * 走的是跟「发送」同一条路（信封、进度、失败退回），只是不经输入框：框里人正在打的字
@@ -154,17 +162,6 @@ export interface ComposerProps {
    * 不覆盖用户正在输入框里编写的草稿。
    */
   directSend?: { text: string; at: number } | null;
-  /**
-   * 这场此刻的上下文水位（最后一道用量刻度报的提示词大小）。null = 还没读到刻度。
-   *
-   * 「交接到新会话」只在它到了 {@link HANDOFF_MIN_CONTEXT} 才放开：没那么长的会话换场只会
-   * 丢细节，换不来速度。
-   */
-  contextTokens?: number | null;
-  /** 按下「交接到新会话」。不给就不画那个按钮。 */
-  onHandoff?: () => void;
-  /** 交接请求还在路上。 */
-  handingOff?: boolean;
   /**
    * 输入框上方那一行原地提示，与「↑ … moved up into the conversation · Show」同一个位置、同一种
    * 写法。起分支之后用它说「已在新会话处理：<标题> · 打开」，起失败时换成失败原因。
@@ -198,6 +195,10 @@ export interface ComposerProps {
   onRemoveQueueItem?: (itemId: string) => void | Promise<void>;
   /** 调整会话自有消息队列中的顺序。 */
   onMoveQueueItem?: (itemId: string, direction: 'up' | 'down') => void | Promise<void>;
+  /** 输入区上方的异步回执只读收件箱摘要（与 Next Task 人类队列物理分轨）。 */
+  callbackInbox?: CallbackInboxSummary | null;
+  /** 当存在待拍板决策卡时置为 true，收件箱收拢为卡外低扰动单行提示。 */
+  callbackHolding?: boolean;
   /**
    * 布局模式：
    * - 'floating'（默认）：用于会话详情页底部，移除实体分割线并带顶部 Scrim 渐变遮罩
@@ -225,18 +226,6 @@ export interface ComposerUsage {
   context: number | null;
   /** 这场一路烧掉的累计。null = 同上。 */
   total: number | null;
-}
-
-/**
- * 上下文到多大才放开「交接到新会话」。
- *
- * 到十八万 token 上下放开交接入口，让人可以在上下文明显变重前换一场接着做。
- */
-export const HANDOFF_MIN_CONTEXT = 180_000;
-
-/** 悬停说明里那种 k 为单位的写法：312k。 */
-function formatK(n: number): string {
-  return `${Math.round(n / 1000)}k`;
 }
 
 /**
@@ -361,11 +350,9 @@ export default function Composer({
   showStackPill = false,
   onOpenStackSummary,
   packedPrompt = null,
+  draftPrefill = null,
   answer = null,
   directSend = null,
-  contextTokens = null,
-  onHandoff,
-  handingOff = false,
   notice = null,
   onBringBack,
   queueItems = [],
@@ -373,6 +360,8 @@ export default function Composer({
   onEnqueue,
   onRemoveQueueItem,
   onMoveQueueItem,
+  callbackInbox = null,
+  callbackHolding = false,
   layout = 'floating',
 }: ComposerProps) {
   const { t, i18n } = useTranslation();
@@ -381,6 +370,18 @@ export default function Composer({
   const [enqueueing, setEnqueueing] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const humanQueueItems = useMemo(
+    () =>
+      queueItems.filter((item) => {
+        const raw = item.text ?? '';
+        if (!raw) return true;
+        const { text: stripped, callbacks } = splitAllLeadingBlocks(raw);
+        if (callbacks.length > 0 && !stripped.trim()) return false;
+        if (/^\s*<frago-async-callbacks?\b/i.test(raw)) return false;
+        return true;
+      }),
+    [queueItems]
+  );
   const {
     text,
     setText,
@@ -637,6 +638,16 @@ export default function Composer({
     setPackedBanner({ count: packedCount, tracePath: packedTrace });
   }, [packedAt, packedText, packedCount, packedTrace, addQuote, setText]);
 
+  const lastPrefillAt = useRef(0);
+  const prefillAt = draftPrefill?.at ?? 0;
+  const prefillText = draftPrefill?.text ?? '';
+  useEffect(() => {
+    if (!prefillText || !prefillAt || lastPrefillAt.current === prefillAt) return;
+    lastPrefillAt.current = prefillAt;
+    caretTo.current = prefillText.length;
+    setText(prefillText);
+  }, [prefillAt, prefillText, setText]);
+
   // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片；记下已消费的序号，防止重挂载或同帧重渲染重复投出。
   const lastAnswerAt = useRef(0);
   const answerAt = answer?.at ?? 0;
@@ -757,11 +768,13 @@ export default function Composer({
         ) : null}
 
         {/* 会话自有消息队列：不在 agent 执行时发进其原生运行队列，堆积在此，
-            当且仅当会话 stop 且 [end, end-5] 轮无交互卡时自动注入最早一条并从队列移除。 */}
-        {queueItems.length > 0 ? (
+            当且仅当会话 stop 且 [end, end-5] 轮无交互卡时自动注入最早一条并从队列移除。
+            物理隔离纯异步回执块，确保 Next Task 排队栏仅呈现人类指令。 */}
+        {humanQueueItems.length > 0 ? (
           <div
             data-testid="session-message-queue"
             data-blocked-by-card={queueBlockedByCard ? 'yes' : 'no'}
+            data-system-callback-count="0"
             className="flex min-w-0 flex-col gap-1.5 rounded-[10px] border border-border-color bg-bg-subtle px-3 py-2"
           >
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -774,7 +787,7 @@ export default function Composer({
                   data-testid="session-queue-count"
                   className="shrink-0 rounded-full bg-bg-secondary px-2 py-[1px] text-[11px] font-medium text-text-secondary"
                 >
-                  {t('workbench.queue.count', { n: queueItems.length })}
+                  {t('workbench.queue.count', { n: humanQueueItems.length })}
                 </span>
               </div>
               <span
@@ -799,10 +812,11 @@ export default function Composer({
             </div>
 
             <div className="flex flex-col gap-1">
-              {queueItems.map((item, idx) => (
+              {humanQueueItems.map((item, idx) => (
                 <div
                   key={item.id}
                   data-testid="session-queue-item"
+                  data-task-kind="human"
                   data-earliest={idx === 0 ? 'yes' : 'no'}
                   className="flex min-w-0 items-center gap-2 rounded-[7px] border border-border-color bg-bg-primary px-2.5 py-1.5"
                 >
@@ -834,7 +848,7 @@ export default function Composer({
                       {t('workbench.composer.outboundAttachments', { n: item.attachments })}
                     </span>
                   ) : null}
-                  {onMoveQueueItem && queueItems.length > 1 ? (
+                  {onMoveQueueItem && humanQueueItems.length > 1 ? (
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -850,7 +864,7 @@ export default function Composer({
                       <button
                         type="button"
                         data-testid={`session-queue-down-${idx}`}
-                        disabled={idx === queueItems.length - 1}
+                        disabled={idx === humanQueueItems.length - 1}
                         title={t('workbench.queue.moveDown')}
                         aria-label={t('workbench.queue.moveDown')}
                         onClick={() => void onMoveQueueItem(item.id, 'down')}
@@ -1026,6 +1040,11 @@ export default function Composer({
           </p>
         ) : null}
 
+        <CallbackInboxSlot
+          inbox={callbackInbox}
+          holdingByCard={Boolean(callbackHolding || queueBlockedByCard)}
+        />
+
         <PromptComposerBox
           variant="compact"
           minLines={1}
@@ -1178,49 +1197,6 @@ export default function Composer({
                     t('workbench.branch.bringBack')
                   ) : (
                     <span className="sr-only">{t('workbench.branch.bringBack')}</span>
-                  )}
-                </button>
-              ) : null}
-              {onHandoff && !blocked ? (
-                <button
-                  type="button"
-                  data-testid="composer-handoff"
-                  aria-label={t('workbench.composer.handoff')}
-                  disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
-                  onClick={onHandoff}
-                  title={
-                    contextTokens === null
-                      ? t('workbench.composer.handoffLockedUnknown', {
-                          limit: formatK(HANDOFF_MIN_CONTEXT),
-                        })
-                      : contextTokens < HANDOFF_MIN_CONTEXT
-                        ? t('workbench.composer.handoffLocked', {
-                            limit: formatK(HANDOFF_MIN_CONTEXT),
-                            now: formatK(contextTokens),
-                          })
-                        : t('workbench.composer.handoffHint')
-                  }
-                  className={
-                    isExpanded
-                      ? 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent'
-                      : 'flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-border-accent text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-transparent disabled:text-text-dim disabled:opacity-45 disabled:hover:bg-transparent'
-                  }
-                >
-                  {handingOff ? (
-                    <Loader2 size={isExpanded ? 13 : 15} className="animate-spin" />
-                  ) : (
-                    <GitBranchPlus size={isExpanded ? 13 : 15} strokeWidth={1.5} />
-                  )}
-                  {isExpanded ? (
-                    handingOff ? (
-                      t('workbench.composer.handingOff')
-                    ) : (
-                      t('workbench.composer.handoff')
-                    )
-                  ) : (
-                    <span className="sr-only">
-                      {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
-                    </span>
                   )}
                 </button>
               ) : null}

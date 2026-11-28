@@ -27,6 +27,7 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -185,12 +186,14 @@ class UiSessionLifecycleService:
         from frago.session import coreagent_store
         from frago.session.models import SessionStatus
         from frago.session.service import (
+            ZOMBIE_IDLE_TIMEOUT_SECONDS,
             can_write_ontology_store,
             collect_live_runtime_probes,
             get_default_session_service,
         )
 
         cur_now = float(now_s if now_s is not None else time.time())
+        cur_now_dt = datetime.fromtimestamp(cur_now)
         try:
             cfg = load_config().webui_sessions
             if getattr(cfg, "idle_timeout_secs", None):
@@ -266,22 +269,48 @@ class UiSessionLifecycleService:
             )
             idle_limit = worker_idle_timeout_s if is_worker else resident_idle_timeout_s
 
+            has_live_core_proc = sid in live_marker_sids
+            pane_shell_exited = pane.pane_dead or pane.pane_cmd in _SHELL_NAMES
+            proc_alive = (not pane_shell_exited) and has_live_core_proc
+
             stats = None
             with contextlib.suppress(Exception):
                 sfile = coreagent_store.find_session_file(sid)
                 if sfile is not None:
-                    stats = coreagent_store.inspect_session_file(sfile)
+                    stats = coreagent_store.inspect_session_file(
+                        sfile,
+                        now=cur_now_dt,
+                        is_alive=proc_alive,
+                    )
 
-            has_live_core_proc = sid in live_marker_sids
-            pane_shell_exited = pane.pane_dead or pane.pane_cmd in _SHELL_NAMES
+            in_progress_events = ("assistant_tool", "assistant_think", "user")
+            has_real_transcript_error = bool(
+                stats is not None
+                and (
+                    getattr(stats, "has_transcript_error", False)
+                    or stats.last_event_kind == "error"
+                )
+            )
+            is_in_progress_turn = bool(
+                stats is not None
+                and not has_real_transcript_error
+                and stats.last_event_kind in in_progress_events
+            )
+
             should_kill = False
-            if pane_shell_exited or not has_live_core_proc:
+            if not proc_alive:
                 should_kill = True
             else:
                 last_act_ts = pane.activity_ts
                 if stats is not None and stats.last_activity is not None:
                     last_act_ts = max(last_act_ts, stats.last_activity.timestamp())
-                if last_act_ts > 0 and (cur_now - last_act_ts) >= idle_limit:
+                # 正在执行长耗时工具/思考的活会话绝不按常规空闲阈值误杀，仅以僵尸上限（6h）兜底。
+                effective_idle_limit = (
+                    float(ZOMBIE_IDLE_TIMEOUT_SECONDS)
+                    if is_in_progress_turn
+                    else float(idle_limit)
+                )
+                if last_act_ts > 0 and (cur_now - last_act_ts) >= effective_idle_limit:
                     should_kill = True
 
             if should_kill:
@@ -290,14 +319,12 @@ class UiSessionLifecycleService:
                 with contextlib.suppress(OSError):
                     active_run_marker_path(sid).unlink(missing_ok=True)
                 if onto_rec is not None and onto_rec.lifecycle_state in ("running", "queued"):
-                    if stats is not None and stats.status == SessionStatus.ERROR:
+                    if has_real_transcript_error:
                         onto_updates.append((sid, "error", "startup_orphan_error"))
-                    elif stats is not None and stats.last_event_kind in (
-                        "assistant_tool",
-                        "assistant_think",
-                        "user",
-                    ):
+                    elif stats is not None and stats.last_event_kind in in_progress_events:
                         onto_updates.append((sid, "error", "startup_orphan_interrupted"))
+                    elif stats is not None and stats.status == SessionStatus.ERROR:
+                        onto_updates.append((sid, "error", "startup_orphan_error"))
                     else:
                         onto_updates.append((sid, "completed", ""))
             elif (
@@ -305,7 +332,9 @@ class UiSessionLifecycleService:
                 and onto_rec.lifecycle_state in ("running", "queued")
                 and stats is not None
             ):
-                if stats.status == SessionStatus.ERROR:
+                # 活会话分支：仅真实转录报错才标记 startup_orphan_error；
+                # 正在执行长耗时工具（>90s）的活会话保持 running，绝不误标错误。
+                if has_real_transcript_error:
                     onto_updates.append((sid, "error", "startup_orphan_error"))
                 elif stats.last_event_kind in ("assistant_text", "turn_end"):
                     onto_updates.append((sid, "awaiting_input", None, "end_turn"))
@@ -333,8 +362,19 @@ class UiSessionLifecycleService:
             with contextlib.suppress(Exception):
                 sfile = coreagent_store.find_session_file(sid)
                 if sfile is not None:
-                    stats = coreagent_store.inspect_session_file(sfile)
-            if stats is not None and stats.status == SessionStatus.ERROR:
+                    stats = coreagent_store.inspect_session_file(
+                        sfile,
+                        now=cur_now_dt,
+                        is_alive=False,
+                    )
+            has_real_transcript_error = bool(
+                stats is not None
+                and (
+                    getattr(stats, "has_transcript_error", False)
+                    or stats.last_event_kind == "error"
+                )
+            )
+            if has_real_transcript_error:
                 onto_updates.append((sid, "error", "startup_orphan_error"))
             elif stats is not None and stats.last_event_kind in ("assistant_text", "turn_end"):
                 onto_updates.append((sid, "completed", ""))
@@ -344,6 +384,8 @@ class UiSessionLifecycleService:
                 "user",
             ):
                 onto_updates.append((sid, "error", "startup_orphan_interrupted"))
+            elif stats is not None and stats.status == SessionStatus.ERROR:
+                onto_updates.append((sid, "error", "startup_orphan_error"))
 
         if onto_updates and can_write_onto:
             with contextlib.suppress(Exception):

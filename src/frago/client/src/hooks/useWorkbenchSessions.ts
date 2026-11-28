@@ -15,6 +15,8 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import i18n from '@/i18n';
+import type { CallbackInboxSummary } from '@/types/api';
+import type { EmployeeAvatarResolved } from '@/utils/employeeAvatar';
 import { pageCache } from './pageCache';
 import { useAutoRefresh } from './useAutoRefresh';
 
@@ -139,13 +141,19 @@ export interface WorkbenchSession {
    * 员工岗位配置的双色系颜色名（如 `amber` / `ocean`）。服务端联表补齐；缺省时按 `employee_id` 确定性回退。
    */
   employee_color?: string | null;
+  /**
+   * 员工当前解析后的头像状态（确定性默认 Micah / 内置 Micah / 安全上传栅格图 + 损坏回退）。
+   */
+  employee_avatar?: EmployeeAvatarResolved | null;
   /** 该会话存在尚未送达或投递中的异步回调（服务端下发）。 */
   callback_queued?: boolean;
+  /** 该会话待消化的异步回执收件箱摘要（服务端下发，只读聚合）。 */
+  callback_inbox?: CallbackInboxSummary | null;
   /** 该会话派发了后台 Worker 且仍有子任务处于 pending / running。 */
   has_running_worker?: boolean;
   /** 该会话此刻是否真正存在需要人类拍板的未决事项（服务端收敛判定）。 */
   need_decision?: boolean;
-  /** 本体五态生命周期（queued | running | awaiting_input | completed | error | cancelled）。 */
+  /** 本体六态生命周期（queued | running | awaiting_input | completed | error | cancelled）。 */
   lifecycle_state?:
     | 'queued'
     | 'running'
@@ -155,6 +163,12 @@ export interface WorkbenchSession {
     | 'cancelled'
     | string
     | null;
+  /** 末条归一化记录类型（tool.call / agent.think / user.say / agent.say 等，只读派生）。 */
+  last_kind?: string | null;
+  /** 工具调用中途异常中止未返回结果（只读派生信号，本体 lifecycle_state 仍为 error）。 */
+  tool_aborted?: boolean;
+  /** 异常中断说明（如 process_terminated_mid_turn 或阻塞摘要）。 */
+  abort_reason?: string | null;
 }
 
 /**

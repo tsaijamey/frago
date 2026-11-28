@@ -322,6 +322,11 @@ class AgentDriver:
     # 可选：终端忙碌状态专用读屏探针（pane_plain -> bool）。
     # 显式挂入驱动契约，对齐本体 busy_probe 切面，消除服务层跨内核 if-else 硬编码。
     is_busy: Callable[[str], bool] | None = None
+    # 可选：显式声明该驱动是否已具备原生持久化转录存储（如 Claude JSONL、Codex rollout、
+    # OpenCode SQLite、AGY 原生转录）。留空时以 ``transcript_source is not None`` 为判据。
+    # 具备原生转录的驱动由对应 syncer 统一同步到会话清单，外层禁止再写合成 ``tmux://``
+    # 双轨目录，避免单次运行分裂出原始 sid 与规范编号两条记录。
+    native_transcript: bool | None = None
     # 可选：Profile 配置激活模式显式声明（"file_and_env" | "env_only" | "session_env" | "native_flag" | "unsupported"）。
     profile_mode: str | None = None
     # 可选：单次 Hook 注入的内联上下文 Token 预算上限（codex 为 8000）。
@@ -332,6 +337,13 @@ class AgentDriver:
     patch_tool_names: tuple[str, ...] = ()
     # 可选：外部显式注入的完整切面结构覆盖。
     facets_override: AgentDriverFacets | None = None
+
+    @property
+    def has_native_transcript(self) -> bool:
+        """返回该驱动是否已具备原生持久化转录存储。"""
+        if self.native_transcript is not None:
+            return self.native_transcript
+        return self.transcript_source is not None
 
     @property
     def supports_profile_apply(self) -> bool:
@@ -477,6 +489,45 @@ def listed_session_id(agent_type: str, session_id: str, *, native_session_id: bo
     if agent_type == "agy":
         return session_id if native_session_id else None
     return None
+
+
+def resolve_canonical_session_id(
+    agent_type: str,
+    session_id: str,
+    *,
+    native_session_id: bool = False,
+    claimed_session_id: str | None = None,
+) -> str:
+    """解析面向本体账本、调度历史与会话清单的唯一规范会话编号（canonical session id）。
+
+    优先级：
+    1. 驱动运行期显式认领到的原生编号 ``claimed_session_id``（如 codex / opencode / agy
+       启动后由 CLI 分配并被 driver 认领的编号）；
+    2. ``listed_session_id(agent_type, session_id, native_session_id=native_session_id)``
+       的确定性换算结果（如 claude 的 ``uuid5`` 派生编号，或内置内核的 ``core_`` 编号）；
+    3. 尚无更具体换算规则时退回传入的 ``session_id``。
+    """
+    if claimed_session_id and claimed_session_id.strip():
+        return claimed_session_id.strip()
+    listed = listed_session_id(agent_type, session_id, native_session_id=native_session_id)
+    if listed:
+        return listed
+    return session_id
+
+
+def has_native_transcript(agent_type: str) -> bool:
+    """判断 ``agent_type`` 是否已有原生持久化转录存储。
+
+    - 内置内核（``runs_on_kernel``）由内核自身直写会话存储，视为具备原生转录；
+    - 外部驱动查询已注册 ``AgentDriver.has_native_transcript``；
+    - 未注册驱动返回 ``False``（由外层在必要时走单轨落盘）。
+    """
+    if runs_on_kernel(agent_type):
+        return True
+    try:
+        return load_driver(agent_type).has_native_transcript
+    except KeyError:
+        return False
 
 
 _REGISTRY: dict[str, AgentDriver] = {}

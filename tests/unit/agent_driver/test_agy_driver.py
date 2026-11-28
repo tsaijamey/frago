@@ -872,10 +872,12 @@ def test_claim_once_finalizes_rename_when_hook_bound_first(app_dir, monkeypatch)
 
 
 def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkeypatch):
-    """回归（98dae23a 忙碌态敲字滞留）：当 agy 终端窗格处于 Generating / esc to cancel 忙碌状态时，
-    _submit 必须在调用 send_text 前直接返回 None（遵守 LifecycleActionFacet.submit 签名），
+    """回归（98dae23a + RCA 02-rca-report）：当 agy 终端窗格处于前台生成忙碌状态时，
+    _submit 必须在调用 send_text 前立即抛出 TmuxSendError（不再静默 return None 导致 180s 空等假死），
     禁止把长文本或载体文件引用敲入输入框滞留。
     """
+    from frago.agent_driver.tmux_session import TmuxSendError
+
     texts_sent: list[str] = []
     keys_sent: list[str] = []
 
@@ -883,6 +885,7 @@ def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkey
         session_id = "98dae23a-483c-45a1-b335-5464cb994225"
         cwd = "/tmp/proj"
         native_session_id = True
+        tmux_name = "frago-agent-98dae23a"
         _poll_interval_s = 0.0
 
         def capture_pane(self) -> str:
@@ -900,13 +903,98 @@ def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkey
     assert agy_driver._pane_looks_busy(BUSY_PANE) is True
     assert agy_driver._pane_looks_busy(READY_PANE) is False
 
-    ret = agy_driver._submit(
-        _BusySubmitSession(),
-        '<frago-async-callback kind="worker" mode="new" job_id="disp-0c1150941a47">...</frago-async-callback>',
-    )
-    assert ret is None
+    with pytest.raises(TmuxSendError):
+        agy_driver._submit(
+            _BusySubmitSession(),
+            '<frago-async-callback kind="worker" mode="new" job_id="disp-0c1150941a47">...</frago-async-callback>',
+        )
     assert texts_sent == []
     assert keys_sent == []
+
+
+def test_cron_status_with_idle_input_box_is_not_busy_and_submits(app_dir, monkeypatch):
+    """回归（RCA 02-rca-report）：后台常驻 cron 导致底部状态栏带 `esc to cancel` 但同时存在
+    空闲输入提示符 `>` 且无实时生成转轮时，is_terminal_busy 必须为 False、_READY 为 True，可正常提交。
+    """
+    cid = "65d3f6ba-2501-43b5-977c-16e116f0c415"
+    path = _write_transcript(
+        app_dir,
+        [{"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>init</USER_REQUEST>"}],
+        cid,
+    )
+    cron_idle_pane = (
+        "● 已设好 5 分钟轮询。\n\n"
+        ">\n\n"
+        "esc to cancel · 1 cron active · ? for shortcuts\n"
+    )
+    assert agy_driver.is_terminal_busy(cron_idle_pane) is False
+    assert agy_driver._READY.matches(cron_idle_pane) is True
+
+    # 但若同时有实时生成转轮 + esc to cancel，即使有 > 也必须判忙并立即抛 TmuxSendError
+    live_spinner_pane = (
+        "⠋ Generating response...\n\n"
+        ">\n\n"
+        "esc to cancel\n"
+    )
+    assert agy_driver.is_terminal_busy(live_spinner_pane) is True
+    assert agy_driver._READY.matches(live_spinner_pane) is False
+
+    texts_sent: list[str] = []
+    keys_sent: list[str] = []
+
+    class _CronIdleSession:
+        session_id = cid
+        cwd = "/tmp/proj"
+        native_session_id = True
+        _poll_interval_s = 0.0
+
+        def capture_pane(self) -> str:
+            return cron_idle_pane
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            keys_sent.append(key)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"step_index": 1, "type": "USER_INPUT", "content": "ok"}) + "\n")
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    agy_driver._submit(_CronIdleSession(), "【answer】A · 继续")
+    assert len(texts_sent) == 1
+    assert keys_sent == ["Enter"]
+
+
+def test_send_when_idle_catches_tmux_send_error_and_returns_not_now(monkeypatch):
+    """P0 修复：当底层 submit_when_idle / driver.submit 抛出 TmuxSendError 时，
+    session_send.send_when_idle 必须立刻捕获并退回 not_now（0.3s 级失败回退，而非卡死或漏掉异常）。
+    """
+    from frago.agent_driver.tmux_session import TmuxSendError
+    from frago.server.services import session_send, ui_session_runner
+
+    sid = "98dae23a-483c-45a1-b335-5464cb994225"
+    monkeypatch.setattr(
+        session_send,
+        "resolve_target",
+        lambda _sid, **_k: session_send.SendTarget(
+            session_id=sid,
+            family="agy",
+            agent_type="agy",
+            cwd="/tmp/proj",
+            is_new=False,
+        ),
+    )
+
+    class _BusyFakeRunner:
+        def submit_when_idle(self, _sid, _prompt, **_kwargs):
+            raise TmuxSendError(sid, "agy busy", tmux_name="frago-agy-test", tail="⏳ Running")
+
+    monkeypatch.setattr(ui_session_runner, "get_runner", lambda: _BusyFakeRunner())
+
+    verdict = session_send.send_when_idle(sid, "hi", landed=lambda: False)
+    assert verdict == "not_now"
 
 
 def test_prose_generating_in_upper_pane_never_locks_out_idle_session(app_dir):

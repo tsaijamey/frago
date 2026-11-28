@@ -20,8 +20,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, Loader2, Star } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Crosshair, Loader2, Pencil, RotateCcw, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import EmployeeAvatar from '@/components/employees/EmployeeAvatar';
+import EmployeeAvatarModal, {
+  type EmployeeAvatarTarget,
+} from '@/components/employees/EmployeeAvatarModal';
+import { useDataStore } from '@/stores/dataStore';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
@@ -61,6 +66,7 @@ import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { useSessionObserver } from '@/hooks/useSessionObserver';
 import { useSessionChildren } from '@/hooks/useSessionChildren';
+import { useCallbackInbox } from '@/hooks/useCallbackInbox';
 import { useSessionQueue } from '@/hooks/useSessionQueue';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
@@ -171,6 +177,8 @@ export default function SessionWorkbenchPage() {
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 顶栏点击数字员工头像或岗位芯片时打开自定义头像弹窗。 */
+  const [avatarTarget, setAvatarTarget] = useState<EmployeeAvatarTarget | null>(null);
   /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
   const [creatingNew, setCreatingNew] = useState(false);
   useEffect(() => {
@@ -217,7 +225,9 @@ export default function SessionWorkbenchPage() {
   const callbackSessionIds = useMemo(
     () =>
       new Set(
-        sessions.sessions.filter((s) => s.callback_queued === true).map((s) => s.session_id)
+        sessions.sessions
+          .filter((s) => s.callback_queued === true || (s.callback_inbox?.count ?? 0) > 0)
+          .map((s) => s.session_id)
       ),
     [sessions.sessions]
   );
@@ -307,9 +317,13 @@ export default function SessionWorkbenchPage() {
     setCardQuestion(foundQuestion ? { sid: selectedId, question: foundQuestion } : null);
   }, [records, recordsSessionId, selectedId, yamlReady]);
 
-  /** 输入区「Show」要把记录流滚到的那一条。 */
+  /** 输入区「Show」或异常中断「定位中断点」要把记录流滚到的那一条。 */
   const [scrollTarget, setScrollTarget] = useState<{ recordId: string; at: number } | null>(null);
-  useEffect(() => setScrollTarget(null), [selectedId]);
+  const [abortLocateSeq, setAbortLocateSeq] = useState(0);
+  useEffect(() => {
+    setScrollTarget(null);
+    setAbortLocateSeq(0);
+  }, [selectedId]);
 
   /**
    * 页头第二行与左栏跟着这一句话本地先变，不等清单那 15 秒一刷：
@@ -331,6 +345,11 @@ export default function SessionWorkbenchPage() {
       void sessions.reload();
     },
   });
+  const callbackInbox = useCallbackInbox(selectedId, selected?.callback_inbox);
+  const callbackHolding =
+    callbackInbox.inbox.blocked_reason === 'blocked_by_card' ||
+    sessionQueue.blockedByCard ||
+    Boolean(cardQuestion && cardQuestion.sid === selectedId);
   const sendingId =
     selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
   const busyId = selectedId && inFlight ? selectedId : null;
@@ -342,6 +361,79 @@ export default function SessionWorkbenchPage() {
     return () => clearInterval(id);
   }, [inFlight]);
   const selectedForYou = selectedId ? forYou.infoOf(selectedId) : null;
+  const abortedToolInfo = useMemo<{ id: string; name: string } | null>(() => {
+    if (!selectedId || recordsSessionId !== selectedId || records.length === 0) return null;
+    const completedCallIds = new Set<string>();
+    for (const r of records) {
+      if (r.kind === 'tool.result' && !r.agent_path.length) {
+        const cid = typeof r.payload.call_id === 'string' ? r.payload.call_id : '';
+        if (cid) completedCallIds.add(cid);
+      }
+    }
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const r = records[i];
+      if (r.agent_path.length > 0) continue;
+      if (r.kind === 'agent.say' && typeof r.payload.text === 'string' && r.payload.text.trim()) {
+        // 工具调用之后已有正式回答且服务端未标 tool_aborted 时，不误判为工具中断
+        if (selected?.tool_aborted !== true) return null;
+      }
+      if (r.kind === 'tool.call') {
+        const cid = typeof r.payload.call_id === 'string' ? r.payload.call_id : '';
+        if (!cid || !completedCallIds.has(cid)) {
+          const name = typeof r.payload.tool_name === 'string' ? r.payload.tool_name : '';
+          return { id: r.id, name };
+        }
+      }
+    }
+    return null;
+  }, [records, recordsSessionId, selectedId, selected?.tool_aborted]);
+
+  const isToolAborted = Boolean(
+    selected &&
+      !sessionRunning &&
+      (selected.tool_aborted === true ||
+        (selected.lifecycle_state === 'error' &&
+          selected.status !== 'done' &&
+          abortedToolInfo !== null))
+  );
+
+  const headLifecyclePill = useMemo<'abort' | 'wait' | 'done' | null>(() => {
+    if (!selected) return null;
+    if (sessionRunning) return null;
+    if (isToolAborted) return 'abort';
+    const onto = (selected.lifecycle_state ?? '').toLowerCase();
+    if (onto === 'awaiting_input' && !selectedForYou) return 'wait';
+    if (
+      (selected.status === 'done' || onto === 'completed') &&
+      onto !== 'error' &&
+      onto !== 'awaiting_input' &&
+      !selectedForYou
+    ) {
+      return 'done';
+    }
+    return null;
+  }, [selected, sessionRunning, isToolAborted, selectedForYou]);
+
+  const [draftPrefill, setDraftPrefill] = useState<{ text: string; at: number } | null>(null);
+  const draftPrefillSeq = useRef(0);
+  useEffect(() => setDraftPrefill(null), [selectedId]);
+
+  const handleLocateAbort = useCallback(() => {
+    setAbortLocateSeq((n) => n + 1);
+    if (abortedToolInfo?.id) {
+      setScrollTarget({ recordId: abortedToolInfo.id, at: Date.now() });
+    }
+  }, [abortedToolInfo?.id]);
+
+  const handleResumeFromAbort = useCallback(() => {
+    const draft = abortedToolInfo?.name
+      ? t('workbench.abort.resumeDraft', { tool: abortedToolInfo.name })
+      : t('workbench.abort.resumeDraftGeneric');
+    setDraftPrefill({ text: draft, at: (draftPrefillSeq.current += 1) });
+    document.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')?.focus();
+    showToast(t('workbench.abort.resumeReady'), 'info');
+  }, [abortedToolInfo?.name, showToast, t]);
+
   const headStatus = useMemo(() => {
     // 原型里这一串是「For you 标签 + 正文」：标签单独一枚（见下面渲染），正文只说 waiting / answered，
     // 不再把「For you ·」写进文字里。
@@ -762,7 +854,6 @@ export default function SessionWorkbenchPage() {
     }
     return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
-  const contextTokens = usageReadout?.context ?? null;
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -1109,8 +1200,10 @@ export default function SessionWorkbenchPage() {
    * 左栏「正在启动」、认到编号自动切过去，都走新建会话那一条路。
    */
   const [handingOff, setHandingOff] = useState(false);
+  const handingOffRef = useRef(false);
   const handoff = async () => {
-    if (!selectedId || handingOff) return;
+    if (!selectedId || handingOffRef.current) return;
+    handingOffRef.current = true;
     setHandingOff(true);
     try {
       const pending = await handoffSession(selectedId);
@@ -1128,6 +1221,7 @@ export default function SessionWorkbenchPage() {
         'error'
       );
     } finally {
+      handingOffRef.current = false;
       setHandingOff(false);
     }
   };
@@ -1322,6 +1416,38 @@ export default function SessionWorkbenchPage() {
               <ChevronLeft size={16} />
             </button>
           ) : null}
+          {selected?.employee_id ? (() => {
+            const empId = selected.employee_id;
+            const empName = selected.employee_title || empId;
+            const openHeaderAvatar = () => {
+              const storeEmp = useDataStore
+                .getState()
+                .employees?.find((e) => e.member_post_id === empId);
+              setAvatarTarget({
+                member_post_id: empId,
+                title: storeEmp?.title || empName,
+                avatar_resolved: storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+              });
+            };
+            return (
+              <EmployeeAvatar
+                asButton
+                employeeId={empId}
+                avatar={selected.employee_avatar}
+                size={28}
+                className="ch-av-btn"
+                testId="session-header-avatar"
+                title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                ariaLabel={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                onClick={openHeaderAvatar}
+                overlay={
+                  <span className="ch-av-tip" aria-hidden="true">
+                    <Pencil size={8} strokeWidth={2.2} />
+                  </span>
+                }
+              />
+            );
+          })() : null}
           <div className="flex min-w-0 flex-1 flex-col justify-center">
             {selected ? (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -1393,6 +1519,68 @@ export default function SessionWorkbenchPage() {
             )}
             {selected ? (
               <div data-testid="head-meta" className="wb-meta">
+                {selected.employee_id ? (() => {
+                  const empId = selected.employee_id;
+                  const empName = selected.employee_title || empId;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="ch-emp-chip"
+                        data-testid="session-header-emp-chip"
+                        title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                        onClick={() => {
+                          const storeEmp = useDataStore
+                            .getState()
+                            .employees?.find((e) => e.member_post_id === empId);
+                          setAvatarTarget({
+                            member_post_id: empId,
+                            title: storeEmp?.title || empName,
+                            avatar_resolved:
+                              storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+                          });
+                        }}
+                      >
+                        {empName}
+                      </button>
+                      <span aria-hidden className="wb-meta-sep">·</span>
+                    </>
+                  );
+                })() : null}
+                {headLifecyclePill === 'abort' ? (
+                  <>
+                    <span
+                      data-testid="hdr-status-abort"
+                      className="wb-status-pill abort"
+                    >
+                      <span aria-hidden className="pill-dot" />
+                      <span>{t('workbench.status.toolAborted')}</span>
+                    </span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
+                  </>
+                ) : headLifecyclePill === 'wait' ? (
+                  <>
+                    <span
+                      data-testid="hdr-status-wait"
+                      className="wb-status-pill wait"
+                    >
+                      <span aria-hidden className="pill-dot" />
+                      <span>{t('workbench.status.awaitingInputDetail')}</span>
+                    </span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
+                  </>
+                ) : headLifecyclePill === 'done' ? (
+                  <>
+                    <span
+                      data-testid="hdr-status-done"
+                      className="wb-status-pill done"
+                    >
+                      <span aria-hidden className="pill-dot" />
+                      <span>{t('workbench.status.done')}</span>
+                    </span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
+                  </>
+                ) : null}
                 {headStatus ? (
                   // 状态字放得下就全写，放不下自己截断——它原先是不收缩的，长了就把右边
                   // 目录整段挤没；目录截断还看得出是哪一层，状态截断靠 title 补全。
@@ -1490,6 +1678,8 @@ export default function SessionWorkbenchPage() {
               busyTurn={inFlight}
               onCopy={handleCopy}
               copied={copiedId === selected.session_id}
+              onHandoff={() => void handoff()}
+              handingOff={handingOff}
               onStopped={() => {
                 forYou.refresh();
                 void sessions.reload();
@@ -1503,6 +1693,51 @@ export default function SessionWorkbenchPage() {
             />
           ) : null}
         </header>
+
+        {!showLaunch && isToolAborted && selected ? (
+          <div
+            role="alert"
+            data-testid="top5-abort-alert"
+            className="abort-alert-bar"
+          >
+            <div className="abort-alert-main">
+              <AlertTriangle size={15} className="abort-alert-ic" aria-hidden="true" />
+              <div className="abort-alert-copy">
+                <div className="abort-alert-title">{t('workbench.abort.bannerTitle')}</div>
+                <div className="abort-alert-desc">
+                  {selected.abort_reason &&
+                  selected.abort_reason !== 'process_terminated_mid_turn'
+                    ? selected.abort_reason
+                    : abortedToolInfo?.name
+                      ? t('workbench.abort.bannerDescTool', { tool: abortedToolInfo.name })
+                      : t('workbench.abort.bannerDescDefault')}
+                </div>
+              </div>
+            </div>
+            <div className="abort-alert-actions">
+              {abortedToolInfo?.id ? (
+                <button
+                  type="button"
+                  data-testid="top5-locate-abort"
+                  onClick={handleLocateAbort}
+                  className="abort-btn"
+                >
+                  <Crosshair size={13} aria-hidden="true" />
+                  <span>{t('workbench.abort.locate')}</span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-testid="top5-resume-turn"
+                onClick={handleResumeFromAbort}
+                className="abort-btn primary"
+              >
+                <RotateCcw size={13} aria-hidden="true" />
+                <span>{t('workbench.abort.resume')}</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1">
           {showLaunch && launch ? (
@@ -1526,8 +1761,11 @@ export default function SessionWorkbenchPage() {
               error={error}
               onLoadOlder={loadOlder}
               awaitingAgent={awaitingAgent}
+              sessionRunning={sessionRunning}
               trails={trails}
               scrollTarget={scrollTarget}
+              abortedToolCallId={isToolAborted ? (abortedToolInfo?.id ?? null) : null}
+              abortLocateSeq={abortLocateSeq}
               onQuote={(text, anchor) => {
                 setQuote({ text, at: (quoteSeq.current += 1) });
                 // 这一刻只记成待发出，发出成功才留痕——见 `pendingQuotes`。
@@ -1611,7 +1849,6 @@ export default function SessionWorkbenchPage() {
               observer={observer}
               childrenData={sessionChildren.data}
               childrenLoading={sessionChildren.loading}
-              sessionRunning={sessionRunning}
               fileViewerOpen={viewerIndex !== null}
               onCloseStackPopover={closeStackPopover}
               onCloseFileViewer={() => setViewerIndex(null)}
@@ -1651,9 +1888,7 @@ export default function SessionWorkbenchPage() {
           showStackPill={streamNonRail || isNarrowViewport}
           onOpenStackSummary={handleOpenStackSummaryFromComposer}
           packedPrompt={packedPrompt}
-          contextTokens={contextTokens}
-          onHandoff={() => void handoff()}
-          handingOff={handingOff}
+          draftPrefill={draftPrefill}
           notice={composerNotice}
           onBringBack={canBringBack ? bringBack : undefined}
           queueItems={sessionQueue.items}
@@ -1661,9 +1896,12 @@ export default function SessionWorkbenchPage() {
           onEnqueue={sessionQueue.enqueue}
           onRemoveQueueItem={sessionQueue.remove}
           onMoveQueueItem={sessionQueue.move}
+          callbackInbox={callbackInbox.inbox}
+          callbackHolding={callbackHolding}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
+            void callbackInbox.reload();
             // 兜底：进度里没认出落地（比如人早切走了），接口回来这一刻照样落。
             if (outboundId) landOutbound(outboundId);
             // 接口回来了就说明这一轮已经说完，那句话必定在会话里了：信封该收，
@@ -1782,6 +2020,14 @@ export default function SessionWorkbenchPage() {
           onClose={() => setTimelineOpen(false)}
         />
       ) : null}
+
+      <EmployeeAvatarModal
+        employee={avatarTarget}
+        onClose={() => setAvatarTarget(null)}
+        onSaved={() => {
+          void sessions.reload();
+        }}
+      />
     </div>
   );
 }

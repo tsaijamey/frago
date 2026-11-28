@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import logging
 import os
 import stat
 import subprocess
@@ -37,12 +38,15 @@ from frago.agent_driver.tmux_session import TmuxSendError
 from frago.employee import (
     EmployeeOntologyService,
     default_employee_color,
+    employees_dir,
     get_post,
     list_posts,
+    resolve_avatar_state,
     resolve_session_employee_id,
     save_post,
 )
 from frago.server.services import (
+    callback_inbox_dispatcher,
     coreagent_runner,
     file_history,
     session_send,
@@ -88,6 +92,64 @@ def _iso_to_epoch_ms(raw: str | None) -> int | None:
         return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
     except ValueError:
         return None
+
+
+logger = logging.getLogger(__name__)
+
+
+def _callback_inbox_summaries_by_caller() -> dict[str, dict[str, Any]]:
+    """构建每个存在待消化异步回执的发起方会话 ``CallbackInbox`` 只读摘要映射。"""
+    try:
+        from frago.session.async_dispatch import list_dispatch_jobs
+
+        jobs = list_dispatch_jobs(active_only=False)
+        grouped: dict[str, list[Any]] = {}
+        for job in jobs:
+            if (job.status or "").strip().lower() != "delivering":
+                continue
+            ds = (getattr(job, "delivery_state", "queued") or "queued").strip().lower()
+            if ds not in ("queued", "delivering"):
+                continue
+            cid = (job.caller_session_id or "").strip()
+            if cid:
+                grouped.setdefault(cid, []).append(job)
+
+        summaries: dict[str, dict[str, Any]] = {}
+        for cid, items in grouped.items():
+            items.sort(
+                key=lambda j: (
+                    getattr(j, "worker_finished_at", None) or j.updated_at or j.created_at,
+                    j.created_at,
+                    j.job_id,
+                )
+            )
+            blocked_reason = None
+            with contextlib.suppress(Exception):
+                blocked_reason = callback_inbox_dispatcher.callback_inbox_blocked_reason(cid)
+            summaries[cid] = {
+                "count": len(items),
+                "blocked_reason": blocked_reason,
+                "items": [
+                    {
+                        "job_id": j.job_id,
+                        "kind": j.kind,
+                        "mode": j.mode,
+                        "target_session_id": j.target_session_id,
+                        "target_name": j.target_name,
+                        "employee_id": j.employee_id,
+                        "task_summary": j.task_summary,
+                        "exit_code": j.exit_code,
+                        "delivery_state": (getattr(j, "delivery_state", "queued") or "queued"),
+                        "worker_finished_at": getattr(j, "worker_finished_at", None),
+                        "updated_at": j.updated_at,
+                    }
+                    for j in items
+                ],
+            }
+        return summaries
+    except Exception:  # noqa: BLE001
+        logger.debug("构建 CallbackInbox 只读摘要失败", exc_info=True)
+        return {}
 
 
 def _dispatch_states_by_caller(
@@ -422,7 +484,7 @@ async def collect_workbench_session_rows(
     }
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
-    computed_states: list[tuple[Any, str, bool, str, bool, str]] = []
+    computed_states: list[tuple[Any, str, bool, str, bool, str, bool, str | None]] = []
     running_worker_parents: set[str] = set()
     active_target_ids: set[str] = set()
     caller_last_reply_ms: dict[str, int] = {}
@@ -482,7 +544,23 @@ async def collect_workbench_session_rows(
             and status == "running"
         ):
             running_worker_parents.add(card.parent_session_id)
-        computed_states.append((card, name, alive, status, is_alive, str(lifecycle_state or "completed")))
+        abort_reason = (
+            ev.heal_summary
+            or (getattr(onto_rec, "summary", None) if onto_rec is not None else None)
+            or getattr(card, "digest_stuck", None)
+        ) if lifecycle_state == "error" else None
+        computed_states.append(
+            (
+                card,
+                name,
+                alive,
+                status,
+                is_alive,
+                str(lifecycle_state or "completed"),
+                bool(ev.tool_aborted),
+                str(abort_reason).strip() or None if abort_reason else None,
+            )
+        )
     if pending_onto_heals and can_write_ontology_store(onto_svc):
         with contextlib.suppress(Exception):
             await asyncio.to_thread(onto_svc.store.batch_reconcile_states, pending_onto_heals)
@@ -513,9 +591,19 @@ async def collect_workbench_session_rows(
             caller_last_reply_ms=caller_last_reply_ms,
             now_ms=now_ms,
         )
+        callback_inbox_map = _callback_inbox_summaries_by_caller()
         effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
-        for card, name, alive, status, is_alive, lifecycle_state in computed_states:
+        for (
+            card,
+            name,
+            alive,
+            status,
+            is_alive,
+            lifecycle_state,
+            tool_aborted,
+            abort_reason,
+        ) in computed_states:
             employee_id = _resolve_employee_id(card)
             if filter_employee_id is not None and employee_id != filter_employee_id:
                 continue
@@ -548,7 +636,7 @@ async def collect_workbench_session_rows(
                 is_local_ops=is_local_ops,
             )
             card_data = asdict(card)
-            card_data.pop("last_kind", None)
+            last_kind_val = card_data.pop("last_kind", None)
             matched_post = posts_by_id.get(employee_id) if employee_id else None
             employee_title = (
                 matched_post.title if matched_post is not None else employee_id
@@ -557,6 +645,15 @@ async def collect_workbench_session_rows(
                 matched_post.color
                 if matched_post is not None
                 else (default_employee_color(employee_id) if employee_id else None)
+            )
+            employee_avatar = (
+                resolve_avatar_state(
+                    employee_id,
+                    matched_post.avatar if matched_post is not None else None,
+                    employees_base_dir=employees_dir(),
+                )
+                if employee_id
+                else None
             )
             row = {
                 **card_data,
@@ -568,9 +665,13 @@ async def collect_workbench_session_rows(
                     if status == "error"
                     else ("running" if status == "running" else "completed")
                 ),
+                "last_kind": last_kind_val,
+                "tool_aborted": tool_aborted,
+                "abort_reason": abort_reason,
                 "employee_id": employee_id,
                 "employee_title": employee_title,
                 "employee_color": employee_color,
+                "employee_avatar": employee_avatar,
                 "raw_title": card.title,
                 "custom_title": titles.get(card.session_id),
                 "in_tmux": alive,
@@ -579,6 +680,8 @@ async def collect_workbench_session_rows(
                 "local_ops": is_local_ops,
                 "has_running_worker": has_running_worker,
                 "callback_queued": callback_queued,
+                "callback_inbox": callback_inbox_map.get(card.session_id)
+                or {"count": 0, "blocked_reason": None, "items": []},
                 "need_decision": need_decision,
             }
             if card.session_id in titles:
@@ -862,72 +965,80 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     相同的一条路，回的形状也相同——页面接过去就是一次普通的「正在启动」。原会话不动。
 
     拒绝的几档与发送那条接口同义：编号不认 404；记录没了、问不出目录、接不上话、还没有
-    任何记录 409；那一家此刻挑不了 400。
+    任何记录或同一会话此刻正在交接中 409；那一家此刻挑不了 400。
 
     **两场各起一个带序号的名字**（原会话「甲 #1」、新会话「甲 #2」），不然左栏并排两场
     说同一件事的会话，人分不清。起名只写 frago 自己那份名字表，原会话的档案一个字不动。
     编号要等认领的那两家（codex / opencode），新会话的名字等认到编号再起。
     """
     try:
-        handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
-    except UnknownSessionFamily as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except (
-        session_send.SessionGone,
-        session_send.SessionNotResumable,
-        workbench_handoff.HandoffUnavailable,
-    ) as e:
+        workbench_handoff.acquire_handoff(sid)
+    except workbench_handoff.HandoffInProgress as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
-    employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
-    if employee_record is not None:
-        effective_skills = [
-            str(sk).strip() for sk in employee_record.skills if str(sk).strip()
-        ]
-        wrapped_text = _with_skills(
-            _with_employee_context(handoff.text, employee_record.member_post_id),
-            effective_skills,
-            "",
-        )
-        if wrapped_text != handoff.text:
-            handoff = replace(handoff, text=wrapped_text)
-
     try:
-        launch = await asyncio.to_thread(
-            workbench_new_session.start_with_id,
-            handoff.agent_type,
-            handoff.cwd,
-            handoff.text,
-            session_id=str(uuid.uuid4()),
+        try:
+            handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
+        except UnknownSessionFamily as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except (
+            session_send.SessionGone,
+            session_send.SessionNotResumable,
+            workbench_handoff.HandoffUnavailable,
+        ) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+        employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
+        if employee_record is not None:
+            effective_skills = [
+                str(sk).strip() for sk in employee_record.skills if str(sk).strip()
+            ]
+            wrapped_text = _with_skills(
+                _with_employee_context(handoff.text, employee_record.member_post_id),
+                effective_skills,
+                "",
+            )
+            if wrapped_text != handoff.text:
+                handoff = replace(handoff, text=wrapped_text)
+
+        try:
+            launch = await asyncio.to_thread(
+                workbench_new_session.start_with_id,
+                handoff.agent_type,
+                handoff.cwd,
+                handoff.text,
+                session_id=str(uuid.uuid4()),
+            )
+        except workbench_agents.AgentUnavailable as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if employee_record is not None:
+            await asyncio.to_thread(
+                workbench_new_session.bind_employee,
+                launch.handle,
+                employee_record.member_post_id,
+            )
+            if (
+                launch.session_id
+                and launch.session_id not in employee_record.active_session_ids
+            ):
+                employee_record.active_session_ids.append(launch.session_id)
+                await asyncio.to_thread(save_post, employee_record)
+            from frago.server.services.employee_usage import invalidate_employee_usage_cache
+
+            invalidate_employee_usage_cache(employee_record.member_post_id)
+
+        old_title, new_title = await asyncio.to_thread(
+            workbench_handoff.name_pair, sid, launch, handoff=handoff
         )
-    except workbench_agents.AgentUnavailable as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    if employee_record is not None:
-        await asyncio.to_thread(
-            workbench_new_session.bind_employee,
-            launch.handle,
-            employee_record.member_post_id,
-        )
-        if (
-            launch.session_id
-            and launch.session_id not in employee_record.active_session_ids
-        ):
-            employee_record.active_session_ids.append(launch.session_id)
-            await asyncio.to_thread(save_post, employee_record)
-        from frago.server.services.employee_usage import invalidate_employee_usage_cache
-
-        invalidate_employee_usage_cache(employee_record.member_post_id)
-
-    old_title, new_title = await asyncio.to_thread(
-        workbench_handoff.name_pair, sid, launch, handoff=handoff
-    )
-    return {
-        **_launch_payload(launch),
-        "text": handoff.text,
-        "old_title": old_title,
-        "new_title": new_title,
-    }
+        return {
+            **_launch_payload(launch),
+            "text": handoff.text,
+            "old_title": old_title,
+            "new_title": new_title,
+        }
+    finally:
+        workbench_handoff.release_handoff(sid)
 
 
 class UpdateTitleRequest(BaseModel):
@@ -2160,8 +2271,10 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     except TmuxSendError as e:
         # 驱动层确认投喂未落地（重试耗尽仍未写入会话记录）：立即向页面显式报错，
         # 绝不静默假装已发送或落入完成轮询空等超时。
+        logger.warning("workbench send TmuxSendError (sid=%s): %s", sid, e)
         raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
     except Exception as e:  # noqa: BLE001 — 驱动失败照实交代，NEVER 吞成"发出去了"
+        logger.warning("workbench send failed (sid=%s): %s", sid, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
 
     return {
@@ -2286,6 +2399,56 @@ async def drain_workbench_session_queue(sid: str) -> dict[str, Any]:
     }
 
 
+@router.get("/workbench/sessions/{sid}/callback-inbox")
+async def get_workbench_session_callback_inbox(sid: str) -> dict[str, Any]:
+    """只读返回会话当前 ``CallbackInbox`` 待消化回执摘要与门控阻塞状态。"""
+    try:
+        await asyncio.to_thread(record_reader.detect_family, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    summary = await asyncio.to_thread(lambda: _callback_inbox_summaries_by_caller().get(sid))
+    payload = summary or {"count": 0, "blocked_reason": None, "items": []}
+    return {"sid": sid, **payload}
+
+
+@router.post("/workbench/sessions/{sid}/callback-inbox/drain")
+async def drain_workbench_session_callback_inbox(
+    sid: str,
+    immediate: bool = False,
+) -> dict[str, Any]:
+    """在安全空闲窗口内原子认领并合并投递 ``CallbackInbox`` 中的待消化回执。
+
+    - ``immediate=False``（默认，供后台子任务完成唤醒）：遵守 ``CALLBACK_INBOX_DEBOUNCE_MS``（400ms）
+      空闲防抖窗口；窗口未满时在服务端挂单次可重置延迟定时器，令并发完成的多个子任务合批投递。
+    - ``immediate=True``（供人工显式触发）：跳过防抖等待（``debounce_ms=0``），在满足门禁时立即投递。
+    """
+    from frago.session import async_dispatch
+
+    effective_debounce_ms = 0 if immediate else async_dispatch.CALLBACK_INBOX_DEBOUNCE_MS
+    try:
+        outcome = await asyncio.to_thread(
+            callback_inbox_dispatcher.try_deliver_callback_inbox,
+            sid,
+            debounce_ms=effective_debounce_ms,
+        )
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    if not immediate and outcome.get("reason") == "debouncing":
+        remaining = int(outcome.get("remaining_debounce_ms") or effective_debounce_ms)
+        scheduled_ms = callback_inbox_dispatcher.schedule_debounced_callback_drain(
+            sid,
+            delay_ms=remaining,
+            debounce_ms=effective_debounce_ms,
+        )
+        outcome = {**outcome, "scheduled_retry_ms": scheduled_ms}
+    summary = await asyncio.to_thread(lambda: _callback_inbox_summaries_by_caller().get(sid))
+    return {
+        "sid": sid,
+        **(summary or {"count": 0, "blocked_reason": None, "items": []}),
+        **outcome,
+    }
+
+
 @router.get("/workbench/uploads/{folder}/{name}")
 async def read_uploaded_image(folder: str, name: str) -> FileResponse:
     """取回人随某句话发过的一张图，会话页据此把「附带图片」那几行路径摆成缩略图。
@@ -2337,6 +2500,12 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
     from frago.server.services import stage_orchestrator
     from frago.server.services import tmux_sessions_service as svc
 
+    def _bump_abort_epoch_safe(target_sid: str) -> None:
+        with contextlib.suppress(Exception):
+            from frago.session.service import get_default_session_service
+
+            get_default_session_service().bump_abort_epoch(target_sid)
+
     def _stop() -> dict[str, Any]:
         if request.stage_reset or sid == "__stage_reset__":
             target_sid = None if sid == "__stage_reset__" else sid
@@ -2344,6 +2513,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             stopped_any = bool(
                 stage_info["stopped_presenters"] or stage_info["stopped_sessions"]
             )
+            if stopped_any and target_sid:
+                _bump_abort_epoch_safe(target_sid)
             return {
                 "sid": sid,
                 "alive": stopped_any,
@@ -2374,6 +2545,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             outcome = coreagent_runner.stop(sid, by="页面上的人")
             core_dropped = int(outcome.get("dropped", 0))
             if outcome.get("running"):
+                if outcome.get("stopped"):
+                    _bump_abort_epoch_safe(sid)
                 return {
                     "sid": sid,
                     # `alive` 与另外几家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
@@ -2413,6 +2586,8 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
                 "error": None,
             }
         result = svc.close_sessions([link.name])[0]
+        if result["ok"]:
+            _bump_abort_epoch_safe(sid)
         return {
             "sid": sid,
             "alive": True,

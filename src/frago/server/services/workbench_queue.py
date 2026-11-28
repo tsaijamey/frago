@@ -583,6 +583,13 @@ def enqueue(
     """
     if not prompt.strip():
         raise QueueError("要入队的消息内容不能为空")
+    if (
+        "<frago-async-callback" in prompt
+        or "<frago-async-callbacks" in prompt
+        or "<frago-async-callback" in text
+        or "<frago-async-callbacks" in text
+    ):
+        raise QueueError("异步回执不得写入 Next Task 人类队列，请走 CallbackInbox")
     imgs = list(image_paths or [])
     docs = list(doc_paths or [])
     now_ms = int(time.time() * 1000)
@@ -794,30 +801,197 @@ def _has_ui_decision_card(text: str) -> bool:
 
 #: 独立的 ``frago ask`` / ``frago app ask`` 命令行：命令名之前只允许 shell 连接符与空白，
 #: 命令名之后只允许选项与空白。用来把「真的挂了张卡」和「命令回显里出现卡片 JSON」分开。
-_STANDALONE_ASK_CMD_RE = re.compile(
-    r"^\s*(?:[A-Za-z0-9_./-]*/)?frago(?:\.exe)?\s+(?:app\s+)?ask\b"
+_ASK_HELP_FLAG_RE = re.compile(r"(?:^|\s)(?:-h|--help|--version)\b")
+_ENV_ASSIGN_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_FRAGO_EXEC_TOKEN_RE = re.compile(r"^(?:[A-Za-z0-9_./-]*/)?frago(?:\.exe)?$")
+_SETUP_ONLY_CMDS = frozenset({"cd", "pushd", "popd", "export", "unset", "set", "true", ":"})
+#: 回显/校验/测试脚手架命令：与 ``frago ask`` 混排在一条复合命令里时，视为命令行测试回显而非真实挂卡。
+_NON_ASK_ECHO_OR_TEST_CMDS = frozenset(
+    {
+        "echo",
+        "printf",
+        "cat",
+        "head",
+        "tail",
+        "sed",
+        "awk",
+        "grep",
+        "rg",
+        "python",
+        "python3",
+        "node",
+        "pytest",
+        "bash",
+        "sh",
+        "zsh",
+        "ls",
+        "ps",
+    }
 )
-#: 帮助类选项：带这些的调用只是在查用法，不会真的产出待人回答的卡片。
-_ASK_HELP_FLAG_RE = re.compile(r"(?:^|\s)(?:-h|--help)\b")
-#: shell 命令分隔符：出现即说明这不是一条独立命令，而是复合脚本的一部分。
-_SHELL_CHAIN_RE = re.compile(r"(?:&&|\|\||;|\||\n)")
+_UV_RUN_VALUE_FLAGS = frozenset(
+    {"--project", "--directory", "-C", "--python", "-p", "--with", "--with-editable", "--group", "--extra"}
+)
+
+
+def _split_top_level_shell_segments(cmd: str) -> list[str]:
+    """按顶层 ``&&`` / ``||`` / ``;`` / ``\\n`` 切分命令，保留引号内完整文本。若出现顶层管道 ``|`` 返回空列表。"""
+    segments: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and not in_single:
+            buf.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+        if not in_single and not in_double:
+            if cmd[i : i + 2] in ("&&", "||"):
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf.clear()
+                i += 2
+                continue
+            if ch in (";", "\n"):
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf.clear()
+                i += 1
+                continue
+            if ch == "|":
+                # 顶层管道（如 `frago ask ... | jq`）不是独立挂卡命令
+                return []
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+def _tokenize_shell_segment(segment: str) -> list[str]:
+    """轻量引号感知分词并剥离单token外层引号。"""
+    import shlex
+
+    try:
+        return shlex.split(segment)
+    except ValueError:
+        return [tok.strip("\"'") for tok in segment.split() if tok.strip("\"'")]
+
+
+def _is_setup_only_segment(tokens: list[str]) -> bool:
+    if not tokens:
+        return True
+    if all(_ENV_ASSIGN_TOKEN_RE.match(tok) for tok in tokens):
+        return True
+    idx = 0
+    while idx < len(tokens) and _ENV_ASSIGN_TOKEN_RE.match(tokens[idx]):
+        idx += 1
+    if idx >= len(tokens):
+        return True
+    return tokens[idx] in _SETUP_ONLY_CMDS
+
+
+def _unwrap_segment_command(tokens: list[str]) -> list[str]:
+    """剥离前导环境变量赋值、`env` 与 `uv run [flags]` 包装，返回有效子命令 token 序列。"""
+    idx = 0
+    while idx < len(tokens) and (
+        _ENV_ASSIGN_TOKEN_RE.match(tokens[idx]) or tokens[idx] == "env"
+    ):
+        idx += 1
+    if idx >= len(tokens):
+        return []
+    if tokens[idx] == "uv" and idx + 1 < len(tokens) and tokens[idx + 1] == "run":
+        idx += 2
+        while idx < len(tokens) and tokens[idx].startswith("-"):
+            flag = tokens[idx]
+            idx += 1
+            if flag in _UV_RUN_VALUE_FLAGS and idx < len(tokens) and not tokens[idx].startswith("-"):
+                idx += 1
+        if idx >= len(tokens):
+            return []
+    return tokens[idx:]
+
+
+def _executable_basename(token: str) -> str:
+    base = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    return base
+
+
+def _segment_is_echo_or_test_wrapper(tokens: list[str]) -> bool:
+    unwrapped = _unwrap_segment_command(tokens)
+    if not unwrapped:
+        return False
+    return _executable_basename(unwrapped[0]) in _NON_ASK_ECHO_OR_TEST_CMDS
+
+
+def _segment_is_standalone_ask(tokens: list[str]) -> bool:
+    unwrapped = _unwrap_segment_command(tokens)
+    if not unwrapped:
+        return False
+    exe = unwrapped[0]
+    if not _FRAGO_EXEC_TOKEN_RE.match(exe):
+        return False
+    rest = unwrapped[1:]
+    if not rest:
+        return False
+    if any(tok in ("-h", "--help", "--version") for tok in rest):
+        return False
+    if rest[0] == "ask":
+        return True
+    return len(rest) >= 2 and rest[0] == "app" and rest[1] == "ask"
 
 
 def _is_standalone_ask_command(command: str) -> bool:
-    """判断一段命令行是不是**独立**的 ``frago ask`` / ``frago app ask`` 调用。
+    """判断一段命令行是不是真实的 ``frago ask`` / ``frago app ask`` 挂卡调用。
 
-    只有独立调用才可能产出「等着人点选」的卡片。复合脚本（``a && b``、``a; b``）里的
-    ``frago ask`` 往往是校验用例、演示或探测，它打印出来的卡片 JSON 是**命令输出内容**，
-    不是挂给人类的卡。带 ``-h`` / ``--help`` 的调用同理。
+    按顶层 ``&&`` / ``||`` / ``;`` / ``\\n`` 安全切分（忽略引号内运算符、拒绝顶层管道 ``|``）：
+    - 允许前导目录切换/环境变量设置（如 ``cd /repo && frago app ask ...``、
+      ``VAR=1 "frago" app ask ... || true``）与合法前置交付命令
+      （如 ``frago agent attach --files '["/tmp/a.md"]' && frago app ask ...``）；
+    - 若任一段命中 ``echo`` / ``printf`` / ``cat`` / ``grep`` / ``rg`` / ``python`` / ``node`` 等
+      回显或测试校验脚手架，视为命令回显，返回 ``False``；
+    - 其余情形只要任一可执行段为合法 ``frago [app] ask``（且无 ``-h``/``--help``/``--version``），返回 ``True``。
     """
     cmd = (command or "").strip()
     if not cmd:
         return False
-    if _ASK_HELP_FLAG_RE.search(cmd):
+    segments = _split_top_level_shell_segments(cmd)
+    if not segments:
         return False
-    # 去掉命令末尾用于抑制报错的重定向（如 `2>&1 || true`）后再判连接符
-    head = _SHELL_CHAIN_RE.split(cmd, maxsplit=1)[0]
-    return bool(_STANDALONE_ASK_CMD_RE.match(head))
+    found_ask = False
+    for seg in segments:
+        tokens = _tokenize_shell_segment(seg)
+        if _is_setup_only_segment(tokens):
+            continue
+        if _segment_is_echo_or_test_wrapper(tokens):
+            return False
+        if _segment_is_standalone_ask(tokens):
+            found_ask = True
+    return found_ask
 
 
 def _paired_tool_call(
@@ -990,8 +1164,10 @@ def _tool_result_is_live_card(
 ) -> bool:
     """``tool.result`` 里的卡片 JSON 是否为「真的挂给人类」的那张。
 
-    先按配对 ``tool.call`` 判：独立 ``ask`` 调用 → 真卡片；明确配到非 ask 调用 → 回显，不算。
-    配不上时（未给 ``records``、老记录缺 ``tool.call``、或跨窗口截断）退回正文形状判定。
+    先按配对 ``tool.call`` 判：合法 ``ask`` 调用（含 ``frago agent attach ... && frago app ask ...``）
+    → 只要正文里能解出合法 ``decision-card`` JSON 即判为真卡片（容忍前置命令的常规 stdout 行）；
+    明确配到非 ask 或回显/测试脚本调用 → 判为回显，不算。
+    配不上时（未给 ``records``、老记录缺 ``tool.call``、或跨窗口截断）退回裸组件正文形状判定。
     """
     if records is not None:
         index = next((i for i, r in enumerate(records) if r is rec), None)
@@ -1000,7 +1176,9 @@ def _tool_result_is_live_card(
             if call is not None:
                 verdict = _tool_call_ask_verdict(call)
                 if verdict is not None:
-                    return verdict
+                    if not verdict:
+                        return False
+                    return _has_ui_decision_card(body)
     return _body_is_bare_component_output(body)
 
 

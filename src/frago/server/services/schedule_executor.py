@@ -890,6 +890,20 @@ def _wait_for_employee_children(
     return True, None
 
 
+@dataclass(frozen=True)
+class _EmployeeExecutionHandle:
+    """显式解耦「对外唯一本体会话编号」与「底层终端会话句柄名」。
+
+    - ``canonical_session_id``：面向会话本体账本（``session-ontology-store.json``）、
+      调度历史与会话清单的唯一规范会话编号（如 claude 经 ``uuid5`` 换算后的真实编号）。
+    - ``tmux_session_name``：底层 tmux 会话句柄名（如 ``frago-agent-{raw_sid}``），仅用于
+      超时强杀与终端进程回收；内置内核无独立 tmux 句柄名覆盖时为 ``None``。
+    """
+
+    canonical_session_id: str
+    tmux_session_name: str | None = None
+
+
 def _cleanup_employee_timeout(
     session_id: str,
     agent_kernel: str,
@@ -897,9 +911,11 @@ def _cleanup_employee_timeout(
     onto_svc: Any,
     *,
     summary: str,
+    tmux_session_name: str | None = None,
 ) -> None:
     """超时强杀连带收尾：清理员工会话进程、并作废/强杀所有未结子派发，防止假绿灯与僵尸子会话。"""
     from frago.agent_driver.driver import runs_on_kernel
+    from frago.agent_driver.tmux_session import tmux_name_for
     from frago.session import async_dispatch
 
     with contextlib.suppress(Exception):
@@ -907,10 +923,11 @@ def _cleanup_employee_timeout(
             from frago.server.services import coreagent_runner
 
             coreagent_runner.stop(session_id, by="schedule_timeout")
+    target_tmux = (tmux_session_name or "").strip() or tmux_name_for(session_id)
     with contextlib.suppress(Exception):
         from frago.server.services import tmux_sessions_service
 
-        tmux_sessions_service.close_sessions([f"frago-agent-{session_id}"])
+        tmux_sessions_service.close_sessions([target_tmux])
 
     caller_ids = [session_id]
     with contextlib.suppress(Exception):
@@ -1020,8 +1037,10 @@ def execute_employee(
     onto_svc = _safe_session_service()
 
     from frago.agent_driver import SessionLauncher
-    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+    from frago.agent_driver.driver import resolve_canonical_session_id, runs_on_kernel
+    from frago.agent_driver.tmux_session import tmux_name_for
 
+    exec_handle: _EmployeeExecutionHandle | None = None
     real_sid = ""
     turn_status = "error"
     answer_text = ""
@@ -1044,6 +1063,10 @@ def execute_employee(
             from frago.agent_driver import kernel_backend
 
             real_sid = kernel_backend.new_session_id()
+            exec_handle = _EmployeeExecutionHandle(
+                canonical_session_id=real_sid,
+                tmux_session_name=None,
+            )
             base_env["FRAGO_SESSION_ID"] = real_sid
             if onto_svc is not None:
                 with contextlib.suppress(Exception):
@@ -1068,26 +1091,41 @@ def execute_employee(
             turn_status = str(turn.status or "ok")
             answer_text = str(turn.text or "").strip()
         else:
-            sid = str(uuid.uuid4())
-            real_sid = sid
+            raw_sid = str(uuid.uuid4())
+            # 启动前即显式分离「底层 tmux 句柄名」与「对外唯一规范会话编号」，确保异常/超时
+            # 清理都能精准命中真实终端句柄（frago-agent-{raw_sid}），绝不与换算后编号混用。
+            canonical_sid = resolve_canonical_session_id(
+                agent_kernel, raw_sid, native_session_id=False
+            )
+            exec_handle = _EmployeeExecutionHandle(
+                canonical_session_id=canonical_sid,
+                tmux_session_name=tmux_name_for(raw_sid),
+            )
+            real_sid = exec_handle.canonical_session_id
             rem = max(0.1, deadline - time.monotonic())
             res = SessionLauncher().run(
                 prompt,
                 agent_type=agent_kernel,
-                session_id=sid,
+                session_id=raw_sid,
                 native_session_id=False,
                 cwd=workdir,
                 env=base_env,
                 timeout_s=rem,
+                persist_turn=True,
+                source="schedule-employee",
             )
-            with contextlib.suppress(Exception):
-                from frago.agent_driver.transcript import write_turn
-
-                write_turn(sid, agent_kernel, workdir, prompt, res, source="schedule-employee")
-            with contextlib.suppress(Exception):
-                resolved = listed_session_id(agent_kernel, sid, native_session_id=False)
-                if resolved:
-                    real_sid = resolved
+            resolved_canonical = (
+                getattr(res, "canonical_session_id", None)
+                or resolve_canonical_session_id(
+                    agent_kernel, raw_sid, native_session_id=False
+                )
+            )
+            resolved_tmux = getattr(res, "tmux_name", None) or exec_handle.tmux_session_name
+            exec_handle = _EmployeeExecutionHandle(
+                canonical_session_id=resolved_canonical,
+                tmux_session_name=resolved_tmux,
+            )
+            real_sid = exec_handle.canonical_session_id
             if onto_svc is not None:
                 with contextlib.suppress(Exception):
                     onto_svc.launch_agent_session(
@@ -1105,7 +1143,14 @@ def execute_employee(
     except Exception as exc:  # noqa: BLE001
         err_msg = f"数字员工 @{employee_id} 执行异常：{exc}"[:NOTIFY_EXCERPT_LIMIT]
         if real_sid:
-            _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+            _cleanup_employee_timeout(
+                real_sid,
+                agent_kernel,
+                effective_timeout,
+                onto_svc,
+                summary=err_msg,
+                tmux_session_name=exec_handle.tmux_session_name if exec_handle else None,
+            )
         return RunOutcome(
             ok=False,
             kind="employee",
@@ -1119,7 +1164,14 @@ def execute_employee(
 
     if turn_status == "timeout":
         err_msg = f"员工定时任务超时（{effective_timeout}s 未完成）"
-        _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+        _cleanup_employee_timeout(
+            real_sid,
+            agent_kernel,
+            effective_timeout,
+            onto_svc,
+            summary=err_msg,
+            tmux_session_name=exec_handle.tmux_session_name if exec_handle else None,
+        )
         return RunOutcome(
             ok=False,
             kind="employee",
@@ -1149,7 +1201,14 @@ def execute_employee(
     settled, cascaded_text = _wait_for_employee_children(real_sid, deadline=deadline)
     if not settled:
         err_msg = f"员工定时任务超时（{effective_timeout}s 内未完成子派发收口）"
-        _cleanup_employee_timeout(real_sid, agent_kernel, effective_timeout, onto_svc, summary=err_msg)
+        _cleanup_employee_timeout(
+            real_sid,
+            agent_kernel,
+            effective_timeout,
+            onto_svc,
+            summary=err_msg,
+            tmux_session_name=exec_handle.tmux_session_name if exec_handle else None,
+        )
         return RunOutcome(
             ok=False,
             kind="employee",

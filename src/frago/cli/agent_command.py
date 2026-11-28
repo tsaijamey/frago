@@ -534,6 +534,8 @@ def _run_tmux_driver(
             native_session_id=native_session_id,
             timeout_s=float(timeout) if timeout > 0 else None,
             tmux_target=tmux_target,
+            persist_turn=not no_persist,
+            source=source,
         )
     except KeyError:
         note = f"Error: no driver registered for agent-type {agent_type!r}"
@@ -605,20 +607,20 @@ def _run_tmux_driver(
         native_session_id=native_session_id,
     )
 
-    # Normalize this turn into the session subsystem (Web UI / session list).
-    if not no_persist:
-        with contextlib.suppress(Exception):
-            from frago.agent_driver.transcript import write_turn
-
-            write_turn(sid, agent_type, cwd, prompt_text, result, source=source)
-
+    # 转录持久化已统一收口至 SessionLauncher.run(persist_turn=not no_persist, source=source)，
+    # 此处直接读取唯一规范会话编号（canonical session id）对齐本体账本。
     resolved_sid = onto_sid
     with contextlib.suppress(Exception):
-        from frago.agent_driver.driver import listed_session_id
+        from frago.agent_driver.driver import resolve_canonical_session_id
 
-        listed = listed_session_id(agent_type, sid, native_session_id=native_session_id)
-        if listed:
-            resolved_sid = listed
+        canonical = (
+            getattr(result, "canonical_session_id", None)
+            or resolve_canonical_session_id(
+                agent_type, sid, native_session_id=native_session_id
+            )
+        )
+        if canonical:
+            resolved_sid = canonical
 
     if resolved_sid != onto_sid:
         _closeout_cli_turn(
@@ -861,7 +863,7 @@ def _run_worker_turn_sync(
     env_list: list[str] | None = None,
 ) -> tuple[str, str, str]:
     """供后台异步派发 watcher 调用的同步单轮 Worker 执行器，返回 `(real_session_id, status, text)`。"""
-    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+    from frago.agent_driver.driver import resolve_canonical_session_id, runs_on_kernel
 
     run_env: dict[str, str] = {}
     for item in env_list or []:
@@ -923,6 +925,9 @@ def _run_worker_turn_sync(
     register_transient_worker(
         name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd
     )
+    persist_source = (
+        run_env.get("FRAGO_SESSION_ORIGIN", "").strip().lower() or "terminal"
+    )
     try:
         res = SessionLauncher().run(
             prompt_text,
@@ -933,20 +938,18 @@ def _run_worker_turn_sync(
             env=run_env,
             model=model,
             timeout_s=effective_timeout,
+            persist_turn=True,
+            source=persist_source,
         )
     finally:
         deregister_transient_worker(sid)
 
-    with contextlib.suppress(Exception):
-        from frago.agent_driver.transcript import write_turn
-
-        write_turn(sid, agent_type, cwd, prompt_text, res, source="terminal")
-
-    real_sid = sid
-    with contextlib.suppress(Exception):
-        resolved = listed_session_id(agent_type, sid, native_session_id=native_flag)
-        if resolved:
-            real_sid = resolved
+    real_sid = (
+        getattr(res, "canonical_session_id", None)
+        or resolve_canonical_session_id(
+            agent_type, sid, native_session_id=native_flag
+        )
+    )
     return real_sid, str(res.status or "ok"), str(res.text or "").strip()
 
 

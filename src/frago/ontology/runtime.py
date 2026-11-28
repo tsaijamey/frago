@@ -156,8 +156,14 @@ SESSION_ORIGIN_ALIASES: Mapping[str, str] = {
     "workbench": "web",
     "subagent": "worker",
     "subtask": "worker",
+    "employee-invoke": "worker",
+    "employee_invoke": "worker",
     "cron": "schedule",
     "timer": "schedule",
+    "schedule-employee": "schedule",
+    "schedule_employee": "schedule",
+    "employee-schedule": "schedule",
+    "employee_schedule": "schedule",
     "feishu": "channel",
     "slack": "channel",
     "email": "channel",
@@ -1856,9 +1862,27 @@ def build_record_callback_delivery_outcome_contract(
 ) -> OntologicalActionContract:
     """Build the `record_callback_delivery_outcome` contract with Ring 3 state transition checks."""
     from frago.ontology.projectors import (
+        CALLBACK_DELIVERY_FAILURE_KINDS,
         CALLBACK_DELIVERY_STATES,
         is_legal_callback_delivery_transition,
     )
+
+    def _valid_failure_kind(args: Mapping[str, Any]) -> bool:
+        raw = args.get("failure_kind")
+        if raw is None:
+            return True
+        norm = str(raw).strip().lower()
+        return not norm or norm in CALLBACK_DELIVERY_FAILURE_KINDS
+
+    def _controlled_recovery_guard(args: Mapping[str, Any]) -> bool:
+        state = _persisted_delivery_state(args)
+        if state != "failed":
+            return True
+        if args.get("to_state") != "queued":
+            return False
+        reason = str(args.get("reason") or "").strip()
+        failure_kind = str(args.get("failure_kind") or "").strip().lower()
+        return bool(reason) and failure_kind != "permanent"
 
     insp = introspector if introspector is not None else OntologyIntrospector()
     return insp.build_action_contract(
@@ -1876,18 +1900,26 @@ def build_record_callback_delivery_outcome_contract(
                 ),
             ),
             ConditionCheck(
-                description="(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed.",
+                description="(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed, or controlled recovery failed→queued.",
                 predicate=lambda args: is_legal_callback_delivery_transition(
                     str(args.get("from_state", "")), str(args.get("to_state", ""))
                 ),
             ),
             ConditionCheck(
-                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match from_state and not be terminal (delivered/failed).",
+                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match from_state and MUST NOT be terminal (delivered).",
                 predicate=lambda args: (
                     (state := _persisted_delivery_state(args)) is not None
-                    and state not in ("delivered", "failed")
+                    and state != "delivered"
                     and state == args.get("from_state")
                 ),
+            ),
+            ConditionCheck(
+                description="Controlled recovery failed→queued REQUIRES a non-empty reason and failure_kind != 'permanent'.",
+                predicate=_controlled_recovery_guard,
+            ),
+            ConditionCheck(
+                description="When failure_kind is provided (non-empty), it MUST be one of {'transient', 'permanent'}.",
+                predicate=_valid_failure_kind,
             ),
         ),
         invariants=(
@@ -1961,6 +1993,83 @@ def build_finalize_dispatch_job_contract(
             ConditionCheck(
                 description="The dispatch job status matches job_status.",
                 predicate=lambda ctx: ctx.get("result") == ctx.get("job_status"),
+            ),
+        ),
+    )
+
+
+def build_claim_callback_inbox_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `claim_callback_inbox` contract enforcing physical separation, three-tier priority, and atomic claim."""
+    from frago.ontology.projectors import CALLBACK_DELIVERY_CHANNELS
+
+    insp = introspector if introspector is not None else OntologyIntrospector()
+
+    def _valid_job_ids(args: Mapping[str, Any]) -> bool:
+        raw_ids = args.get("job_ids")
+        if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
+            return False
+        cleaned = [str(j).strip() for j in raw_ids]
+        return all(bool(j) for j in cleaned) and len(set(cleaned)) == len(cleaned)
+
+    def _all_queued(args: Mapping[str, Any]) -> bool:
+        if not _valid_job_ids(args):
+            return False
+        prior_states = args.get("prior_states")
+        if not isinstance(prior_states, Mapping):
+            return False
+        for jid in args["job_ids"]:
+            if str(prior_states.get(str(jid).strip(), "")).strip() != "queued":
+                return False
+        return True
+
+    def _idle_priority_clear(args: Mapping[str, Any]) -> bool:
+        if args.get("delivery_channel") != "idle_batch":
+            return True
+        if args.get("has_human_next_task") is not False:
+            return False
+        if args.get("blocked_by_card") is not False:
+            return False
+        return args.get("is_session_busy") is False
+
+    return insp.build_action_contract(
+        "claim_callback_inbox",
+        preconditions=(
+            ConditionCheck(
+                description="caller_session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("caller_session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="delivery_channel MUST be one of {'idle_batch', 'hook_piggyback'}.",
+                predicate=lambda args: args.get("delivery_channel") in CALLBACK_DELIVERY_CHANNELS,
+            ),
+            ConditionCheck(
+                description="job_ids MUST be a non-empty list of unique non-empty job_id strings.",
+                predicate=_valid_job_ids,
+            ),
+            ConditionCheck(
+                description="Every claimed job_id MUST currently have persisted prior_delivery_state == 'queued'.",
+                predicate=_all_queued,
+            ),
+            ConditionCheck(
+                description="idle_batch MUST satisfy Tier 1 > Tier 2 > Tier 3 gates: has_human_next_task is False, blocked_by_card is False, and is_session_busy is False.",
+                predicate=_idle_priority_clear,
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="CallbackDeliveryProcess is physically separated from Next Task and MUST NEVER be enqueued to workbench-queue.json.",
+                predicate=lambda args: not bool(args.get("enqueue_to_next_task")),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Returned claimed job_ids match the requested job_ids transitioned to delivering.",
+                predicate=lambda ctx: (
+                    isinstance(ctx.get("result"), (list, tuple))
+                    and list(ctx["result"]) == [str(j).strip() for j in ctx.get("job_ids", ())]
+                ),
             ),
         ),
     )

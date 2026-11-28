@@ -59,6 +59,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from typing import Any
@@ -434,6 +435,65 @@ def _record_launch_relation(payload: dict[str, Any]) -> None:
     )
 
 
+_STALE_CALLBACK_POINTER_RE = re.compile(
+    r"(?m)^[^\n]*`session callback-claim --for-hook`[^\n]*\n?"
+)
+
+
+def _hitchhike_callback_inbox(
+    engine_payload: dict[str, Any] | None,
+    engine_response: dict[str, Any],
+) -> dict[str, Any]:
+    """在 agy PreInvocation 首包门控里原子认领 ``CallbackInbox`` 就绪回执并合并进 ``additionalContext``。"""
+    if not engine_payload:
+        return engine_response
+    resp = dict(engine_response or {})
+    specific = dict(resp.get("hookSpecificOutput") or {})
+    existing = specific.get("additionalContext")
+    if isinstance(existing, str):
+        existing = _STALE_CALLBACK_POINTER_RE.sub("", existing).strip()
+    else:
+        existing = ""
+
+    sid = engine_payload.get("session_id")
+    if isinstance(sid, str) and sid.strip() and "<frago-async-callbacks" not in existing:
+        try:
+            from frago.session import async_dispatch
+
+            clean_sid = sid.strip()
+            if async_dispatch.list_callback_inbox_jobs(clean_sid, states=("queued", "delivering")):
+                claimed = async_dispatch.claim_ready_callbacks_for_session(
+                    clean_sid,
+                    delivery_channel="hook_piggyback",
+                    debounce_ms=0,
+                )
+                if claimed:
+                    try:
+                        batch = async_dispatch.format_callback_batch_prompt(
+                            claimed,
+                            delivery="turn-submit-hitchhike",
+                            max_chars=async_dispatch.CALLBACK_HOOK_MAX_CHARS,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        async_dispatch.finalize_claimed_callbacks(
+                            clean_sid, claimed, success=False, reason=str(exc)
+                        )
+                    else:
+                        if batch:
+                            existing = f"{batch}\n\n{existing}" if existing else batch
+                        async_dispatch.finalize_claimed_callbacks(clean_sid, claimed, success=True)
+        except Exception:  # noqa: BLE001
+            logger.debug("agy-hook: CallbackInbox hitchhike 失败", exc_info=True)
+
+    if existing:
+        specific["additionalContext"] = existing
+        resp["hookSpecificOutput"] = specific
+    elif "additionalContext" in specific:
+        specific.pop("additionalContext", None)
+        resp["hookSpecificOutput"] = specific
+    return resp
+
+
 def run(event: str) -> int:
     """读一条 agy 事件、翻过去、问引擎、翻回来、打在 stdout。永远返回 0。"""
     raw = sys.stdin.read()
@@ -458,6 +518,8 @@ def run(event: str) -> int:
     # 这里也得走它，不能直接吐 {}。
     engine_payload = translate_input(payload, event) if payload else None
     engine_response = _call_engine(engine_payload) if engine_payload else {}
+    if event == "PreInvocation" and engine_payload:
+        engine_response = _hitchhike_callback_inbox(engine_payload, engine_response)
     click.echo(json.dumps(translate_output(event, engine_response), ensure_ascii=False))
     return 0
 

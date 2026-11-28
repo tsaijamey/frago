@@ -118,6 +118,10 @@ class TestSessionList:
             "agent_paths",
             "status",
             "lifecycle_state",
+            # 只读派生字段：末帧事件类型、工具中途异常中止标志及中止原因（不新增本体终态）。
+            "last_kind",
+            "tool_aborted",
+            "abort_reason",
             "digest_done",
             "digest_stuck",
             # 这场是人开的还是 frago 派出去的 worker、以及谁派的。左栏据此把清单摆成
@@ -141,9 +145,13 @@ class TestSessionList:
             # 编号是机器认的，名字才是人认的；只给编号，界面上就只剩一串字母。
             "employee_title",
             "employee_color",
+            # 岗位的头像解析态（默认确定性 Micah / 内置选定 / 受控上传图及降级标记），
+            # 左栏据此渲染员工头像并与员工页保持一致。
+            "employee_avatar",
             # 异步派发聚合态：是否有运行中子 Worker、是否有排队/投递中回调、是否真有待拍板事项。
             "has_running_worker",
             "callback_queued",
+            "callback_inbox",
             "need_decision",
         }
 

@@ -722,10 +722,23 @@ def _resolve_session_via_record_reader(
     mapped_agent = family_to_agent.get(str(family), AgentType.CLAUDE)
 
     if card is not None:
-        if card.status == "running":
-            mapped_status = SessionStatus.RUNNING
+        onto_lifecycle = str(getattr(card, "lifecycle_state", "") or "").strip().lower()
+        lifecycle_to_status = {
+            "error": SessionStatus.ERROR,
+            "running": SessionStatus.RUNNING,
+            "awaiting_input": SessionStatus.AWAITING_INPUT,
+            "queued": SessionStatus.QUEUED,
+            "cancelled": SessionStatus.CANCELLED,
+            "completed": SessionStatus.COMPLETED,
+        }
+        if onto_lifecycle in lifecycle_to_status:
+            mapped_status = lifecycle_to_status[onto_lifecycle]
         elif card.status == "error":
             mapped_status = SessionStatus.ERROR
+        elif card.status == "running":
+            mapped_status = SessionStatus.RUNNING
+        elif card.status == "awaiting_input":
+            mapped_status = SessionStatus.AWAITING_INPUT
         else:
             mapped_status = SessionStatus.COMPLETED
         started_dt = (
@@ -1305,3 +1318,149 @@ def read_cmd(
             f"{turn_flag} --offset {page.next_offset} --limit {page.limit}",
             err=True,
         )
+
+
+def _read_hook_stdin_session_id() -> str:
+    """在 stdin 非交互且有 JSON 载荷时尝试提取 hook 事件的 ``session_id`` / ``conversationId``。"""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return ""
+        raw = sys.stdin.read()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not raw or not raw.strip():
+        return ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("session_id", "sessionId", "conversationId"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+@session_group.command("callback-claim", cls=AgentFriendlyCommand)
+@click.option(
+    "--for-hook",
+    is_flag=True,
+    help="TurnSubmit hook mode: silent exit 0 when no callbacks are queued or session is unresolved",
+)
+@click.option(
+    "--max-chars",
+    type=int,
+    default=5500,
+    show_default=True,
+    help="Maximum characters to emit in the callback envelope (structured degradation above limit)",
+)
+@click.option(
+    "--session-id",
+    default=None,
+    help="Explicit caller session id (defaults to FRAGO_SESSION_ID / self / hook stdin JSON)",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output claim summary and formatted text in JSON format",
+)
+def callback_claim_cmd(
+    for_hook: bool,
+    max_chars: int,
+    session_id: str | None,
+    json_output: bool,
+):
+    """Atomically claim ready CallbackInbox items for the current session on TurnSubmit.
+
+    Transitions queued callbacks ``queued -> delivering -> delivered`` under a per-caller
+    cross-process flock, enforces the ``<= 5500`` char budget with structured degradation,
+    and rolls back to ``queued`` if emission fails.
+    """
+    import os
+
+    from frago.session import async_dispatch
+    from frago.session.self_id import resolve_self
+
+    from .agent_friendly import BusinessError
+
+    target_sid = (session_id or "").strip() or (os.environ.get("FRAGO_SESSION_ID") or "").strip()
+    if not target_sid:
+        resolved = resolve_self()
+        if resolved and resolved.session_id:
+            target_sid = resolved.session_id
+    if not target_sid:
+        target_sid = _read_hook_stdin_session_id()
+
+    if not target_sid:
+        if for_hook:
+            return
+        raise BusinessError(
+            "Cannot resolve caller session id for callback-claim",
+            "frago session callback-claim --session-id <sid>",
+        )
+
+    pending = async_dispatch.list_callback_inbox_jobs(target_sid, states=("queued", "delivering"))
+    if not pending:
+        if json_output and not for_hook:
+            click.echo(
+                json.dumps(
+                    {"session_id": target_sid, "claimed": 0, "job_ids": [], "text": ""},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        return
+
+    claimed = async_dispatch.claim_ready_callbacks_for_session(
+        target_sid,
+        delivery_channel="hook_piggyback",
+        debounce_ms=0,
+    )
+    if not claimed:
+        if json_output and not for_hook:
+            click.echo(
+                json.dumps(
+                    {"session_id": target_sid, "claimed": 0, "job_ids": [], "text": ""},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        return
+
+    budget = max(200, int(max_chars))
+    try:
+        formatted = async_dispatch.format_callback_batch_prompt(
+            claimed,
+            delivery="turn-submit-hitchhike",
+            max_chars=budget,
+        )
+        if json_output:
+            output_text = json.dumps(
+                {
+                    "session_id": target_sid,
+                    "claimed": len(claimed),
+                    "job_ids": [j.job_id for j in claimed],
+                    "text": formatted,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        else:
+            output_text = formatted
+        sys.stdout.write(output_text + "\n")
+        sys.stdout.flush()
+    except Exception as exc:  # noqa: BLE001
+        async_dispatch.finalize_claimed_callbacks(
+            target_sid,
+            claimed,
+            success=False,
+            reason=f"Hook stdout emission failed: {exc}",
+        )
+        if not for_hook:
+            raise
+        return
+
+    async_dispatch.finalize_claimed_callbacks(target_sid, claimed, success=True)

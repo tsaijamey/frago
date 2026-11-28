@@ -26,7 +26,7 @@
  * 变量（跟着 `[data-theme]` 走），强调色与状态色照搬工作台设计稿的色相。
  */
 
-import { createContext, memo, useContext, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -67,6 +67,7 @@ import { splitAttachedImages } from '@/utils/attachedImages';
 import {
   dedupeAsyncCallbacks,
   splitAllLeadingBlocks,
+  splitAsyncCallbackBlocks,
   type AsyncCallbackBlockItem,
 } from '@/utils/asyncCallbackBlocks';
 import { type EmployeeBlockItem } from '@/utils/employeeBlocks';
@@ -1004,9 +1005,17 @@ function AsyncCallbackCard({
           >
             <Rich text={callback.resultBody} />
           </div>
+          {callback.batchNotice ? (
+            <div
+              data-testid="async-callback-batch-notice"
+              className="border-t border-border-color px-[14px] py-1.5 text-[11px] text-text-muted"
+            >
+              {callback.batchNotice}
+            </div>
+          ) : null}
           {reminders?.length ? (
             <div className="px-[14px] pb-2">
-              <Reminders items={reminders} />
+              <Reminders items={reminders} record={record} />
             </div>
           ) : null}
         </div>
@@ -1175,7 +1184,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
         </p>
       ) : null}
       <AttachedImages images={attached} />
-      {reminders.length ? <Reminders items={reminders} /> : null}
+      {reminders.length ? <Reminders items={reminders} record={record} /> : null}
     </TextShell>
   );
 
@@ -1230,7 +1239,7 @@ const INPUT_MODE_LABEL_KEY: Record<string, string> = {
  * 它跟人写的那段话之间在档案里没有任何分隔，照原样铺开会读成人自己说的——那些"记得
  * 用 uv run"之类的句子，人从来没打过。所以剥出来折起来，要看再点开。
  */
-function Reminders({ items }: { items: string[] }) {
+function Reminders({ items, record }: { items: string[]; record?: WorkbenchRecord }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
@@ -1250,14 +1259,29 @@ function Reminders({ items }: { items: string[] }) {
       </button>
       {open ? (
         <div className="mt-1.5 space-y-1.5">
-          {items.map((text, i) => (
-            <div
-              key={i}
-              className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
-            >
-              {text}
-            </div>
-          ))}
+          {items.map((text, i) => {
+            const parsed = splitAsyncCallbackBlocks(text);
+            if (parsed.callbacks.length > 0 && record) {
+              return (
+                <div key={i} className="min-w-0 space-y-1.5">
+                  <AsyncCallbackCards record={record} callbacks={parsed.callbacks} />
+                  {parsed.text.trim() ? (
+                    <div className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted">
+                      {parsed.text}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={i}
+                className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
+              >
+                {text}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -1499,7 +1523,11 @@ function AgentSay({ record, streaming = false }: { record: WorkbenchRecord; stre
           {rectifyMeta ? <RectifyStrip meta={rectifyMeta} /> : null}
           {uiComponent ? (
             uiComponent.ok ? (
-              <DecisionCard block={uiComponent.block} recordId={record.id} />
+              <DecisionCard
+                block={uiComponent.block}
+                recordId={record.id}
+                reveal={p.ui_component_reveal === true}
+              />
             ) : (
               <DecisionBroken
                 raw={brokenRaw}
@@ -1994,7 +2022,19 @@ function ContextInject({ record }: { record: WorkbenchRecord }) {
               ))}
             </ul>
           ) : (
-            <Mono text={str(p, 'body') || str(p, 'stdout')} />
+            (() => {
+              const rawBody = str(p, 'body') || str(p, 'stdout');
+              const parsed = splitAsyncCallbackBlocks(rawBody);
+              if (parsed.callbacks.length > 0) {
+                return (
+                  <div className="min-w-0 space-y-2">
+                    <AsyncCallbackCards record={record} callbacks={parsed.callbacks} />
+                    {parsed.text.trim() ? <Mono text={parsed.text} /> : null}
+                  </div>
+                );
+              }
+              return <Mono text={rawBody} />;
+            })()
           )}
         </div>
       ) : null}
@@ -2108,7 +2148,11 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
       ))}
       {uiComponent ? (
         uiComponent.ok ? (
-          <DecisionCard block={uiComponent.block} recordId={record.id} />
+          <DecisionCard
+            block={uiComponent.block}
+            recordId={record.id}
+            reveal={p.ui_component_reveal === true}
+          />
         ) : (
           <DecisionBroken
             raw={bodyText}
@@ -2680,11 +2724,17 @@ function ToolRunLine({
   row,
   sessionId,
   live,
+  aborted = false,
+  highlighted = false,
 }: {
   row: ToolRow;
   sessionId: string;
   /** 这一框是记录流的最后一段：结果没到说明它还在跑。不是的话只是没留下结果。 */
   live: boolean;
+  /** 该条工具调用为异常中断点（进程中途退场且无配对结果）。 */
+  aborted?: boolean;
+  /** 「定位中断点」触发的短暂红框聚焦闪烁。 */
+  highlighted?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -2698,6 +2748,8 @@ function ToolRunLine({
     num(result, 'duration_ms') ??
     (row.call && row.result && row.result.ts >= row.call.ts ? row.result.ts - row.call.ts : null);
   const failed = status === 'error';
+  const isAborted = aborted && !row.result;
+  const recordId = row.call?.id ?? row.result?.id;
   const resultBody = str(result, 'body');
   const uiComponent =
     row.result &&
@@ -2713,23 +2765,34 @@ function ToolRunLine({
       ? parseAllImageGridOutputs(resultBody)
       : [];
   return (
-    <li className="min-w-0">
+    <li
+      className="min-w-0"
+      data-record-id={recordId}
+      data-tool-aborted={isAborted ? 'true' : undefined}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         data-testid="tool-run-line"
+        data-tool-aborted={isAborted ? 'true' : undefined}
         /* 这一行住在 `tool-run` 那个 `overflow-hidden` 的框里：全局外扩 3px 的焦点环
            一落到行上就被框边切掉半圈。补一圈内收环（`--focus-ring-inset`），框边切不到它。 */
         className={`flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left hover:bg-bg-hover focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)] ${
-          failed ? ERR_BG : ''
+          isAborted
+            ? `tool-aborted${highlighted ? ' tool-abort-flash' : ''}`
+            : failed
+              ? ERR_BG
+              : ''
         }`}
       >
         <ChevronRight
           size={11}
           className={`shrink-0 text-text-dim transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         />
-        <span className="shrink-0 text-text-muted">{toolIcon(family)}</span>
+        <span className={`shrink-0 ${isAborted ? 'text-accent-error' : 'text-text-muted'}`}>
+          {toolIcon(family)}
+        </span>
         <span className="shrink-0 font-mono text-[12px] font-semibold text-text-primary">{name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">{preview}</span>
         {row.result ? (
@@ -2738,6 +2801,10 @@ function ToolRunLine({
             {failed || status === 'denied' || status === 'interrupted' ? (
               <StatusChip status={status} />
             ) : null}
+          </span>
+        ) : isAborted ? (
+          <span data-testid="tool-aborted-badge" className="tool-aborted-badge">
+            {t('workbench.abort.toolBadge')}
           </span>
         ) : (
           <span className="shrink-0 text-[11px] text-text-muted">
@@ -2755,7 +2822,11 @@ function ToolRunLine({
       {!open && uiComponent && row.result ? (
         <div className="min-w-0 px-3 pb-2">
           {uiComponent.ok ? (
-            <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+            <DecisionCard
+              block={uiComponent.block}
+              recordId={row.result.id}
+              reveal={result.ui_component_reveal === true}
+            />
           ) : (
             <DecisionBroken
               raw={resultBody}
@@ -2786,16 +2857,32 @@ export function ToolRun({
   extras,
   sessionId,
   live,
+  abortedCallId = null,
+  forceOpenSeq = 0,
+  highlightedCallId = null,
 }: {
   rows: ToolRow[];
   /** 夹在调用之间、被一并收进框里的其余记录。 */
   extras: WorkbenchRecord[];
   sessionId: string;
   live: boolean;
+  /** 当前会话工具异常中断的 tool.call record id（命中时默认展开并标红）。 */
+  abortedCallId?: string | null;
+  /** 外部「定位中断点」序号变化时强制展开包含中断工具的折箱。 */
+  forceOpenSeq?: number;
+  /** 短暂高亮闪烁的目标 tool.call record id。 */
+  highlightedCallId?: string | null;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const hasAborted = Boolean(
+    abortedCallId && rows.some((r) => r.call?.id === abortedCallId && !r.result)
+  );
+  const [open, setOpen] = useState(() => hasAborted);
   const [showExtras, setShowExtras] = useState(false);
+
+  useEffect(() => {
+    if (hasAborted) setOpen(true);
+  }, [hasAborted, forceOpenSeq]);
 
   let totalMs = 0;
   let errCount = 0;
@@ -2822,6 +2909,7 @@ export function ToolRun({
   return (
     <section
       data-testid="turn-tools-rail"
+      data-has-aborted={hasAborted ? 'true' : undefined}
       className="turn-tools min-w-0"
     >
       <button
@@ -2837,6 +2925,11 @@ export function ToolRun({
         />
         <span className="cnt">{t('workbench.record.toolRunCount', { count: rows.length })}</span>
         {totalMs > 0 ? <span className="dur">{formatDuration(totalMs)}</span> : null}
+        {hasAborted ? (
+          <span data-testid="tool-run-abort-pill" className="err-pill">
+            {t('workbench.abort.toolPill')}
+          </span>
+        ) : null}
         {errCount > 0 ? (
           <span className="err-pill">
             {errCount} {t('workbench.record.status.error')}
@@ -2853,14 +2946,19 @@ export function ToolRun({
       {open ? (
         <div data-testid="tool-run" className="turn-tools-list">
           <ul className="divide-y divide-border-color">
-            {rows.map((row, i) => (
-              <ToolRunLine
-                key={(row.call ?? row.result)?.id ?? i}
-                row={row}
-                sessionId={sessionId}
-                live={live}
-              />
-            ))}
+            {rows.map((row, i) => {
+              const callId = row.call?.id ?? null;
+              return (
+                <ToolRunLine
+                  key={(row.call ?? row.result)?.id ?? i}
+                  row={row}
+                  sessionId={sessionId}
+                  live={live}
+                  aborted={Boolean(abortedCallId && callId === abortedCallId && !row.result)}
+                  highlighted={Boolean(highlightedCallId && callId === highlightedCallId)}
+                />
+              );
+            })}
           </ul>
           {extras.length ? (
             <div className="border-t border-border-color">

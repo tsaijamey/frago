@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
+import EmployeeAvatar, { type AvatarStatusBadge } from '@/components/employees/EmployeeAvatar';
 import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { formatClock } from './RecordCard';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
@@ -233,7 +234,7 @@ export function sessionLifecycleOf(
     callbackQueued?: boolean;
     hasRunningWorker?: boolean;
   } = {}
-): { key: SessionLifecycleKey; label: string } {
+): { key: SessionLifecycleKey; label: string; aborted?: boolean } {
   const meta = session as SessionMetaExtra;
   const ontoState =
     typeof meta.lifecycle_state === 'string' ? meta.lifecycle_state.toLowerCase() : '';
@@ -248,22 +249,23 @@ export function sessionLifecycleOf(
     ((ontoState === 'running' || ontoState === 'queued') &&
       session.status !== 'done' &&
       session.status !== 'idle' &&
-      meta.status !== 'error')
+      meta.status !== 'error' &&
+      meta.tool_aborted !== true)
   ) {
     return { key: 'running', label: 'Running' };
   }
-  // 2. 明确以错误收场且当前未在跑 → Error
+  // 2a. 工具调用中途异常中断（未返回结果）→ 显式 error + aborted，严禁被 done/idle 掩盖
+  if (meta.tool_aborted === true) {
+    return { key: 'error', label: 'Aborted (incomplete)', aborted: true };
+  }
+  // 2b. 明确以错误收场且当前未在跑 → Error
   if (
     meta.status === 'error' ||
-    (ontoState === 'error' && session.status !== 'done' && session.status !== 'idle')
+    (ontoState === 'error' && session.status !== 'done')
   ) {
     return { key: 'error', label: 'Error' };
   }
-  // 3. 排队等待投递的异步回调 → Callback queued
-  if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
-    return { key: 'callback', label: 'Callback queued' };
-  }
-  // 4. 等待人类决策 → Waiting decision
+  // 3. 等待人类决策（Tier 2）→ Waiting decision（严格高于 Tier 3 异步回调回执）
   if (
     opts.hasDecisionCard ||
     meta.need ||
@@ -272,7 +274,22 @@ export function sessionLifecycleOf(
   ) {
     return { key: 'waiting', label: 'Waiting decision' };
   }
-  if (session.status === 'done') return { key: 'completed', label: 'Completed' };
+  // 3b. 本体 awaiting_input（无决策卡但正在等待人类输入）→ 严禁折叠为 Completed / Idle
+  if (ontoState === 'awaiting_input') {
+    return { key: 'waiting', label: 'Awaiting input' };
+  }
+  // 4. 排队等待投递的异步回调（Tier 3）→ Callback queued
+  if (
+    opts.callbackQueued ||
+    meta.callback_queued ||
+    (session.callback_inbox?.count ?? 0) > 0 ||
+    meta.lifecycle === 'callback'
+  ) {
+    return { key: 'callback', label: 'Callback queued' };
+  }
+  if (session.status === 'done' || ontoState === 'completed') {
+    return { key: 'completed', label: 'Completed' };
+  }
   return { key: 'idle', label: 'Idle' };
 }
 
@@ -329,6 +346,7 @@ export default function SessionItem({
   inTmux = false,
   card = null,
   callbackQueued = false,
+  callbackCount = 0,
   hasRunningWorker = false,
   busyTurn = false,
   nested = false,
@@ -371,6 +389,8 @@ export default function SessionItem({
   card?: string | null;
   /** 存在待回传 / 积压的异步回调。 */
   callbackQueued?: boolean;
+  /** 未消化的异步回执条数（来自 callback_inbox.count）。 */
+  callbackCount?: number;
   /** 存在正在后台运行的子 Worker 会话。 */
   hasRunningWorker?: boolean;
   /** 本页刚发出的一句还没答完：菜单里关 tmux 先问。 */
@@ -501,12 +521,13 @@ export default function SessionItem({
    * 词表（`workbench.status.*`，左栏状态行与时间线用的是同一份），不另造一套说法。
    */
   const originKey = sessionOriginOf(session);
+  const effectiveCallbackCount = callbackCount > 0 ? callbackCount : (session.callback_inbox?.count ?? 0);
   const life = sessionLifecycleOf(session, {
     forYou,
     sending,
     agentOnIt,
     hasDecisionCard: Boolean(card),
-    callbackQueued,
+    callbackQueued: callbackQueued || effectiveCallbackCount > 0,
     hasRunningWorker,
   });
   const signal: 'pending' | 'running' | 'done' =
@@ -522,22 +543,36 @@ export default function SessionItem({
         ? 'workbench.status.running'
         : 'workbench.status.done'
   );
+  const railStatusBadge: AvatarStatusBadge =
+    life.key === 'running'
+      ? 'running'
+      : life.key === 'waiting'
+        ? 'waiting'
+        : life.key === 'error'
+          ? 'error'
+          : life.key === 'callback'
+            ? 'callback'
+            : 'completed';
   const lifeColorCls =
-    life.key === 'waiting' || life.key === 'callback'
-      ? 'text-accent-warning'
-      : life.key === 'error'
-        ? 'text-accent-error'
-        : life.key === 'running'
-          ? 'text-accent-primary'
-          : 'text-text-muted';
+    life.key === 'waiting'
+      ? 'text-accent-warning font-semibold'
+      : life.key === 'callback'
+        ? 'text-text-muted font-normal rounded-[4px] border border-[var(--border-subtle)] bg-bg-hover px-[5px] py-[0.5px]'
+        : life.key === 'error'
+          ? 'text-accent-error'
+          : life.key === 'running'
+            ? 'text-accent-primary'
+            : 'text-text-muted';
   const lifeDotCls =
-    life.key === 'waiting' || life.key === 'callback'
+    life.key === 'waiting'
       ? 'bg-accent-warning'
-      : life.key === 'error'
-        ? 'bg-accent-error'
-        : life.key === 'running'
-          ? 'bg-accent-primary'
-          : 'bg-text-muted';
+      : life.key === 'callback'
+        ? 'bg-text-muted'
+        : life.key === 'error'
+          ? 'bg-accent-error'
+          : life.key === 'running'
+            ? 'bg-accent-primary'
+            : 'bg-text-muted';
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
@@ -597,12 +632,26 @@ export default function SessionItem({
             aria-label={t('workbench.rail.employeeSession', { id: empTitle })}
             className="si-emp-bar"
           >
-            <span className="emp-dot" aria-hidden="true" />
             <span className="emp-name">{empTitle}</span>
           </div>
         ) : null}
 
-        <div className={hasEmpBar ? bodyPadding : undefined}>
+        <div className={hasEmpBar ? `${bodyPadding} si-grid` : undefined}>
+          {hasEmpBar && session.employee_id ? (
+            <EmployeeAvatar
+              employeeId={session.employee_id}
+              avatar={session.employee_avatar}
+              size={24}
+              statusBadge={railStatusBadge}
+              statusLabel={signalLabel}
+              statusSignal={signal}
+              statusTestId="session-signal"
+              className="emp-av-rail"
+              testId={`emp-avatar-${session.employee_id}`}
+              ariaLabel={empTitle}
+            />
+          ) : null}
+          <div className={hasEmpBar ? 'si-body' : undefined}>
           {/* 分支只留一枚 branched 微标：无底无框的行内小字，出处全称放进悬停提示，不占正文。
               从前它是一枚灰底胶囊，和下面 For you 的胶囊叠在一起成了双重盒感。 */}
           {branchOf ? (
@@ -635,7 +684,9 @@ export default function SessionItem({
                 life.key === 'callback' ||
                 life.key === 'running' ||
                 life.key === 'error');
-            if (!showOriginChip && !showLifeChip) return null;
+            const showExtraCallbackChip =
+              !nested && effectiveCallbackCount > 0 && life.key !== 'callback';
+            if (!showOriginChip && !showLifeChip && !showExtraCallbackChip) return null;
             return (
               <div
                 data-testid="session-badges"
@@ -654,13 +705,42 @@ export default function SessionItem({
                   <span
                     data-testid="session-lifecycle"
                     data-lifecycle={life.key}
-                    className={`si-life ${life.key} inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium ${lifeColorCls}`}
+                    data-tool-aborted={life.aborted ? 'true' : undefined}
+                    data-callback-count={
+                      life.key === 'callback' && effectiveCallbackCount > 0
+                        ? effectiveCallbackCount
+                        : undefined
+                    }
+                    className={`si-life ${life.key}${life.aborted ? ' aborted' : ''} inline-flex items-center gap-1 whitespace-nowrap text-[11px] ${
+                      life.key === 'callback' ? '' : 'font-medium '
+                    }${lifeColorCls}`}
                   >
                     <i
                       aria-hidden="true"
                       className={`dot inline-block h-[6px] w-[6px] shrink-0 rounded-full ${lifeDotCls}`}
                     />
-                    <span>{life.label}</span>
+                    <span>
+                      {life.aborted
+                        ? t('workbench.status.toolAborted')
+                        : life.key === 'waiting' && life.label === 'Awaiting input'
+                          ? t('workbench.status.awaitingInput')
+                          : life.key === 'callback' && effectiveCallbackCount > 0
+                            ? t('workbench.rail.callbackBadge', { n: effectiveCallbackCount })
+                            : life.label}
+                    </span>
+                  </span>
+                ) : null}
+                {showExtraCallbackChip ? (
+                  <span
+                    data-testid="session-callback-badge"
+                    data-callback-count={effectiveCallbackCount}
+                    className="si-life callback inline-flex items-center gap-1 whitespace-nowrap rounded-[4px] border border-[var(--border-subtle)] bg-bg-hover px-[5px] py-[0.5px] text-[11px] font-normal text-text-muted"
+                  >
+                    <i
+                      aria-hidden="true"
+                      className="dot inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-text-muted"
+                    />
+                    <span>{t('workbench.rail.callbackBadge', { n: effectiveCallbackCount })}</span>
                   </span>
                 ) : null}
               </div>
@@ -774,18 +854,17 @@ export default function SessionItem({
               onCopy={onCopy}
               copied={copied}
             />
-            {/* 状态信号点：整列扫下来一眼看清谁在等我、谁在跑、谁已经停了。
-                它与满幅员工色带并存——色带说的是「这属于哪个员工」，点说的是
-                「这一场此刻什么状态」，两件事，不互相替代。放在「…」菜单右边、
-                内核图标左边，与状态行右端对齐。 */}
-            <span
-              data-testid="session-signal"
-              data-signal={signal}
-              title={signalLabel}
-              aria-label={signalLabel}
-              role="img"
-              className={`wb-rail-signal wb-rail-signal--${signal}`}
-            />
+            {/* 状态信号点：非员工会话沿用右端信号点；员工会话已由 24px 头像右下角 8.5px 镂空状态角标承载。 */}
+            {!hasEmpBar ? (
+              <span
+                data-testid="session-signal"
+                data-signal={signal}
+                title={signalLabel}
+                aria-label={signalLabel}
+                role="img"
+                className={`wb-rail-signal wb-rail-signal--${signal}`}
+              />
+            ) : null}
             {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
                 OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、
                 压低对比退到后面，鼠标经过这张卡或它被选中时才恢复辨识度。 */}
@@ -803,6 +882,7 @@ export default function SessionItem({
                 }`}
               />
             ) : null}
+          </div>
           </div>
         </div>
       </div>

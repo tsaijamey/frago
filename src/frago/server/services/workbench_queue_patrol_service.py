@@ -13,12 +13,14 @@ import contextlib
 import logging
 import os
 import threading
+import time
 
-from frago.server.services import workbench_queue
+from frago.server.services import callback_inbox_dispatcher, workbench_queue
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_QUEUE_PATROL_INTERVAL_S: float = 2.0
+DEFAULT_CALLBACK_RECOVERY_INTERVAL_S: float = 15.0
 
 
 class WorkbenchQueuePatrolService:
@@ -39,6 +41,16 @@ class WorkbenchQueuePatrolService:
         else:
             self.interval_seconds = DEFAULT_QUEUE_PATROL_INTERVAL_S
 
+        env_recovery = os.environ.get("FRAGO_CALLBACK_RECOVERY_INTERVAL_S")
+        if env_recovery:
+            try:
+                self.recovery_interval_seconds = max(0.05, float(env_recovery))
+            except ValueError:
+                self.recovery_interval_seconds = DEFAULT_CALLBACK_RECOVERY_INTERVAL_S
+        else:
+            self.recovery_interval_seconds = DEFAULT_CALLBACK_RECOVERY_INTERVAL_S
+
+        self._last_recovery_at: float = 0.0
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
 
@@ -85,10 +97,29 @@ class WorkbenchQueuePatrolService:
 
     async def _patrol_loop(self) -> None:
         while not self._stop_event.is_set():
+            now = time.monotonic()
+            if now - self._last_recovery_at >= self.recovery_interval_seconds:
+                self._last_recovery_at = now
+                try:
+                    from frago.session.async_dispatch import (
+                        reconcile_recoverable_callback_deliveries,
+                    )
+
+                    await asyncio.to_thread(reconcile_recoverable_callback_deliveries)
+                except Exception:
+                    logger.debug(
+                        "Error during recoverable callback reconciliation tick",
+                        exc_info=True,
+                    )
+
             try:
                 await asyncio.to_thread(workbench_queue.patrol_active_queues, sync=True)
             except Exception:
                 logger.debug("Error during autonomous queue patrol tick", exc_info=True)
+            try:
+                await asyncio.to_thread(callback_inbox_dispatcher.patrol_callback_inboxes)
+            except Exception:
+                logger.debug("Error during CallbackInbox patrol tick", exc_info=True)
 
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(

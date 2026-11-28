@@ -80,6 +80,9 @@ class SessionSource(str, Enum):
 
     TERMINAL = "terminal"  # Created via terminal/CLI
     WEB = "web"  # Created via web interface
+    WORKER = "worker"  # Spawned as a delegated worker / employee invocation
+    SCHEDULE = "schedule"  # Triggered by scheduled task execution
+    CHANNEL = "channel"  # Triggered via external channel (feishu/slack/email)
     UNKNOWN = "unknown"  # Legacy data or cannot be determined
 
 
