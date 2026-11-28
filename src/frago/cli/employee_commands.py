@@ -571,10 +571,9 @@ def _run_agent_turn_for_employee(
     employee_id: str | None = None,
 ) -> tuple[str, str, str]:
     """驱动目标员工内核执行单轮同步问答，返回 `(real_session_id, turn_status, answer_text)`。"""
-    import contextlib
     import uuid
 
-    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+    from frago.agent_driver.driver import resolve_canonical_session_id, runs_on_kernel
 
     effective_timeout = float(timeout_s) if timeout_s > 0 else None
     emp_id = (employee_id or os.environ.get("FRAGO_EMPLOYEE_ID") or "").strip()
@@ -605,6 +604,11 @@ def _run_agent_turn_for_employee(
     if emp_id:
         env["FRAGO_EMPLOYEE_ID"] = emp_id
     _inherit_unattended_env(env)
+    persist_source = (
+        "schedule-employee"
+        if env.get("FRAGO_SESSION_ORIGIN", "").strip().lower() == "schedule"
+        else "employee-invoke"
+    )
     res = SessionLauncher().run(
         prompt,
         agent_type=agent_kernel,
@@ -613,17 +617,16 @@ def _run_agent_turn_for_employee(
         cwd=cwd,
         env=env,
         timeout_s=effective_timeout,
+        persist_turn=True,
+        source=persist_source,
     )
-    with contextlib.suppress(Exception):
-        from frago.agent_driver.transcript import write_turn
 
-        write_turn(sid, agent_kernel, cwd, prompt, res, source="employee-invoke")
-
-    real_sid = sid
-    with contextlib.suppress(Exception):
-        resolved = listed_session_id(agent_kernel, sid, native_session_id=native_flag)
-        if resolved:
-            real_sid = resolved
+    real_sid = (
+        getattr(res, "canonical_session_id", None)
+        or resolve_canonical_session_id(
+            agent_kernel, sid, native_session_id=native_flag
+        )
+    )
     _register_schedule_origin_if_needed(real_sid, agent_kernel)
     return real_sid, str(res.status or "ok"), str(res.text or "").strip()
 

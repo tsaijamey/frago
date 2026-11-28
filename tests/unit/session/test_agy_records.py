@@ -1295,3 +1295,458 @@ def test_全文件超过256KB且确无用户输入时有界终止返回None(app_
 
     assert agy_store.latest_turn(CONVERSATION_ID) is None
 
+
+# ── agy 1.5.18 后台长命令超时心跳提醒、终态门控与周期 Cron 剥离（W3-2a）──────
+def _wrapped_system_message(step: int, *message_lines: str) -> dict:
+    """构造 agy 1.5.18 真实落盘形态的 ``<SYSTEM_MESSAGE>`` 包裹系统消息。"""
+    inner = "\n".join(message_lines)
+    body = (
+        "The following is a <SYSTEM_MESSAGE> not actually sent by the user. "
+        "It is provided by the system as important information to pay attention to.\n\n"
+        f"<SYSTEM_MESSAGE>\n{inner}\n</SYSTEM_MESSAGE>"
+    )
+    return _system_message(step, body, source="SYSTEM")
+
+
+def _bg_task_running(step: int, task_suffix: str, description: str) -> dict:
+    """构造 ``run_command`` / ``schedule`` 转入后台的 ``GENERIC / RUNNING`` 记录。"""
+    return {
+        "step_index": step,
+        "source": "MODEL",
+        "type": "GENERIC",
+        "status": "RUNNING",
+        "created_at": "2026-11-28T01:00:00Z",
+        "content": (
+            "Created At: 2026-11-28T09:00:00+08:00\n"
+            f"Tool is running as a background task with task id: {CONVERSATION_ID}/{task_suffix}\n"
+            f"Task Description: {description}\n"
+            "Task logs are available at /workspace/project/task.log"
+        ),
+    }
+
+
+def test_后台系统通知分段语义分类契约():
+    """显式验证 ``_classify_bg_system_segment`` 对五类系统消息语义的分流契约。"""
+    hb = agy_store._classify_bg_system_segment(
+        f"[Message] timestamp=2026-11-28T01:05:00Z sender={CONVERSATION_ID}/task-95 "
+        "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 300s: "
+        "uv run worker --wait"
+    )
+    assert hb.kind == agy_store._BgSystemEventKind.RUNNING_HEARTBEAT
+    assert hb.task_ids == (f"{CONVERSATION_ID}/task-95",)
+
+    done = agy_store._classify_bg_system_segment(
+        f"[Message] timestamp=2026-11-28T01:10:00Z sender={CONVERSATION_ID}/task-95 "
+        f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{CONVERSATION_ID}/task-95" '
+        "finished with result:\nCommand exited with code 0."
+    )
+    assert done.kind == agy_store._BgSystemEventKind.TERMINAL_RESULT
+    assert done.task_ids == (f"{CONVERSATION_ID}/task-95",)
+
+    timer = agy_store._classify_bg_system_segment(
+        f"[Message] timestamp=2026-11-28T01:12:00Z sender={CONVERSATION_ID}/task-160 "
+        "priority=MESSAGE_PRIORITY_HIGH content=Check if worker finished."
+    )
+    assert timer.kind == agy_store._BgSystemEventKind.TIMER_OR_TRIGGER
+    assert timer.task_ids == (f"{CONVERSATION_ID}/task-160",)
+
+    stopped = agy_store._classify_bg_system_segment(
+        "[Message] timestamp=2026-11-28T01:15:00Z sender=system priority=MESSAGE_PRIORITY_LOW "
+        "content=[Notice] All your subagents and background tasks have been stopped due to server restart."
+    )
+    assert stopped.kind == agy_store._BgSystemEventKind.STOPPED_ALL
+
+    other = agy_store._classify_bg_system_segment(
+        "[Message] timestamp=2026-11-28T01:16:00Z sender=system priority=MESSAGE_PRIORITY_LOW "
+        "content=Workspace index refreshed."
+    )
+    assert other.kind == agy_store._BgSystemEventKind.OTHER
+
+
+def test_长后台命令跨多次still_running心跳提醒不早判且真完成后作废过渡文本(app_dir):
+    """AC-1 + AC-2（脱敏自 4d0fe8fa / 744046dc 真实结构）：
+    长耗时后台命令跨 1 次及以上 ``Background command is still running after <N>s:`` 提醒、
+    伴随模型调用 ``manage_task``（返回 ``Status: RUNNING``）并输出过渡播报时，必须保留在
+    ``pending`` 集合且 ``latest_turn()`` 返回 ``done=False``；待 ``finished with result:``
+    真正到达后正常销账并作废陈旧过渡播报，仅在真实终答落盘后返回 ``done=True``。
+    """
+    task_id = f"{CONVERSATION_ID}/task-95"
+    records = [
+        _user(0, "<USER_REQUEST>运行端到端核验脚本并汇总结论</USER_REQUEST>"),
+        _planner(1, tool_calls=[{"name": "run_command", "args": {"command": "uv run verify"}}]),
+        _bg_task_running(2, "task-95", "uv run verify --suite all"),
+        _planner(3, content="验证任务已转入后台执行，完成后回传汇总结果。"),
+    ]
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 第 1 次 300s 超时心跳提醒：不销账且清空首条过渡播报
+    records.append(
+        _wrapped_system_message(
+            4,
+            f"[Message] timestamp=2026-11-28T04:11:33Z sender={task_id} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 300s: "
+            "uv run verify --suite all",
+        )
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+    assert turn.text == ""
+
+    # 模型调用 manage_task 返回 Status: RUNNING 并输出第二条过渡播报：仍必须 done=False
+    records.extend(
+        [
+            _planner(5, tool_calls=[{"name": "manage_task", "args": {"task_id": task_id}}]),
+            _tool_step(
+                6,
+                "GENERIC",
+                f"Task: {task_id}\nStatus: RUNNING\nLog: file:///workspace/project/task.log",
+            ),
+            _planner(7, content="后台验证仍在执行中，继续等待完成回执。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 第 2 次 600s 超时心跳提醒 + 第三条过渡播报：依旧不提前判完
+    records.extend(
+        [
+            _wrapped_system_message(
+                8,
+                f"[Message] timestamp=2026-11-28T04:16:33Z sender={task_id} "
+                "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 600s: "
+                "uv run verify --suite all",
+            ),
+            _planner(9, content="已运行超过 10 分钟，仍在收尾阶段，继续等待。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 真实终态回执到达：销账并作废 step 9 的陈旧过渡播报，done 仍为 False
+    records.append(
+        _wrapped_system_message(
+            10,
+            f"[Message] timestamp=2026-11-28T04:17:08Z sender={task_id} "
+            f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_id}" finished with result:\n'
+            "Command exited with code 0.\n\nCommand output:\n[OK] all checks passed.",
+        )
+    )
+    _write(app_dir, records)
+    mid_done = agy_store.latest_turn(CONVERSATION_ID)
+    assert mid_done is not None
+    assert mid_done.done is False
+    assert mid_done.text == ""
+
+    # 模型读取结果后输出真实终态答复：done=True 且文本为真终答，不含陈旧过渡文本
+    records.append(_planner(11, content="全部端到端核验已通过（0 失败）。"))
+    _write(app_dir, records)
+    final_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert final_turn is not None
+    assert final_turn.done is True
+    assert final_turn.text == "全部端到端核验已通过（0 失败）。"
+
+
+def test_双并行后台任务先后触发心跳提醒并分步完成(app_dir):
+    """AC-1 + AC-2（脱敏自 50b57bcc 双路并发真实结构）：
+    两路后台任务先后触发 360s 心跳提醒后，两路均须保留在 pending 中；先完成一路仍返回
+    ``done=False``，直到两路全部完成并产出真终答才返回 ``done=True``。
+    """
+    task_a = f"{CONVERSATION_ID}/task-15"
+    task_b = f"{CONVERSATION_ID}/task-16"
+    records = [
+        _user(0, "<USER_REQUEST>并行执行两路只读审计</USER_REQUEST>"),
+        _planner(
+            1,
+            tool_calls=[
+                {"name": "run_command", "args": {"command": "audit-a"}},
+                {"name": "run_command", "args": {"command": "audit-b"}},
+            ],
+        ),
+        _bg_task_running(2, "task-15", "audit-a --wait"),
+        _bg_task_running(3, "task-16", "audit-b --wait"),
+        _planner(4, content="两路审计已启动，等待完成回收。"),
+        _wrapped_system_message(
+            5,
+            f"[Message] timestamp=2026-11-28T01:08:13Z sender={task_a} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 360s: audit-a --wait",
+        ),
+        _planner(6, tool_calls=[{"name": "manage_task", "args": {"task_id": task_a}}]),
+        _tool_step(7, "GENERIC", f"Task: {task_a}\nStatus: RUNNING"),
+        _wrapped_system_message(
+            8,
+            f"[Message] timestamp=2026-11-28T01:08:25Z sender={task_b} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 360s: audit-b --wait",
+        ),
+        _planner(9, content="两路审计均仍在推进中，继续等待两者完成回收。"),
+    ]
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 仅 task-15 完成，task-16 仍在运行：仍必须 done=False
+    records.extend(
+        [
+            _wrapped_system_message(
+                10,
+                f"[Message] timestamp=2026-11-28T01:11:00Z sender={task_a} "
+                f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_a}" finished with result:\n'
+                "Command exited with code 0.",
+            ),
+            _planner(11, content="第一路审计已完成，等待第二路结束。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # task-16 也完成：过渡播报作废，等待模型给出最终汇总
+    records.append(
+        _wrapped_system_message(
+            12,
+            f"[Message] timestamp=2026-11-28T01:14:00Z sender={task_b} "
+            f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_b}" finished with result:\n'
+            "Command exited with code 0.",
+        )
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+    assert turn.text == ""
+
+    records.append(_planner(13, content="两路审计已全部完成并汇总完毕。"))
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "两路审计已全部完成并汇总完毕。"
+
+
+def test_单条系统消息拼接多段Message时仅销账终态段保留心跳段(app_dir):
+    """单条 ``SYSTEM_MESSAGE`` 同时携带 ``task-1`` 的心跳提醒与 ``task-2`` 的终态回执时，
+    必须按 ``[Message]`` 逐段分流：仅销账 ``task-2``，保留 ``task-1`` 且作废旧过渡播报。
+    """
+    task_1 = f"{CONVERSATION_ID}/task-1"
+    task_2 = f"{CONVERSATION_ID}/task-2"
+    records = [
+        _user(0, "<USER_REQUEST>同时启动两个后台步骤</USER_REQUEST>"),
+        _bg_task_running(1, "task-1", "long-step-1"),
+        _bg_task_running(2, "task-2", "short-step-2"),
+        _planner(3, content="两个步骤均已转入后台。"),
+        _wrapped_system_message(
+            4,
+            f"[Message] timestamp=2026-11-28T02:05:00Z sender={task_1} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 300s: long-step-1",
+            f"[Message] timestamp=2026-11-28T02:05:01Z sender={task_2} "
+            f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_2}" finished with result:\n'
+            "Command exited with code 0.",
+        ),
+        _planner(5, content="步骤 2 已完成，步骤 1 仍在执行。"),
+    ]
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    records.extend(
+        [
+            _wrapped_system_message(
+                6,
+                f"[Message] timestamp=2026-11-28T02:09:00Z sender={task_1} "
+                f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_1}" finished with result:\n'
+                "Command exited with code 0.",
+            ),
+            _planner(7, content="两个步骤已全部执行完成。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "两个步骤已全部执行完成。"
+
+
+def test_心跳后非零退出码与手动取消均正常销账并收敛(app_dir):
+    """AC-1 + AC-2（脱敏自 37f86535 与 e636ac5b）：
+    触发过 ``still running`` 后，以非 0 退出码或 ``manage_task`` 手动取消终结时均应正常销账。
+    """
+    task_fail = f"{CONVERSATION_ID}/task-16"
+    task_cancel = f"{CONVERSATION_ID}/task-56"
+    records = [
+        _user(0, "<USER_REQUEST>跑构建与压测</USER_REQUEST>"),
+        _bg_task_running(1, "task-16", "build-release"),
+        _bg_task_running(2, "task-56", "stress-bench"),
+        _wrapped_system_message(
+            3,
+            f"[Message] timestamp=2026-11-28T08:20:00Z sender={task_fail} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 300s: build-release",
+        ),
+        _planner(4, content="构建仍在运行中。"),
+        _wrapped_system_message(
+            5,
+            f"[Message] timestamp=2026-11-28T08:24:25Z sender={task_fail} "
+            f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_fail}" finished with result:\n'
+            "Command exited with code 1.",
+        ),
+        _tool_step(
+            6,
+            "GENERIC",
+            f'Created At: 2026-11-28T11:18:49+08:00\nTask "{task_cancel}" cancelled.',
+        ),
+    ]
+    _write(app_dir, records)
+    mid_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert mid_turn is not None
+    assert mid_turn.done is False
+    assert mid_turn.text == ""
+
+    records.append(_planner(7, content="构建退出码为 1，已取消压测并整理报错信息。"))
+    _write(app_dir, records)
+    final_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert final_turn is not None
+    assert final_turn.done is True
+    assert final_turn.text == "构建退出码为 1，已取消压测并整理报错信息。"
+
+
+def test_正文含关键字的边界文本不导致误销账或误判心跳(app_dir):
+    """命令原文含 ``finished with result:`` 的心跳提醒不得误销账；
+    真实终态回执的命令输出中含 ``still running`` 或他任务 ``cancelled.`` 也不得干扰状态机。
+    """
+    task_1 = f"{CONVERSATION_ID}/task-11"
+    task_2 = f"{CONVERSATION_ID}/task-12"
+    records = [
+        _user(0, "<USER_REQUEST>运行含特殊关键字的回归测试</USER_REQUEST>"),
+        _bg_task_running(1, "task-11", f'pytest -k \'Task id "{task_1}" finished with result:\''),
+        _bg_task_running(2, "task-12", "long-check"),
+        # 心跳里回显的命令文本本身包含 finished with result:，仍必须判为 RUNNING_HEARTBEAT
+        _wrapped_system_message(
+            3,
+            f"[Message] timestamp=2026-11-28T03:05:00Z sender={task_1} "
+            "priority=MESSAGE_PRIORITY_HIGH content=Background command is still running after 300s: "
+            f'pytest -k \'Task id "{task_1}" finished with result:\'',
+        ),
+        _planner(4, content="测试命令仍在运行。"),
+    ]
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # task-11 真实完成，但其 stdout 里包含 "Background command is still running" 与 task-12 的 cancelled 文本：
+    # 必须准确销账 task-11，同时不得误销账仍在运行的 task-12
+    records.extend(
+        [
+            _wrapped_system_message(
+                5,
+                f"[Message] timestamp=2026-11-28T03:08:00Z sender={task_1} "
+                f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_1}" finished with result:\n'
+                "Command exited with code 0.\n\nCommand output:\n"
+                "Background command is still running after 300s: mock log\n"
+                f'Task "{task_2}" cancelled.',
+            ),
+            _planner(6, content="task-11 已完成，继续等待 task-12。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    records.extend(
+        [
+            _wrapped_system_message(
+                7,
+                f"[Message] timestamp=2026-11-28T03:10:00Z sender={task_2} "
+                f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{task_2}" finished with result:\n'
+                "Command exited with code 0.",
+            ),
+            _planner(8, content="两项边界回归已全部完成。"),
+        ]
+    )
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "两项边界回归已全部完成。"
+
+
+def test_周期Cron后台任务剥离不致首次触发前假忙且不影响一次性命令追踪(app_dir):
+    """AC-4（脱敏自 e636ac5b L87 真实结构）：
+    1. 周期型 Cron（``Task Description: Cron: ...``）注册后不进入阻塞等待集合，模型回复总结即 ``done=True``；
+    2. 同会话同时存在周期 Cron 与一次性后台命令（含命令行参数本身带 ``Cron:`` 字样的普通命令）时，
+       一次性后台命令仍保持真实忙态追踪，不受 Cron 触发消息干扰。
+    """
+    cron_id = f"{CONVERSATION_ID}/task-86"
+    cmd_id = f"{CONVERSATION_ID}/task-95"
+
+    # 场景 1：仅注册周期 Cron，模型总结后必须立即 done=True（消除 15–20 分钟假忙）
+    cron_only_records = [
+        _user(0, "<USER_REQUEST>帮我设置每 20 分钟一次的巡检定时任务</USER_REQUEST>"),
+        _planner(1, tool_calls=[{"name": "schedule", "args": {"cron": "*/20 * * * *"}}]),
+        _bg_task_running(2, "task-86", "Cron: */20 * * * *, Prompt: 【每20分钟巡检进度汇报】"),
+        _planner(3, content="已创建每 20 分钟执行一次的巡检定时任务。"),
+    ]
+    _write(app_dir, cron_only_records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "已创建每 20 分钟执行一次的巡检定时任务。"
+
+    # 场景 2：同会话既有周期 Cron 又有一次性后台命令（且命令行本身含 "Cron:" 字样）
+    mixed_records = [
+        _user(10, "<USER_REQUEST>设置定时巡检并同步执行一次长耗时检查</USER_REQUEST>"),
+        _bg_task_running(11, "task-86", "Cron: */20 * * * *, Prompt: 【每20分钟巡检进度汇报】"),
+        _bg_task_running(12, "task-95", 'echo "Cron: check" && uv run long-audit'),
+        _planner(13, content="定时巡检已注册，一次性审计仍在后台执行中。"),
+    ]
+    _write(app_dir, mixed_records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 期间周期 Cron 首次触发 SYSTEM_MESSAGE，不应干扰或误销账一次性命令 task-95
+    mixed_records.extend(
+        [
+            _wrapped_system_message(
+                14,
+                f"[Message] timestamp=2026-11-28T03:34:03Z sender={cron_id} "
+                "priority=MESSAGE_PRIORITY_HIGH content=【每20分钟巡检进度汇报】",
+            ),
+            _planner(15, content="收到定时巡检提醒，一次性审计仍在运行。"),
+        ]
+    )
+    _write(app_dir, mixed_records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+
+    # 一次性后台命令真正完成并产出终答后才 done=True
+    mixed_records.extend(
+        [
+            _wrapped_system_message(
+                16,
+                f"[Message] timestamp=2026-11-28T03:38:00Z sender={cmd_id} "
+                f'priority=MESSAGE_PRIORITY_HIGH content=Task id "{cmd_id}" finished with result:\n'
+                "Command exited with code 0.",
+            ),
+            _planner(17, content="一次性审计已完成，巡检定时任务保持生效。"),
+        ]
+    )
+    _write(app_dir, mixed_records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "一次性审计已完成，巡检定时任务保持生效。"
+
+

@@ -200,6 +200,7 @@ class SessionOntologyService:
             relation_kind=clean_relation,
             cwd=cwd,
             turn_seq=max(1, (existing.turn_seq + 1) if existing is not None else 1),
+            abort_epoch=existing.abort_epoch if existing is not None else 0,
             employee_id=clean_employee,
             prompt_head=initial_prompt[:120],
             extra=dict(extra or {}),
@@ -416,6 +417,13 @@ class SessionOntologyService:
                 f"Session '{clean_sid}' disappeared from the store while starting turn."
             )
         return updated
+
+    def bump_abort_epoch(self, session_id: str) -> SessionOntologyRecord | None:
+        """Increment ``abort_epoch`` for ``session_id`` on explicit stop/cancel."""
+        clean_sid = str(session_id or "").strip()
+        if not clean_sid:
+            return None
+        return self._store.bump_abort_epoch(clean_sid)
 
     def complete_turn_if_current(
         self,

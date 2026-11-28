@@ -2157,6 +2157,35 @@
   }
 }
 
+/* 交互决策卡从暂存态随 Stop 消息或回合终态显现时的柔和渐显过渡（复用 --transition-normal: 0.2s ease） */
+@keyframes dcardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dcard.is-reveal,
+.wb-record.is-decision-reveal {
+  animation: dcardReveal var(--transition-normal) both;
+}
+
+/* 卡片随 Stop 消息整体渐显时避免父子叠加两层透明度乘积与位移翻倍 */
+.wb-record.is-decision-reveal .dcard.is-reveal {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dcard.is-reveal,
+  .wb-record.is-decision-reveal {
+    animation: none;
+  }
+}
+
 /* 4. P0 图片网格灯箱 & Mermaid 内嵌图表卡片 */
 .imggrid {
   display: grid;

@@ -20,8 +20,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, Crosshair, Loader2, RotateCcw, Star } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Crosshair, Loader2, Pencil, RotateCcw, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import EmployeeAvatar from '@/components/employees/EmployeeAvatar';
+import EmployeeAvatarModal, {
+  type EmployeeAvatarTarget,
+} from '@/components/employees/EmployeeAvatarModal';
+import { useDataStore } from '@/stores/dataStore';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
@@ -171,6 +176,8 @@ export default function SessionWorkbenchPage() {
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 顶栏点击数字员工头像或岗位芯片时打开自定义头像弹窗。 */
+  const [avatarTarget, setAvatarTarget] = useState<EmployeeAvatarTarget | null>(null);
   /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
   const [creatingNew, setCreatingNew] = useState(false);
   useEffect(() => {
@@ -839,7 +846,6 @@ export default function SessionWorkbenchPage() {
     }
     return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
-  const contextTokens = usageReadout?.context ?? null;
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -1186,8 +1192,10 @@ export default function SessionWorkbenchPage() {
    * 左栏「正在启动」、认到编号自动切过去，都走新建会话那一条路。
    */
   const [handingOff, setHandingOff] = useState(false);
+  const handingOffRef = useRef(false);
   const handoff = async () => {
-    if (!selectedId || handingOff) return;
+    if (!selectedId || handingOffRef.current) return;
+    handingOffRef.current = true;
     setHandingOff(true);
     try {
       const pending = await handoffSession(selectedId);
@@ -1205,6 +1213,7 @@ export default function SessionWorkbenchPage() {
         'error'
       );
     } finally {
+      handingOffRef.current = false;
       setHandingOff(false);
     }
   };
@@ -1399,6 +1408,38 @@ export default function SessionWorkbenchPage() {
               <ChevronLeft size={16} />
             </button>
           ) : null}
+          {selected?.employee_id ? (() => {
+            const empId = selected.employee_id;
+            const empName = selected.employee_title || empId;
+            const openHeaderAvatar = () => {
+              const storeEmp = useDataStore
+                .getState()
+                .employees?.find((e) => e.member_post_id === empId);
+              setAvatarTarget({
+                member_post_id: empId,
+                title: storeEmp?.title || empName,
+                avatar_resolved: storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+              });
+            };
+            return (
+              <EmployeeAvatar
+                asButton
+                employeeId={empId}
+                avatar={selected.employee_avatar}
+                size={28}
+                className="ch-av-btn"
+                testId="session-header-avatar"
+                title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                ariaLabel={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                onClick={openHeaderAvatar}
+                overlay={
+                  <span className="ch-av-tip" aria-hidden="true">
+                    <Pencil size={8} strokeWidth={2.2} />
+                  </span>
+                }
+              />
+            );
+          })() : null}
           <div className="flex min-w-0 flex-1 flex-col justify-center">
             {selected ? (
               <div className="flex min-w-0 items-center gap-1.5">
@@ -1470,6 +1511,34 @@ export default function SessionWorkbenchPage() {
             )}
             {selected ? (
               <div data-testid="head-meta" className="wb-meta">
+                {selected.employee_id ? (() => {
+                  const empId = selected.employee_id;
+                  const empName = selected.employee_title || empId;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="ch-emp-chip"
+                        data-testid="session-header-emp-chip"
+                        title={t('employees.avatar.changeHeaderTitle', { name: empName })}
+                        onClick={() => {
+                          const storeEmp = useDataStore
+                            .getState()
+                            .employees?.find((e) => e.member_post_id === empId);
+                          setAvatarTarget({
+                            member_post_id: empId,
+                            title: storeEmp?.title || empName,
+                            avatar_resolved:
+                              storeEmp?.avatar_resolved ?? selected.employee_avatar ?? null,
+                          });
+                        }}
+                      >
+                        {empName}
+                      </button>
+                      <span aria-hidden className="wb-meta-sep">·</span>
+                    </>
+                  );
+                })() : null}
                 {headLifecyclePill === 'abort' ? (
                   <>
                     <span
@@ -1601,6 +1670,8 @@ export default function SessionWorkbenchPage() {
               busyTurn={inFlight}
               onCopy={handleCopy}
               copied={copiedId === selected.session_id}
+              onHandoff={() => void handoff()}
+              handingOff={handingOff}
               onStopped={() => {
                 forYou.refresh();
                 void sessions.reload();
@@ -1682,6 +1753,7 @@ export default function SessionWorkbenchPage() {
               error={error}
               onLoadOlder={loadOlder}
               awaitingAgent={awaitingAgent}
+              sessionRunning={sessionRunning}
               trails={trails}
               scrollTarget={scrollTarget}
               abortedToolCallId={isToolAborted ? (abortedToolInfo?.id ?? null) : null}
@@ -1806,9 +1878,6 @@ export default function SessionWorkbenchPage() {
           onOpenStackSummary={handleOpenStackSummaryFromComposer}
           packedPrompt={packedPrompt}
           draftPrefill={draftPrefill}
-          contextTokens={contextTokens}
-          onHandoff={() => void handoff()}
-          handingOff={handingOff}
           notice={composerNotice}
           onBringBack={canBringBack ? bringBack : undefined}
           queueItems={sessionQueue.items}
@@ -1937,6 +2006,14 @@ export default function SessionWorkbenchPage() {
           onClose={() => setTimelineOpen(false)}
         />
       ) : null}
+
+      <EmployeeAvatarModal
+        employee={avatarTarget}
+        onClose={() => setAvatarTarget(null)}
+        onSaved={() => {
+          void sessions.reload();
+        }}
+      />
     </div>
   );
 }

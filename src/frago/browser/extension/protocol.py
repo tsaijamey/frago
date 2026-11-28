@@ -71,32 +71,51 @@ class RpcResponse:
         return out
 
 
+# Upper bound for a single framed JSON-RPC message (64 MiB).
+# Large enough for high-resolution screenshots / DOM snapshots, while
+# immediately rejecting stray non-protocol probes (e.g. HTTP "GET " = ~517 MiB)
+# when running over loopback TCP.
+MAX_FRAME_BYTES = 64 * 1024 * 1024
+
+
 def encode_frame(obj: dict) -> bytes:
     payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     return struct.pack("<I", len(payload)) + payload
 
 
 def read_frame_sync(stream) -> dict | None:
-    """Blocking read of one frame from a binary stream; None on EOF."""
+    """Blocking read of one frame from a binary stream; None on EOF or invalid frame."""
     header = stream.read(4)
     if not header or len(header) < 4:
         return None
     (length,) = struct.unpack("<I", header)
+    if length == 0 or length > MAX_FRAME_BYTES:
+        return None
     body = stream.read(length)
     if len(body) < length:
         return None
-    return json.loads(body.decode("utf-8"))
+    try:
+        msg = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return msg if isinstance(msg, dict) else None
 
 
 async def read_frame_async(reader) -> dict | None:
-    """Async read of one frame from an asyncio StreamReader; None on EOF."""
+    """Async read of one frame from an asyncio StreamReader; None on EOF or invalid frame."""
     try:
         header = await reader.readexactly(4)
     except Exception:
         return None
     (length,) = struct.unpack("<I", header)
+    if length == 0 or length > MAX_FRAME_BYTES:
+        return None
     try:
         body = await reader.readexactly(length)
     except Exception:
         return None
-    return json.loads(body.decode("utf-8"))
+    try:
+        msg = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return msg if isinstance(msg, dict) else None

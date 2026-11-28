@@ -1498,7 +1498,11 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
           {rectifyMeta ? <RectifyStrip meta={rectifyMeta} /> : null}
           {uiComponent ? (
             uiComponent.ok ? (
-              <DecisionCard block={uiComponent.block} recordId={record.id} />
+              <DecisionCard
+                block={uiComponent.block}
+                recordId={record.id}
+                reveal={p.ui_component_reveal === true}
+              />
             ) : (
               <DecisionBroken
                 raw={brokenRaw}
@@ -2107,7 +2111,11 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
       ))}
       {uiComponent ? (
         uiComponent.ok ? (
-          <DecisionCard block={uiComponent.block} recordId={record.id} />
+          <DecisionCard
+            block={uiComponent.block}
+            recordId={record.id}
+            reveal={p.ui_component_reveal === true}
+          />
         ) : (
           <DecisionBroken
             raw={bodyText}
@@ -2777,7 +2785,11 @@ function ToolRunLine({
       {!open && uiComponent && row.result ? (
         <div className="min-w-0 px-3 pb-2">
           {uiComponent.ok ? (
-            <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+            <DecisionCard
+              block={uiComponent.block}
+              recordId={row.result.id}
+              reveal={result.ui_component_reveal === true}
+            />
           ) : (
             <DecisionBroken
               raw={resultBody}

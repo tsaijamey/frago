@@ -16,6 +16,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import i18n from '@/i18n';
 import { useDataStore } from '@/stores/dataStore';
+import type {
+  EmployeeAvatarResolved,
+  EmployeeAvatarSpec,
+} from '@/utils/employeeAvatar';
+
+export type { EmployeeAvatarResolved, EmployeeAvatarSpec };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -35,6 +41,8 @@ export interface EmployeePost {
   allowed_commands: string[];
   skills?: string[];
   color?: string;
+  avatar?: EmployeeAvatarSpec;
+  avatar_resolved?: EmployeeAvatarResolved;
   created_at: string;
   updated_at: string;
   last_used_at?: string | null;
@@ -270,6 +278,86 @@ export async function registerEmployeeData(
     );
   }
   return res.json();
+}
+
+/**
+ * 将后端返回的最新员工本体（含 `avatar` 与 `avatar_resolved`）立即写入全局 store，
+ * 让左栏会话列表、会话顶栏、员工卡片三处无需整页刷新即可实时同步。
+ */
+export function syncEmployeeInStore(updated: EmployeePost): void {
+  const store = useDataStore.getState();
+  const current = store.employees ?? [];
+  const exists = current.some((e) => e.member_post_id === updated.member_post_id);
+  const next = exists
+    ? current.map((e) =>
+        e.member_post_id === updated.member_post_id ? { ...e, ...updated } : e
+      )
+    : [...current, updated];
+  store.setEmployees(next);
+}
+
+/** 保存内置 DiceBear Micah 头像选定配置。 */
+export async function updateEmployeeAvatarMicah(
+  memberPostId: string,
+  input: { seed: string; bg_color?: string; palette_id?: string }
+): Promise<EmployeePost> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/employees/${encodeURIComponent(memberPostId)}/avatar`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('employees.avatar.errors.saveFailed', { status: res.status }))
+    );
+  }
+  const updated = (await res.json()) as EmployeePost;
+  syncEmployeeInStore(updated);
+  return updated;
+}
+
+/** 上传本地安全栅格图片（PNG / JPEG / WebP）作为数字员工头像。 */
+export async function uploadEmployeeAvatarFile(
+  memberPostId: string,
+  input: { data_url: string; filename?: string; content_type?: string }
+): Promise<EmployeePost> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/employees/${encodeURIComponent(memberPostId)}/avatar/upload`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('employees.avatar.errors.uploadFailed', { status: res.status }))
+    );
+  }
+  const updated = (await res.json()) as EmployeePost;
+  syncEmployeeInStore(updated);
+  return updated;
+}
+
+/** 一键恢复为确定性默认 Micah 头像（服务端自动清理旧上传文件）。 */
+export async function resetEmployeeAvatar(memberPostId: string): Promise<EmployeePost> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/employees/${encodeURIComponent(memberPostId)}/avatar`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('employees.avatar.errors.resetFailed', { status: res.status }))
+    );
+  }
+  const updated = (await res.json()) as EmployeePost;
+  syncEmployeeInStore(updated);
+  return updated;
 }
 
 export interface EmployeeListState {

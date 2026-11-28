@@ -74,7 +74,10 @@ def daemon_cmd(sock):
         asyncio.run(nh.run_daemon(sock_path))
 
 
-@extension_group.command("native-host")
+@extension_group.command(
+    "native-host",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+)
 @click.option("--sock", type=click.Path(path_type=Path), default=None)
 def native_host_cmd(sock):
     """Stdio relay invoked by Chrome. Not meant to be run manually."""
@@ -106,26 +109,19 @@ def install_cmd(extension_id, executable, browser, target_dir):
 
     Picks the best-fit Chromium-class browser unless ``--browser`` is set,
     and writes the manifest into that browser's per-user
-    ``NativeMessagingHosts/`` dir. Cross-OS aware (Linux + macOS).
-    Windows is not yet supported (it uses registry-based registration).
+    ``NativeMessagingHosts/`` dir (and registers the HKCU registry key on
+    Windows). Cross-OS aware (Linux + macOS + Windows).
 
     Defaults to the stable extension ID derived from the pinned pubkey
     that the published extension ships with. Override by passing an
     explicit ID (e.g. when sideloading a dev build whose key differs).
     """
+    from ..browser.extension.transport import ensure_native_host_launcher
+
     if not extension_id:
         extension_id = nh.STABLE_EXTENSION_ID
-    frago_dir = Path.home() / ".frago" / "chrome"
-    frago_dir.mkdir(parents=True, exist_ok=True)
     if not executable:
-        # Generate a tiny launcher that invokes `frago extension native-host`.
-        launcher = frago_dir / "native_host_launcher.sh"
-        python_exe = sys.executable
-        launcher.write_text(
-            "#!/usr/bin/env bash\n"
-            f"exec {python_exe} -m frago.cli.main extension native-host\n"
-        )
-        launcher.chmod(0o755)
+        launcher = ensure_native_host_launcher()
         executable = str(launcher)
 
     # Resolve brand when caller didn't specify and didn't override target_dir.
@@ -168,7 +164,7 @@ def status_cmd():
         click.echo(json.dumps({"ok": False, "code": e.code,
                                "error": str(e)}), err=True)
         sys.exit(1)
-    except FileNotFoundError:
+    except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError, TimeoutError):
         click.echo(json.dumps({"ok": False,
                                "error": "daemon not running; "
                                "start with `frago extension daemon`"}),

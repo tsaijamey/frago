@@ -22,12 +22,21 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from frago.employee.avatar import (
+    cleanup_avatar_file,
+    default_avatar_spec,
+    normalize_avatar_spec,
+    read_valid_avatar_file,
+    resolve_avatar_state,
+    save_uploaded_avatar_file,
+)
 from frago.employee.store import (
     VALID_AGENT_KERNELS,
     EmployeeLedger,
     EmployeePostRecord,
     apply_resource_exclusions,
     create_data_slot_entry,
+    employees_dir,
     frago_home,
     get_post,
     lift_resource_exclusions,
@@ -107,11 +116,12 @@ class EmployeeOntologyService:
         allowed_commands: Sequence[str] | None = None,
         skills: Sequence[str] | None = None,
         color: str | None = None,
+        avatar: dict[str, Any] | None = None,
     ) -> tuple[EmployeePostRecord, EmployeePostProjection]:
         """Create or update an employee post after validating its ontology shadow projection.
 
-        ``work_scope``、``cwd``、``allowed_commands``、``skills`` 与 ``color`` 给 ``None`` 表示「这一栏不动」，
-        沿用磁盘上已有的值：改一条领地绑定不该顺手把岗位的工作范畴或默认技能抹掉。
+        ``work_scope``、``cwd``、``allowed_commands``、``skills``、``color`` 与 ``avatar`` 给 ``None`` 表示「这一栏不动」，
+        沿用磁盘上已有的值：改一条领地绑定不该顺手把岗位的工作范畴、默认技能或自定义头像抹掉。
         """
         existing = get_post(member_post_id, base_dir=self._base_dir)
         record = EmployeePostRecord(
@@ -144,6 +154,11 @@ class EmployeeOntologyService:
                 color
                 if color is not None and str(color).strip()
                 else (existing.color if existing else "")
+            ),
+            avatar=(
+                normalize_avatar_spec(avatar, member_post_id, strict=True)
+                if avatar is not None
+                else (dict(existing.avatar) if existing else {})
             ),
             created_at=existing.created_at if existing else "",
         )
@@ -209,6 +224,148 @@ class EmployeeOntologyService:
         )
         save_post(record, base_dir=self._base_dir)
         return record, proj
+
+    def _referenced_avatar_files(self, *, exclude_post_id: str | None = None) -> set[str]:
+        referenced: set[str] = set()
+        for post in list_posts(base_dir=self._base_dir):
+            if exclude_post_id and post.member_post_id == exclude_post_id:
+                continue
+            fname = post.avatar.get("file_name")
+            if isinstance(fname, str) and fname:
+                referenced.add(fname)
+        return referenced
+
+    def _cleanup_replaced_avatar(
+        self,
+        old_file_name: str | None,
+        new_file_name: str | None,
+    ) -> None:
+        if not old_file_name or old_file_name == new_file_name:
+            return
+        referenced = self._referenced_avatar_files()
+        cleanup_avatar_file(
+            old_file_name,
+            employees_base_dir=employees_dir(self._base_dir),
+            referenced_file_names=referenced,
+        )
+
+    def resolve_avatar(self, record: EmployeePostRecord) -> dict[str, Any]:
+        """Resolve renderable avatar presentation state (with fallback if upload is missing/corrupted)."""
+        return resolve_avatar_state(
+            record.member_post_id,
+            record.avatar,
+            employees_base_dir=employees_dir(self._base_dir),
+        )
+
+    def set_avatar_micah(
+        self,
+        member_post_id: str,
+        *,
+        seed: str,
+        bg_color: str | None = None,
+        palette_id: str | None = None,
+    ) -> tuple[EmployeePostRecord, dict[str, Any]]:
+        """Persist a built-in DiceBear Micah selection on ``EmployeePostRecord`` and clean up any old upload."""
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            raise KeyError(f"Employee post '{post_id}' does not exist.")
+        old_file = record.avatar.get("file_name") if isinstance(record.avatar, dict) else None
+        from frago.employee.avatar import _now_iso
+
+        record.avatar = normalize_avatar_spec(
+            {
+                "kind": "micah",
+                "seed": seed,
+                "bg_color": bg_color,
+                "palette_id": palette_id,
+                "updated_at": _now_iso(),
+            },
+            post_id,
+            strict=True,
+        )
+        project_employee_post_dict(record.to_projection_dict(), registry=self._registry)
+        save_post(record, base_dir=self._base_dir)
+        self._cleanup_replaced_avatar(
+            old_file if isinstance(old_file, str) else None,
+            None,
+        )
+        return record, self.resolve_avatar(record)
+
+    def upload_avatar(
+        self,
+        member_post_id: str,
+        *,
+        data: bytes,
+        content_type: str | None = None,
+        filename: str | None = None,
+    ) -> tuple[EmployeePostRecord, dict[str, Any]]:
+        """Validate, store, and attach a safe local raster image (PNG/JPEG/WebP) to ``EmployeePostRecord``."""
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            raise KeyError(f"Employee post '{post_id}' does not exist.")
+        old_file = record.avatar.get("file_name") if isinstance(record.avatar, dict) else None
+        base = employees_dir(self._base_dir)
+        new_spec = save_uploaded_avatar_file(
+            post_id,
+            data,
+            employees_base_dir=base,
+            content_type=content_type,
+            filename=filename,
+        )
+        new_file = new_spec.get("file_name")
+        record.avatar = normalize_avatar_spec(new_spec, post_id, strict=True)
+        try:
+            project_employee_post_dict(record.to_projection_dict(), registry=self._registry)
+            save_post(record, base_dir=self._base_dir)
+        except Exception:
+            if isinstance(new_file, str) and new_file != old_file:
+                cleanup_avatar_file(
+                    new_file,
+                    employees_base_dir=base,
+                    referenced_file_names=self._referenced_avatar_files(),
+                )
+            raise
+        self._cleanup_replaced_avatar(
+            old_file if isinstance(old_file, str) else None,
+            new_file if isinstance(new_file, str) else None,
+        )
+        return record, self.resolve_avatar(record)
+
+    def reset_avatar(
+        self,
+        member_post_id: str,
+    ) -> tuple[EmployeePostRecord, dict[str, Any]]:
+        """Reset an employee's avatar back to deterministic default Micah and delete any unused upload."""
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            raise KeyError(f"Employee post '{post_id}' does not exist.")
+        old_file = record.avatar.get("file_name") if isinstance(record.avatar, dict) else None
+        from frago.employee.avatar import _now_iso
+
+        default_spec = default_avatar_spec(post_id)
+        default_spec["updated_at"] = _now_iso()
+        record.avatar = default_spec
+        project_employee_post_dict(record.to_projection_dict(), registry=self._registry)
+        save_post(record, base_dir=self._base_dir)
+        self._cleanup_replaced_avatar(
+            old_file if isinstance(old_file, str) else None,
+            None,
+        )
+        return record, self.resolve_avatar(record)
+
+    def get_avatar_file(self, member_post_id: str) -> tuple[bytes, str, str] | None:
+        """Read and verify the uploaded avatar binary for ``member_post_id``, or return ``None``."""
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            return None
+        return read_valid_avatar_file(
+            record.avatar,
+            employees_base_dir=employees_dir(self._base_dir),
+        )
 
     def discover(
         self,

@@ -37,6 +37,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -420,44 +421,191 @@ class AgyTurn:
 
 
 _BG_TASK_START_RE = re.compile(r"Tool is running as a background task with task id:\s*(\S+)")
+_BG_TASK_CRON_DESC_RE = re.compile(r"(?m)^\s*Task Description:\s*Cron:", re.IGNORECASE)
 _BG_TASK_DONE_RE = re.compile(
     r'Task id "([^"]+)" (?:finished with result:|was canceled with result:|failed with)'
 )
 _BG_TASK_CANCEL_RE = re.compile(r'Task "([^"]+)" cancelled\.')
 _BG_TASK_SYSTEM_SENDER_RE = re.compile(r"\bsender=(\S+/(?:task-\d+|subagent-\S+))\b")
 _BG_TASK_STOPPED_ALL = "All your subagents and background tasks have been stopped"
+_SYSTEM_MESSAGE_SEGMENT_SPLIT_RE = re.compile(
+    r"(?=(?:^|\n)\[Message\]\s+(?:timestamp|sender|priority|content)=)"
+)
+_SYSTEM_MESSAGE_CONTENT_RE = re.compile(r"\bcontent=(.*)", re.DOTALL)
+_BG_TASK_RUNNING_HEARTBEAT_RE = re.compile(
+    r"\A\s*(?:"
+    r"(?:Background\s+)?(?:command|task|subagent)\s+is\s+still\s+running\b"
+    r"|Task\s+id\s+\"([^\"]+)\"\s+is\s+still\s+running\b"
+    r")",
+    re.IGNORECASE,
+)
+_BG_TASK_TERMINAL_PREFIX_RE = re.compile(
+    r"\A\s*(?:Background\s+)?(?:command|task|subagent)\s+"
+    r"(?:finished|exited|failed|completed|terminated|cancelled|canceled|killed)\b",
+    re.IGNORECASE,
+)
 
 
-def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> None:
-    """按单条记录推进本轮后台任务集合：转入后台入集，收到完成/取消/定时器到期/重启通知出集。"""
+class _BgSystemEventKind(str, Enum):
+    """``SYSTEM_MESSAGE`` 中后台任务通知分段的显式语义类别。"""
+
+    STOPPED_ALL = "stopped_all"
+    """服务重启等全局中止通知，清空全部挂起后台任务。"""
+
+    RUNNING_HEARTBEAT = "running_heartbeat"
+    """非终态运行中心跳/超时提醒（如 ``Background command is still running after <N>s:``）。"""
+
+    TERMINAL_RESULT = "terminal_result"
+    """显式终态通知（完成、失败、取消、退出等）。"""
+
+    TIMER_OR_TRIGGER = "timer_or_trigger"
+    """携带后台任务 ``sender`` 但非运行中心跳的触发/到期事件（如一次性 Timer 到期）。"""
+
+    OTHER = "other"
+    """与后台任务生命周期无关的系统消息。"""
+
+
+@dataclass(frozen=True)
+class _BgSystemEvent:
+    """单条 ``[Message]`` 分段解析出的后台任务事件语义。"""
+
+    kind: _BgSystemEventKind
+    task_ids: tuple[str, ...] = ()
+
+
+def _is_recurring_bg_task_start(content: str) -> bool:
+    """判断 ``status == RUNNING`` 的后台任务启动记录是否属于周期型 Cron 调度任务。
+
+    ``schedule`` 创建的周期型 Cron（``Task Description: Cron: ...``）在首次触发前可能静默
+    等待十余分钟，不属于阻塞当前轮次的一次性后台命令；剥离之以消除首次触发前的假忙，
+    同时不影响一次性 ``Timer``（``Task Description: Timer: ...``）与普通后台 shell 命令。
+    """
+    return bool(_BG_TASK_CRON_DESC_RE.search(content))
+
+
+def _split_system_message_segments(content: str) -> list[str]:
+    """将 ``SYSTEM_MESSAGE`` 按 ``[Message]`` 结构化分段拆分；无头标记时退化为整段。"""
+    cleaned = content.strip()
+    if not cleaned:
+        return []
+    parts = [part.strip() for part in _SYSTEM_MESSAGE_SEGMENT_SPLIT_RE.split(cleaned) if part.strip()]
+    message_parts = [part for part in parts if part.startswith("[Message]")]
+    return message_parts if message_parts else [cleaned]
+
+
+def _extract_system_message_body(segment: str) -> str:
+    """抽取单条 ``[Message]`` 分段的 ``content=`` 正文并剥离尾部的 ``</SYSTEM_MESSAGE>``。"""
+    match = _SYSTEM_MESSAGE_CONTENT_RE.search(segment)
+    body = match.group(1) if match else segment
+    body = re.sub(r"\s*</SYSTEM_MESSAGE>\s*\Z", "", body)
+    return body.strip()
+
+
+def _classify_bg_system_segment(segment: str) -> _BgSystemEvent:
+    """对单条 ``SYSTEM_MESSAGE`` 分段进行显式后台任务事件语义分类。"""
+    content_match = _SYSTEM_MESSAGE_CONTENT_RE.search(segment)
+    has_structured_body = content_match is not None
+    body = _extract_system_message_body(segment)
+    if _BG_TASK_STOPPED_ALL in body:
+        return _BgSystemEvent(_BgSystemEventKind.STOPPED_ALL)
+
+    sender_match = _BG_TASK_SYSTEM_SENDER_RE.search(segment)
+    sender_task_id = sender_match.group(1) if sender_match else None
+
+    heartbeat_match = _BG_TASK_RUNNING_HEARTBEAT_RE.match(body)
+    if heartbeat_match:
+        hb_ids: list[str] = []
+        if sender_task_id:
+            hb_ids.append(sender_task_id)
+        explicit_id = heartbeat_match.group(1)
+        if explicit_id and explicit_id not in hb_ids:
+            hb_ids.append(explicit_id)
+        return _BgSystemEvent(_BgSystemEventKind.RUNNING_HEARTBEAT, tuple(hb_ids))
+
+    if has_structured_body:
+        for pattern in (_BG_TASK_DONE_RE, _BG_TASK_CANCEL_RE):
+            head_match = pattern.match(body)
+            if head_match:
+                return _BgSystemEvent(_BgSystemEventKind.TERMINAL_RESULT, (head_match.group(1),))
+        if _BG_TASK_TERMINAL_PREFIX_RE.match(body) and sender_task_id:
+            return _BgSystemEvent(_BgSystemEventKind.TERMINAL_RESULT, (sender_task_id,))
+        if sender_task_id:
+            return _BgSystemEvent(_BgSystemEventKind.TIMER_OR_TRIGGER, (sender_task_id,))
+        return _BgSystemEvent(_BgSystemEventKind.OTHER)
+
+    terminal_ids: list[str] = []
+    for pattern in (_BG_TASK_DONE_RE, _BG_TASK_CANCEL_RE):
+        for match in pattern.finditer(body):
+            tid = match.group(1)
+            if tid not in terminal_ids:
+                terminal_ids.append(tid)
+    if (
+        _BG_TASK_TERMINAL_PREFIX_RE.match(body)
+        and sender_task_id
+        and sender_task_id not in terminal_ids
+    ):
+        terminal_ids.append(sender_task_id)
+    if terminal_ids:
+        return _BgSystemEvent(_BgSystemEventKind.TERMINAL_RESULT, tuple(terminal_ids))
+
+    if sender_task_id:
+        return _BgSystemEvent(_BgSystemEventKind.TIMER_OR_TRIGGER, (sender_task_id,))
+
+    return _BgSystemEvent(_BgSystemEventKind.OTHER)
+
+
+def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> bool:
+    """按单条记录推进本轮后台任务集合，并返回是否收到非终态运行中心跳提醒。
+
+    入集仅限阻塞当前轮次的一次性后台命令/Timer（剥离周期型 Cron）；
+    消费 ``SYSTEM_MESSAGE`` 时按 ``[Message]`` 分段做显式事件语义分流：
+    - ``RUNNING_HEARTBEAT``：严禁销账，保持任务留在 ``pending`` 中，并返回 ``True``
+      以指示上层清空此前缓存的过渡播报文本；
+    - ``TERMINAL_RESULT`` / ``TIMER_OR_TRIGGER``：按语义执行 ``pending.discard``；
+    - ``STOPPED_ALL``：清空全部挂起后台任务。
+    """
     record_type = record.get("type")
     if record_type == RECORD_CONVERSATION_HISTORY:
         # 跨进程续接会话回放边界：此前进程遗留的后台任务全部失效归零
         pending.clear()
-        return
+        return False
 
     content = record.get("content")
     if not isinstance(content, str) or not content:
-        return
+        return False
     if record.get("status") == "RUNNING":
         match = _BG_TASK_START_RE.search(content)
         if match:
-            pending.add(match.group(1))
-            return
+            if not _is_recurring_bg_task_start(content):
+                pending.add(match.group(1))
+            return False
     if record_type == RECORD_PLANNER:
         # 模型自身发言（含过渡播报末尾可能粘连的 fused 文本）不执行任务销账，
         # 留待紧随其后的独立 SYSTEM_MESSAGE 记录触发销账并作废过渡播报。
-        return
+        return False
+    if record_type == RECORD_SYSTEM_MESSAGE:
+        saw_heartbeat = False
+        for segment in _split_system_message_segments(content):
+            event = _classify_bg_system_segment(segment)
+            if event.kind == _BgSystemEventKind.STOPPED_ALL:
+                pending.clear()
+            elif event.kind == _BgSystemEventKind.RUNNING_HEARTBEAT:
+                saw_heartbeat = True
+            elif event.kind in (
+                _BgSystemEventKind.TERMINAL_RESULT,
+                _BgSystemEventKind.TIMER_OR_TRIGGER,
+            ):
+                for task_id in event.task_ids:
+                    pending.discard(task_id)
+        return saw_heartbeat
     if _BG_TASK_STOPPED_ALL in content:
         pending.clear()
-        return
+        return False
     for match in _BG_TASK_DONE_RE.finditer(content):
         pending.discard(match.group(1))
     for match in _BG_TASK_CANCEL_RE.finditer(content):
         pending.discard(match.group(1))
-    if record_type == RECORD_SYSTEM_MESSAGE:
-        for match in _BG_TASK_SYSTEM_SENDER_RE.finditer(content):
-            pending.discard(match.group(1))
+    return False
 
 
 def latest_turn(conversation_id: str) -> AgyTurn | None:
@@ -513,9 +661,10 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
     pending_bg_tasks: set[str] = set()
     for record in records[last_user_pos + 1 :]:
         before_pending = set(pending_bg_tasks)
-        _update_pending_bg_tasks(record, pending_bg_tasks)
-        if before_pending != pending_bg_tasks and not pending_bg_tasks:
-            # 后台任务刚刚完结或被终止：此前为了等待它而留下的过渡播报作废，等后续真正的收尾回复。
+        saw_running_heartbeat = _update_pending_bg_tasks(record, pending_bg_tasks)
+        if saw_running_heartbeat or (before_pending - pending_bg_tasks):
+            # 收到运行中心跳提醒或有后台任务刚完结/取消/到期/中止：
+            # 此前为了等待而留下的过渡播报作废，等待后续真正的收尾回复。
             final_text = None
             terminal_error = None
         record_type = record.get("type")

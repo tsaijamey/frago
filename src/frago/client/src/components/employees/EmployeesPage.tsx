@@ -23,6 +23,7 @@ import EmployeeCardDeck from './EmployeeCardDeck';
 import EmployeeSessionsPanel from './EmployeeSessionsPanel';
 import LaunchEmployeeDialog from './LaunchEmployeeDialog';
 import EmployeeDetailDialog from './EmployeeDetailDialog';
+import EmployeeAvatarModal from './EmployeeAvatarModal';
 
 const REFRESH_MS = 30_000;
 
@@ -46,6 +47,7 @@ export default function EmployeesPage() {
 
   const [launchFor, setLaunchFor] = useState<EmployeePost | null>(null);
   const [detailFor, setDetailFor] = useState<EmployeePost | null>(null);
+  const [avatarFor, setAvatarFor] = useState<EmployeePost | null>(null);
   const [creating, setCreating] = useState(false);
 
   const firstEnterButtonRef = useRef<HTMLButtonElement>(null);
@@ -114,7 +116,7 @@ export default function EmployeesPage() {
     firstEnterButtonRef.current?.focus();
   }, []);
 
-  const modalOpen = launchFor !== null || detailFor !== null || creating;
+  const modalOpen = launchFor !== null || detailFor !== null || avatarFor !== null || creating;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col emp-page-header">
@@ -228,6 +230,7 @@ export default function EmployeesPage() {
               activeId={selectedEmployee?.member_post_id ?? null}
               onSelect={handleSelectEmployee}
               onActivateCenter={handleActivateCenter}
+              onChangeAvatar={(post) => setAvatarFor(post)}
               modalOpen={modalOpen}
             />
 
@@ -246,6 +249,7 @@ export default function EmployeesPage() {
               onRetry={sessionsState.reload}
               onLoadMore={sessionsState.loadMore}
               onEditEmployee={(post) => setDetailFor(post)}
+              onChangeAvatar={(post) => setAvatarFor(post)}
               onLaunchSession={(post) => setLaunchFor(post)}
               onOpenSession={handleOpenSession}
               firstEnterButtonRef={firstEnterButtonRef}
@@ -270,11 +274,20 @@ export default function EmployeesPage() {
           setCreating(false);
         }}
         onSaved={reloadAll}
+        onChangeAvatar={(post) => setAvatarFor(post)}
         onCreated={(created) => {
           setCreating(false);
           setDetailFor(created);
           setEmpFilter('all');
           setSelectedId(created.member_post_id);
+        }}
+      />
+
+      <EmployeeAvatarModal
+        employee={avatarFor}
+        onClose={() => setAvatarFor(null)}
+        onSaved={() => {
+          reloadAll();
         }}
       />
     </div>
