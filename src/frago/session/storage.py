@@ -386,11 +386,13 @@ def _reconcile_monitored_status(
                     [(session.session_id, ev.heal_target, ev.heal_summary, ev.heal_waiting_reason)]
                 )
 
+    if ev.lifecycle_state == "cancelled":
+        return SessionStatus.CANCELLED
     if ev.ui_status == "error" or ev.lifecycle_state == "error":
         return SessionStatus.ERROR
     if ev.ui_status == "running" or ev.lifecycle_state == "running":
         return SessionStatus.RUNNING
-    if ev.lifecycle_state in {"awaiting_input", "queued", "cancelled", "completed"}:
+    if ev.lifecycle_state in {"awaiting_input", "queued", "completed"}:
         return _status_from_ontology_state(ev.lifecycle_state)
     return _live_status(session.status, session.last_activity, now)
 
@@ -445,19 +447,24 @@ def _derive_session_from_raw(
         if stats is None:
             return None
         resolved_status = stats.status
-        if resolved_status not in (SessionStatus.ERROR, SessionStatus.RUNNING) and onto_rec is not None:
+        if onto_rec is not None:
             onto_state = str(getattr(onto_rec, "lifecycle_state", "") or "").lower()
-            if onto_state == "error":
-                onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
-                if not (
-                    resolved_status == SessionStatus.COMPLETED
-                    and getattr(stats, "last_event_kind", None) in ("assistant_text", "turn_end")
-                    and getattr(stats, "last_reply_at", None) is not None
-                    and stats.last_reply_at.timestamp() > onto_updated + 5.0
-                ):
-                    resolved_status = SessionStatus.ERROR
-            elif onto_state in {"cancelled", "completed", "awaiting_input"}:
-                resolved_status = _status_from_ontology_state(onto_state)
+            if onto_state == "cancelled":
+                resolved_status = SessionStatus.CANCELLED
+            elif resolved_status not in (SessionStatus.ERROR, SessionStatus.RUNNING):
+                if onto_state == "error":
+                    onto_updated = float(getattr(onto_rec, "updated_at", 0) or 0)
+                    if not (
+                        resolved_status == SessionStatus.COMPLETED
+                        and getattr(stats, "last_event_kind", None) in ("assistant_text", "turn_end")
+                        and getattr(stats, "last_reply_at", None) is not None
+                        and stats.last_reply_at.timestamp() > onto_updated + 5.0
+                    ):
+                        resolved_status = SessionStatus.ERROR
+                elif onto_state in {"completed", "awaiting_input"}:
+                    resolved_status = _status_from_ontology_state(onto_state)
+            elif onto_state == "awaiting_input" and not getattr(stats, "has_transcript_error", False):
+                resolved_status = SessionStatus.AWAITING_INPUT
         if status_filter is not None and resolved_status != status_filter:
             return None
         fallback_dt = stats.last_activity or datetime.now()
@@ -523,6 +530,7 @@ def _load_session_from_dir(
     now: datetime | None = None,
     *,
     status_filter: SessionStatus | None = None,
+    onto_rec: Any = None,
 ) -> MonitoredSession | None:
     """一个会话目录 → 一条 ``MonitoredSession``。metadata 优先，没有就从原文副本派生。
 
@@ -553,6 +561,7 @@ def _load_session_from_dir(
         raw_path,
         now,
         status_filter=status_filter,
+        onto_rec=onto_rec,
     )
 
 
@@ -1364,16 +1373,25 @@ def list_sessions(
     def _extend_to(target: int) -> None:
         nonlocal scanned
         for _mtime, session_dir in candidates[scanned:target]:
+            onto_rec = onto_map.get(session_dir.name)
             effective_filter = (
                 None
-                if (status is not None and session_dir.name in onto_map)
+                if (status is not None and onto_rec is not None)
                 else status
             )
-            session = _load_session_from_dir(
-                session_dir,
-                now,
-                status_filter=effective_filter,
-            )
+            if onto_rec is not None:
+                session = _load_session_from_dir(
+                    session_dir,
+                    now,
+                    status_filter=effective_filter,
+                    onto_rec=onto_rec,
+                )
+            else:
+                session = _load_session_from_dir(
+                    session_dir,
+                    now,
+                    status_filter=effective_filter,
+                )
             if session is None:
                 continue
 
@@ -1459,10 +1477,15 @@ def find_session_by_prefix(
     for session_dir in sorted(agent_dir.iterdir()):
         if not session_dir.is_dir() or not session_dir.name.startswith(prefix):
             continue
-        session = _load_session_from_dir(
-            session_dir,
-            now,
-        )
+        onto_rec = onto_map.get(session_dir.name)
+        if onto_rec is not None:
+            session = _load_session_from_dir(
+                session_dir,
+                now,
+                onto_rec=onto_rec,
+            )
+        else:
+            session = _load_session_from_dir(session_dir, now)
         if session is None:
             continue
         session.status = _reconcile_monitored_status(

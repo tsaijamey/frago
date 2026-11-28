@@ -153,6 +153,7 @@ class CoreAgentSessionStats:
     name: str | None
     last_event_kind: str | None = None
     last_reply_at: datetime | None = None
+    has_transcript_error: bool = False
 
 
 def _parse_iso_to_local_dt(value: Any) -> datetime | None:
@@ -191,11 +192,16 @@ def inspect_session_file(
     path: Path,
     *,
     now: datetime | None = None,
+    is_alive: bool | None = None,
 ) -> CoreAgentSessionStats | None:
     """解析单份 CoreAgent JSONL（支持原生记录与 ``raw.jsonl`` 镜像）。
 
     返回 ``started_at``、``last_activity``、``ended_at``、``status``、``step_count``、
-    ``tool_call_count``、``project_path`` 与 ``name``。文件不存在或为空时返回 None。
+    ``tool_call_count``、``project_path``、``name`` 与 ``has_transcript_error``。
+    当调用方已知底层进程物理存活时传入 ``is_alive=True``，停在未闭合中间态的
+    长耗时工具调用不会因静默超过 90 秒窗口而被误判为 ``SessionStatus.ERROR``；
+    传入 ``is_alive=False`` 且末帧为未闭合中间态时，即使在 90 秒内也判定为 ``ERROR``。
+    文件不存在或为空时返回 None。
     """
     try:
         st = path.stat()
@@ -355,19 +361,26 @@ def inspect_session_file(
     # 判定状态与 ended_at：
     # 1. 末轮以异常/空答/API错误收尾 → error（绝不折叠为 completed）；
     # 2. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账，或纯文本 assistant 回复 → completed；
-    # 3. 末尾停在中间态（assistant_tool / assistant_think / user）且超过 90s 活跃窗口 → error
-    #    （工具调用/轮次中途退场绝不能被 90s 超时折叠为 completed）；
+    # 3. 末尾停在中间态（assistant_tool / assistant_think / user）：
+    #    - 已知进程仍物理存活（is_alive=True）→ running（长耗时工具绝不因 >90s 误判 error）；
+    #    - 已知进程已离线（is_alive=False）或无存活信号且超过 90s 活跃窗口 → error
+    #      （工具调用/轮次中途退场绝不能被 90s 超时折叠为 completed）；
+    #    - 其余（is_alive=None 且在 90s 活跃窗口内）→ running；
     # 4. 其余非中间态记录（如纯系统元信息/空壳）超过 90s 活跃窗口 → completed；
     # 5. 90s 活跃窗口内 → running。
     in_progress_events = ("assistant_tool", "assistant_think", "user")
-    if last_event_kind == "error" or last_turn_error:
+    has_transcript_error = bool(last_event_kind == "error" or last_turn_error)
+    if has_transcript_error:
         status = SessionStatus.ERROR
         ended_at = last_dt or mtime_dt
     elif last_event_kind in ("turn_end", "assistant_text"):
         status = SessionStatus.COMPLETED
         ended_at = last_dt or mtime_dt
     elif last_event_kind in in_progress_events:
-        if idle > COREAGENT_RUNNING_WINDOW_SECONDS:
+        if is_alive is True:
+            status = SessionStatus.RUNNING
+            ended_at = None
+        elif is_alive is False or idle > COREAGENT_RUNNING_WINDOW_SECONDS:
             status = SessionStatus.ERROR
             ended_at = last_dt or mtime_dt
         else:
@@ -392,6 +405,7 @@ def inspect_session_file(
         name=name,
         last_event_kind=last_event_kind,
         last_reply_at=last_reply_dt,
+        has_transcript_error=has_transcript_error,
     )
 
 

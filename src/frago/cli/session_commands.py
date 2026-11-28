@@ -723,16 +723,22 @@ def _resolve_session_via_record_reader(
 
     if card is not None:
         onto_lifecycle = str(getattr(card, "lifecycle_state", "") or "").strip().lower()
-        if onto_lifecycle == "error" or card.status == "error":
+        lifecycle_to_status = {
+            "error": SessionStatus.ERROR,
+            "running": SessionStatus.RUNNING,
+            "awaiting_input": SessionStatus.AWAITING_INPUT,
+            "queued": SessionStatus.QUEUED,
+            "cancelled": SessionStatus.CANCELLED,
+            "completed": SessionStatus.COMPLETED,
+        }
+        if onto_lifecycle in lifecycle_to_status:
+            mapped_status = lifecycle_to_status[onto_lifecycle]
+        elif card.status == "error":
             mapped_status = SessionStatus.ERROR
-        elif onto_lifecycle == "running" or card.status == "running":
+        elif card.status == "running":
             mapped_status = SessionStatus.RUNNING
-        elif onto_lifecycle == "awaiting_input" or card.status == "awaiting_input":
+        elif card.status == "awaiting_input":
             mapped_status = SessionStatus.AWAITING_INPUT
-        elif onto_lifecycle == "queued":
-            mapped_status = SessionStatus.QUEUED
-        elif onto_lifecycle == "cancelled":
-            mapped_status = SessionStatus.CANCELLED
         else:
             mapped_status = SessionStatus.COMPLETED
         started_dt = (

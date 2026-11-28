@@ -165,6 +165,73 @@ class TestCoreAgentInspectToolAbort:
         assert info.last_event_kind == expected_kind
         assert info.status == SessionStatus.COMPLETED
 
+    def test_in_progress_event_beyond_90s_stays_running_when_is_alive_true(
+        self, tmp_path: Path
+    ) -> None:
+        jsonl = tmp_path / "sess_long_live_tool.jsonl"
+        _write_coreagent_jsonl(
+            jsonl,
+            [
+                {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "long build"}},
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "tu_live", "name": "Bash", "input": {"command": "sleep 600"}}],
+                    },
+                },
+            ],
+            mtime_offset_sec=420.0,
+        )
+        live_info = inspect_session_file(jsonl, is_alive=True)
+        assert live_info is not None
+        assert live_info.last_event_kind == "assistant_tool"
+        assert live_info.status == SessionStatus.RUNNING
+        assert live_info.ended_at is None
+        assert live_info.has_transcript_error is False
+
+    def test_in_progress_event_within_90s_marks_error_when_is_alive_false(
+        self, tmp_path: Path
+    ) -> None:
+        jsonl = tmp_path / "sess_dead_fast.jsonl"
+        _write_coreagent_jsonl(
+            jsonl,
+            [
+                {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "run"}},
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "tu_dead", "name": "Bash", "input": {"command": "exit 1"}}],
+                    },
+                },
+            ],
+            mtime_offset_sec=15.0,
+        )
+        dead_info = inspect_session_file(jsonl, is_alive=False)
+        assert dead_info is not None
+        assert dead_info.last_event_kind == "assistant_tool"
+        assert dead_info.status == SessionStatus.ERROR
+        assert dead_info.has_transcript_error is False
+
+    def test_real_transcript_error_stays_error_even_when_is_alive_true(
+        self, tmp_path: Path
+    ) -> None:
+        jsonl = tmp_path / "sess_real_err.jsonl"
+        _write_coreagent_jsonl(
+            jsonl,
+            [
+                {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "ask"}},
+                {"type": "system", "subtype": "api_error", "level": "error", "content": "502 bad gateway"},
+            ],
+            mtime_offset_sec=10.0,
+        )
+        err_info = inspect_session_file(jsonl, is_alive=True)
+        assert err_info is not None
+        assert err_info.last_event_kind == "error"
+        assert err_info.status == SessionStatus.ERROR
+        assert err_info.has_transcript_error is True
+
 
 class TestEvaluateSessionLivenessAndState:
     """`evaluate_session_liveness_and_state()` 正反边界与存量纠偏。"""
@@ -278,6 +345,67 @@ class TestEvaluateSessionLivenessAndState:
             now_s=now,
         )
         assert ev.lifecycle_state == "cancelled"
+        assert ev.ui_status == "idle"
+        assert ev.tool_aborted is False
+        assert ev.heal_target is None
+
+    @pytest.mark.parametrize(
+        "card_status,last_kind,expected_ui",
+        [
+            ("error", "assistant_tool", "idle"),
+            ("error", "tool.call", "idle"),
+            ("error", "error", "idle"),
+            ("error", "agent.say", "done"),
+            ("running", "assistant_tool", "idle"),
+        ],
+    )
+    def test_cancelled_session_protected_from_error_card_and_transcript_signals(
+        self, card_status: str, last_kind: str, expected_ui: str
+    ) -> None:
+        """D1: 人工 cancelled 终态面对 card_status='error' / last_kind='error' 绝不被篡改或触发自愈写库。"""
+        now = time.time()
+        onto = _make_onto_rec(
+            "sess-cancelled-d1",
+            lifecycle_state="cancelled",
+            updated_at=now - 500.0,
+            summary="user_cancelled",
+        )
+        ev = evaluate_session_liveness_and_state(
+            session_id="sess-cancelled-d1",
+            onto_rec=onto,
+            card_status=card_status,
+            last_kind=last_kind,
+            last_active_s=now - 500.0,
+            in_tmux=False,
+            liveness_flag=False,
+            now_s=now,
+        )
+        assert ev.lifecycle_state == "cancelled"
+        assert ev.ui_status == expected_ui
+        assert ev.tool_aborted is False
+        assert ev.heal_target is None
+        assert ev.heal_summary is None
+
+    def test_awaiting_input_protected_from_heuristic_error_card_without_transcript_error(
+        self,
+    ) -> None:
+        now = time.time()
+        onto = _make_onto_rec(
+            "sess-await-heuristic",
+            lifecycle_state="awaiting_input",
+            updated_at=now - 600.0,
+        )
+        ev = evaluate_session_liveness_and_state(
+            session_id="sess-await-heuristic",
+            onto_rec=onto,
+            card_status="error",
+            last_kind="assistant_tool",
+            last_active_s=now - 600.0,
+            in_tmux=False,
+            liveness_flag=False,
+            now_s=now,
+        )
+        assert ev.lifecycle_state == "awaiting_input"
         assert ev.tool_aborted is False
         assert ev.heal_target is None
 
@@ -492,3 +620,145 @@ class TestCliSessionShowLifecycleMapping:
             assert loaded is not None
             session_obj = loaded[0]
             assert session_obj.status == expected
+
+    def test_show_prioritizes_cancelled_ontology_lifecycle_over_error_card_status(self) -> None:
+        """D1: 即使底层卡片 status='error'，只要本体 lifecycle_state='cancelled'，CLI 必须映射为 CANCELLED。"""
+        from frago.cli import session_commands as sc
+
+        now_ms = int(time.time() * 1000)
+        card = SessionCard(
+            session_id="core_f4_cancelled_cli",
+            family="coreagent",
+            title="Cancelled mid-tool",
+            directory="/tmp/demo",
+            created_at=now_ms - 300_000,
+            last_active_at=now_ms - 240_000,
+            last_reply_at=None,
+            agent_paths=[],
+            status="error",
+            digest_done=None,
+            digest_stuck=None,
+            last_kind="tool.call",
+            lifecycle_state="cancelled",
+        )
+        with (
+            patch("frago.session.record_reader.list_sessions", return_value=[card]),
+            patch("frago.session.record_reader.read_records", return_value=[]),
+        ):
+            loaded = sc._resolve_session_via_record_reader("core_f4_cancelled_cli")
+        assert loaded is not None
+        assert loaded[0].status == SessionStatus.CANCELLED
+
+
+class TestCancelledEndToEndReadPathProtection:
+    """D1 端到端防回归：cancelled 终态经 inspect/storage/list/show/batch_reconcile 后存储零污染。"""
+
+    def test_cancelled_coreagent_session_survives_storage_list_show_and_record_reader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from frago.session import coreagent_store, record_reader, storage
+        from frago.session import service as sess_service
+        from frago.session.models import AgentType
+
+        sid = "core_f4_cancelled_not_overwritten"
+        # 1. 真实搭建持久化本体存储：人工 cancelled 终态
+        store_path = tmp_path / "session-ontology-store.json"
+        store = SessionOntologyStore(
+            store_path,
+            legacy_ledger_path=tmp_path / "agent-launches.json",
+        )
+        svc = SessionOntologyService(store=store)
+        now = time.time()
+        store.save(
+            _make_onto_rec(
+                sid,
+                lifecycle_state="cancelled",
+                updated_at=now - 300.0,
+                summary="user_cancelled",
+            )
+        )
+        _backdate_store_record(store_path, sid, int(now - 300.0))
+
+        # 2. 真实搭建 CoreAgent 原生转录与 session storage 镜像（末帧 tool_use 且静默 300s > 90s）
+        events = [
+            {"type": "user", "cwd": str(tmp_path), "message": {"role": "user", "content": "run long task"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "tu_f4", "name": "Bash", "input": {"command": "sleep 999"}}],
+                },
+            },
+        ]
+        core_root = tmp_path / "coreagent_sessions"
+        native_jsonl = core_root / "-tmp-demo" / f"{sid}.jsonl"
+        _write_coreagent_jsonl(native_jsonl, events, mtime_offset_sec=300.0)
+
+        sessions_base = tmp_path / "frago_sessions"
+        mirror_jsonl = sessions_base / "coreagent" / sid / "raw.jsonl"
+        _write_coreagent_jsonl(mirror_jsonl, events, mtime_offset_sec=300.0)
+
+        # 验证前置条件：无 is_alive 参数直接 inspect 会判定为 ERROR（正是触发 F4 缺陷的诱因）
+        raw_stats = coreagent_store.inspect_session_file(mirror_jsonl)
+        assert raw_stats is not None
+        assert raw_stats.last_event_kind == "assistant_tool"
+        assert raw_stats.status == SessionStatus.ERROR
+
+        monkeypatch.setattr(storage, "get_session_base_dir", lambda: sessions_base)
+        monkeypatch.setattr(storage, "_live_tmux_session_ids", lambda: set())
+        monkeypatch.setattr(storage, "_live_coreagent_states", lambda: {})
+        monkeypatch.setattr(coreagent_store, "sessions_root", lambda: core_root)
+        monkeypatch.setattr(sess_service, "get_default_session_service", lambda: svc)
+        monkeypatch.setattr(sess_service, "can_write_ontology_store", lambda _s: True)
+        monkeypatch.setattr(record_reader, "_claude_cards", lambda *a, **k: [])
+        monkeypatch.setattr(record_reader, "_opencode_cards", lambda *a, **k: [])
+        monkeypatch.setattr(record_reader, "_codex_cards", lambda *a, **k: [])
+        monkeypatch.setattr(record_reader, "_agy_cards", lambda *a, **k: [])
+
+        # 3. 依次走 storage.find_session_by_prefix / storage.list_sessions / record_reader.list_sessions
+        found = storage.find_session_by_prefix(sid, AgentType.COREAGENT)
+        assert found is not None
+        assert found.status == SessionStatus.CANCELLED
+
+        listed = storage.list_sessions(agent_type=AgentType.COREAGENT, limit=20)
+        assert any(s.session_id == sid and s.status == SessionStatus.CANCELLED for s in listed)
+
+        cards = record_reader.list_sessions()
+        matched_cards = [c for c in cards if c.session_id == sid]
+        assert len(matched_cards) == 1
+        assert matched_cards[0].lifecycle_state == "cancelled"
+        assert matched_cards[0].status != "error"
+
+        # 4. Click CLI 端到端：frago session show / list 必须展示 Cancelled 而非 Error
+        from click.testing import CliRunner
+
+        from frago.cli.session_commands import session_group
+
+        runner = CliRunner()
+        show_res = runner.invoke(session_group, ["show", sid, "--agent-type", "coreagent"])
+        assert show_res.exit_code == 0, show_res.output
+        assert "Cancelled" in show_res.output
+        assert "Status: Error" not in show_res.output
+
+        list_res = runner.invoke(session_group, ["list", "--agent-type", "coreagent"])
+        assert list_res.exit_code == 0, list_res.output
+        assert "Cancelled" in list_res.output
+
+        # 5. 纵深守卫：reconcile_session_lifecycle 与 batch_reconcile_states 均不得覆写 cancelled
+        reconciled = svc.reconcile_session_lifecycle(
+            session_id=sid,
+            is_alive=False,
+            observed_error="process_terminated_mid_turn",
+            observed_terminal_state="error",
+        )
+        assert reconciled is not None
+        assert reconciled.lifecycle_state == "cancelled"
+
+        changed = store.batch_reconcile_states([(sid, "error", "process_terminated_mid_turn")])
+        assert changed == 0
+
+        # 6. 落盘回读持久化本体存储：cancelled 与原 summary 毫发无损
+        disk_data = json.loads(store_path.read_text(encoding="utf-8"))
+        disk_rec = disk_data["sessions"][sid]
+        assert disk_rec["lifecycle_state"] == "cancelled"
+        assert disk_rec["summary"] == "user_cancelled"

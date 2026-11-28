@@ -591,6 +591,10 @@ class SessionOntologyService:
             new_waiting_reason = None
             if current == "error":
                 new_summary = ""
+        elif current == "cancelled":
+            # 人工取消（cancelled）为受保护终态：非新一轮活跃重启时，旧轮次的报错或终态观测信号
+            # 绝不可将其覆写为 error / completed / awaiting_input。
+            target = "cancelled"
         elif clean_error:
             # Error MUST remain explicitly exposed and NEVER folded into completed
             if is_alive is not True or current in {"running", "queued", "completed"}:
@@ -1224,10 +1228,35 @@ def evaluate_session_liveness_and_state(
             heal_summary="",
         )
 
-    if norm_card_status == "error" or norm_kind == "error":
+    # 人工取消（cancelled）为受保护终态：除非前面已由真实活跃轮次重开（is_core_busy / has_live_dispatch），
+    # 否则任何旧卡片/转录的 error、tool_abort 或 idle 信号都绝不可将其改判为 error，
+    # 更严禁生成 heal_target 覆写持久化本体存储。
+    if onto_state == "cancelled":
+        ui = (
+            "done"
+            if norm_kind == "agent.say"
+            else (
+                norm_card_status
+                if norm_card_status in {"done", "idle"}
+                else "idle"
+            )
+        )
+        return EvaluatedSessionState(
+            ui_status=ui,
+            lifecycle_state="cancelled",
+            physically_alive=physically_alive,
+            actively_running=False,
+            heal_target=None,
+            tool_aborted=False,
+        )
+
+    if (
+        norm_kind == "error"
+        or (norm_card_status == "error" and onto_state != "awaiting_input")
+    ):
         should_heal_error = (
             onto_rec is not None
-            and onto_state != "error"
+            and onto_state not in {"error", "cancelled"}
             and not (liveness_flag is None and has_fresh_onto_turn)
         )
         is_mid_turn_abort = norm_kind in IN_PROGRESS_TRANSCRIPT_KINDS or (
