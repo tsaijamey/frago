@@ -624,6 +624,196 @@ class TestEmployeeScheduleExecution:
         assert jobs[0].status == "superseded"
         assert isolated_emp["store"].get("core_emp_timeout_01").lifecycle_state == "error"
 
+    @pytest.mark.parametrize("turn_status", ["ok", "timeout"])
+    def test_claude员工定时触发单轨不分裂且本体严格一致(
+        self, isolated_emp, monkeypatch, turn_status: str
+    ):
+        """AC-1 / AC-2 / AC-4：claude 员工单次定时触发（成功或超时）均不生成未换算 raw_sid 幽灵目录。"""
+        import uuid as uuid_mod
+        from datetime import timedelta
+
+        from frago.agent_driver import SessionLauncher, TurnResult
+        from frago.agent_driver.drivers.claude import session_id_for
+        from frago.agent_driver.tmux_session import tmux_name_for
+        from frago.agent_driver.transcript import persist_turn_result
+        from frago.employee.store import EmployeePostRecord, save_post
+        from frago.server.services import tmux_sessions_service
+        from frago.session import storage as session_storage
+
+        sessions_dir = isolated_emp["tmp_path"] / "sessions"
+        monkeypatch.setattr(session_storage, "get_session_base_dir", lambda: sessions_dir)
+
+        claude_emp = EmployeePostRecord(
+            member_post_id="claude-stock-emp",
+            title="A股盘前调研专员",
+            description="使用 claude 执行定时调研",
+            agent_kernel="claude",
+            cwd=str(isolated_emp["cwd"]),
+            skills=[],
+        )
+        save_post(claude_emp)
+
+        fixed_raw_sid = "62d0beb0-d029-4820-8a79-c7727b7dd7cb"
+        expected_canonical_sid = session_id_for(fixed_raw_sid, native=False)
+        monkeypatch.setattr(uuid_mod, "uuid4", lambda: uuid_mod.UUID(fixed_raw_sid))
+
+        launcher_calls: list[dict] = []
+        closed_tmux: list[str] = []
+        monkeypatch.setattr(
+            tmux_sessions_service,
+            "close_sessions",
+            lambda names: closed_tmux.extend(names),
+        )
+
+        def fake_launcher_run(self, prompt, **kwargs):
+            launcher_calls.append(kwargs)
+            t0 = datetime(2026, 11, 28, 9, 0, 0)
+            res = TurnResult(
+                text="" if turn_status == "timeout" else "盘前报告已生成",
+                raw_delta="",
+                status=turn_status,
+                duration_ms=120_000,
+                started_at=t0,
+                ended_at=t0 + timedelta(seconds=120),
+                canonical_session_id=expected_canonical_sid,
+                tmux_name=tmux_name_for(fixed_raw_sid),
+            )
+            if kwargs.get("persist_turn"):
+                persist_turn_result(
+                    session_id=kwargs["session_id"],
+                    agent_type=kwargs["agent_type"],
+                    project_path=kwargs["cwd"],
+                    user_prompt=prompt,
+                    result=res,
+                    native_session_id=kwargs.get("native_session_id", False),
+                    source=kwargs.get("source", "terminal"),
+                )
+            return res
+
+        monkeypatch.setattr(SessionLauncher, "run", fake_launcher_run)
+
+        s = {
+            "id": "sch_claude_stock",
+            "name": "开盘前调研",
+            "kind": "employee",
+            "employee_id": "claude-stock-emp",
+            "prompt": "执行今日盘前调研",
+        }
+        out = ex.execute_employee(
+            s, timeout=120, triggered_at=datetime(2026, 11, 28, 9, 0, 0)
+        )
+
+        assert len(launcher_calls) == 1
+        assert launcher_calls[0]["persist_turn"] is True
+        assert launcher_calls[0]["source"] == "schedule-employee"
+
+        # 磁盘绝不生成未换算 raw_sid 的幽灵合成目录
+        assert not (sessions_dir / "claude" / fixed_raw_sid).exists()
+        assert out.session_id == expected_canonical_sid
+
+        # 本体账本仅存在 1 条规范会话记录，origin 保持 schedule
+        all_onto = isolated_emp["store"].list_all()
+        assert len(all_onto) == 1
+        assert all_onto[0].session_id == expected_canonical_sid
+        assert all_onto[0].origin == "schedule"
+
+        if turn_status == "ok":
+            assert out.ok is True
+            assert out.stdout == "盘前报告已生成"
+            assert all_onto[0].lifecycle_state == "completed"
+        else:
+            assert out.ok is False
+            assert out.payload.get("error_code") == "SCHEDULE_TIMEOUT"
+            assert all_onto[0].lifecycle_state == "error"
+            assert closed_tmux == [f"frago-agent-{fixed_raw_sid}"]
+
+    def test_claude超时清理精准命中底层raw_tmux句柄且不误伤并发任务(
+        self, isolated_emp, monkeypatch
+    ):
+        """AC-3：超时与异常清理必须精准关闭 frago-agent-{raw_sid}，绝不传换算后 uuid5 编号也不误伤并发任务。"""
+        import uuid as uuid_mod
+
+        from frago.agent_driver import SessionLauncher, TurnResult
+        from frago.agent_driver.drivers.claude import session_id_for
+        from frago.agent_driver.tmux_session import tmux_name_for
+        from frago.employee.store import EmployeePostRecord, save_post
+        from frago.server.services import tmux_sessions_service
+
+        claude_emp = EmployeePostRecord(
+            member_post_id="claude-timeout-emp",
+            title="超时清理专员",
+            description="验证精确句柄清理",
+            agent_kernel="claude",
+            cwd=str(isolated_emp["cwd"]),
+            skills=[],
+        )
+        save_post(claude_emp)
+
+        raw_sid_timeout = "62d0beb0-d029-4820-8a79-c7727b7dd7cb"
+        canonical_sid_timeout = session_id_for(raw_sid_timeout, native=False)
+        concurrent_other_tmux = "frago-agent-concurrent-task-999"
+
+        # 模拟当前活跃的 tmux 会话集合（包含目标会话与另一个并发任务）
+        live_tmux = {tmux_name_for(raw_sid_timeout), concurrent_other_tmux}
+        closed_calls: list[list[str]] = []
+
+        def fake_close_sessions(names: list[str]) -> None:
+            closed_calls.append(list(names))
+            for n in names:
+                live_tmux.discard(n)
+
+        monkeypatch.setattr(tmux_sessions_service, "close_sessions", fake_close_sessions)
+        monkeypatch.setattr(uuid_mod, "uuid4", lambda: uuid_mod.UUID(raw_sid_timeout))
+        monkeypatch.setattr(
+            SessionLauncher,
+            "run",
+            lambda self, _p, **_kw: TurnResult(
+                text="",
+                raw_delta="",
+                status="timeout",
+                duration_ms=30_000,
+                canonical_session_id=canonical_sid_timeout,
+                tmux_name=tmux_name_for(raw_sid_timeout),
+            ),
+        )
+
+        s = {
+            "id": "sch_claude_timeout_exact",
+            "name": "精确清理测试",
+            "kind": "employee",
+            "employee_id": "claude-timeout-emp",
+            "prompt": "长任务",
+        }
+        out = ex.execute_employee(
+            s, timeout=30, triggered_at=datetime(2026, 11, 28, 9, 5, 0)
+        )
+        assert out.ok is False
+        assert out.session_id == canonical_sid_timeout
+        assert closed_calls == [[f"frago-agent-{raw_sid_timeout}"]]
+        assert f"frago-agent-{canonical_sid_timeout}" not in [
+            n for batch in closed_calls for n in batch
+        ]
+        # 目标会话被精准销毁，并发任务毫发无损
+        assert tmux_name_for(raw_sid_timeout) not in live_tmux
+        assert concurrent_other_tmux in live_tmux
+
+        # 异常分支同样精准命中 frago-agent-{raw_sid}
+        raw_sid_exc = "11111111-2222-3333-4444-555555555555"
+        live_tmux.add(tmux_name_for(raw_sid_exc))
+        closed_calls.clear()
+        monkeypatch.setattr(uuid_mod, "uuid4", lambda: uuid_mod.UUID(raw_sid_exc))
+
+        def boom(_self, _p, **_kw):
+            raise RuntimeError("boom mid-run")
+
+        monkeypatch.setattr(SessionLauncher, "run", boom)
+        out_exc = ex.execute_employee(
+            s, timeout=30, triggered_at=datetime(2026, 11, 28, 9, 10, 0)
+        )
+        assert out_exc.ok is False
+        assert closed_calls == [[f"frago-agent-{raw_sid_exc}"]]
+        assert concurrent_other_tmux in live_tmux
+
 
 class TestScheduleDecisionInboxLoop:
     """定时任务环境变量注入 + employee/prompt 统一决策收件箱闭环回归测试。"""

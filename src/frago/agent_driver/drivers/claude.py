@@ -926,6 +926,10 @@ def _read_answer(pane: str, prompt: str) -> str:
     claude 把每轮答案以 ``⏺`` bullet 渲染在该轮提示符回显（``❯ <prompt>``）下方、
     底部输入框上方。多轮常驻会话里上轮内容仍可见，故按 prompt 回显定位本轮区块，
     取其后、下一边界前的 bullet 文本——保证 delta 语义（只返回本轮新答案）。
+
+    当超长/多行 prompt 滚出可见区导致回显锚点失配（``start == -1``）时，严禁回退
+    到抓取整屏文本（否则会把未消化的提示词残片伪装成答复）：此时仅在屏幕中存在
+    明确的 ``⏺`` 答案起始标记时截取最后一个答案块；屏幕无 ``⏺`` 时诚实返回空串。
     """
     norm = prompt.replace(" ", " ").strip()
     lines = pane.splitlines()
@@ -936,7 +940,29 @@ def _read_answer(pane: str, prompt: str) -> str:
         if m and m.group("text").replace(" ", " ").strip() == norm:
             start = i
             break
-    block = lines[start + 1 :] if start >= 0 else lines
+    if start >= 0:
+        block = lines[start + 1 :]
+    else:
+        # 锚点失配：仅承认显式 ⏺ 答案块，绝不把无 bullet 的提示词/终端残片当答复。
+        last_bullet = -1
+        for i in range(len(lines) - 1, -1, -1):
+            if _ANSWER_BULLET.match(lines[i]):
+                last_bullet = i
+                break
+        if last_bullet < 0:
+            return ""
+        # 向上回溯至最近一个区块边界，再从该区块内的第一个 ⏺ 开始截取。
+        seg_start = 0
+        for i in range(last_bullet - 1, -1, -1):
+            if _BLOCK_END.match(lines[i]):
+                seg_start = i + 1
+                break
+        first_bullet = last_bullet
+        for i in range(seg_start, last_bullet + 1):
+            if _ANSWER_BULLET.match(lines[i]):
+                first_bullet = i
+                break
+        block = lines[first_bullet:]
     out: list[str] = []
     for ln in block:
         if _BLOCK_END.match(ln):

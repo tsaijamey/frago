@@ -159,3 +159,97 @@ def test_ready_box_still_rejects_text_typed_into_the_box() -> None:
     assert not _READY_BOX.matches("❯ claude --dangerously-skip-permissions --session-id x")
     # 形似提示但不是它（没有引号 / 引号里跨行）也不算空。
     assert not _READY_BOX.matches("❯ Try this instead")
+
+
+def test_read_answer_anchor_mismatch_without_bullet_returns_empty() -> None:
+    """AC-4：>70KB 超长 prompt 滚出可见区导致锚点失配且无 ⏺ 答复块时，严禁抓取整屏提示词残片。"""
+    long_prompt = "<frago-employee>\n" + ("任务上下文行\n" * 6000) + "</frago-employee>"
+    pane_only_prompt_fragments = (
+        "任务上下文行\n"
+        "<frago-employee>\n"
+        "请执行每日开盘前检查并生成报告\n"
+        "────────\n"
+        "❯ \n"
+        "────────\n"
+        "  ⏵⏵ bypass permissions on\n"
+    )
+    assert _read_answer(pane_only_prompt_fragments, long_prompt) == ""
+
+
+def test_read_answer_anchor_mismatch_with_bullet_extracts_only_answer_block() -> None:
+    """锚点失配但屏幕上已有显式 ⏺ 答案块时，仅提取 ⏺ 块，绝不混入上方提示词残片。"""
+    long_prompt = "<frago-employee>\n" + ("背景段落\n" * 6000) + "</frago-employee>"
+    pane = (
+        "残留的提示词片段行 1\n"
+        "残留的提示词片段行 2\n"
+        "⏺ 今日检查已完成，全部指标正常。\n"
+        "  无异常项。\n"
+        "────────\n"
+        "❯ \n"
+    )
+    extracted = _read_answer(pane, long_prompt)
+    assert "残留的提示词片段" not in extracted
+    assert "今日检查已完成，全部指标正常。" in extracted
+    assert "无异常项。" in extracted
+
+
+def test_tmux_session_send_timeout_never_calls_read_answer_and_sets_metadata() -> None:
+    """AC-4：TmuxAgentSession.send 超时不调 read_answer，text 置空且保真时间与双标识。"""
+    from frago.agent_driver.driver import AgentDriver, PaneMatcher
+    from frago.agent_driver.drivers.claude import session_id_for
+    from frago.agent_driver.tmux_session import TmuxAgentSession, tmux_name_for
+
+    read_answer_calls = 0
+
+    def spy_read_answer(_pane: str, _prompt: str) -> str:
+        nonlocal read_answer_calls
+        read_answer_calls += 1
+        return "<frago-employee>SHOULD_NEVER_BE_SCRAPED"
+
+    driver = AgentDriver(
+        agent_type="claude",
+        launch_command=lambda _ctx: "claude",
+        ready_signal=PaneMatcher(name="ready", pattern=r"❯"),
+        submit=lambda _sess, _prompt: None,
+        done_signal=PaneMatcher(name="done", pattern=r"NEVER_MATCH_DONE"),
+        extract=lambda raw: raw,
+        read_answer=spy_read_answer,
+    )
+
+    now = [100.0]
+
+    def fake_clock() -> float:
+        return now[0]
+
+    def fake_sleep(dt: float) -> None:
+        now[0] += max(dt, 0.6)
+
+    def fake_runner(args: list[str]) -> str:
+        if "capture-pane" in args:
+            return "<frago-employee>正在加载超长上下文...\n────────\n❯ \n"
+        return ""
+
+    raw_sid = "62d0beb0-d029-4820-8a79-c7727b7dd7cb"
+    sess = TmuxAgentSession(
+        session_id=raw_sid,
+        driver=driver,
+        cwd="/tmp",
+        native_session_id=False,
+        runner=fake_runner,
+        clock=fake_clock,
+        sleep=fake_sleep,
+        poll_interval_s=0.5,
+    )
+    result = sess.send("<frago-employee>" + ("X" * 75_000), timeout_s=1.0)
+
+    assert result.status == "timeout"
+    assert result.text == ""
+    assert read_answer_calls == 0
+    assert result.duration_ms >= 1000
+    assert result.started_at is not None
+    assert result.ended_at is not None
+    assert result.started_at < result.ended_at
+    assert result.tmux_name == tmux_name_for(raw_sid)
+    assert result.canonical_session_id == session_id_for(raw_sid, native=False)
+    assert result.canonical_session_id != raw_sid
+
